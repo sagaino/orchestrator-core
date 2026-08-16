@@ -116,6 +116,9 @@ function parseArguments(args) {
     } else if (args[index] === "--project") {
       options.projectId = args[index + 1];
       index += 1;
+    } else if (args[index] === "--port") {
+      options.port = Number(args[index + 1]);
+      index += 1;
     } else if (args[index] === "--start") {
       options.autoStart = true;
     } else if (args[index] === "--force") {
@@ -607,6 +610,31 @@ export async function main(argv = process.argv.slice(2)) {
         runsRoot: options.runs,
         services: { readMarkdown, buildContext, buildPlan, validateTaskReadiness },
       });
+      return;
+    } else if (command === "server") {
+      const { createOrchestratorServer } = await import("./server.mjs");
+      const port = Number(options.port || process.env.ORCHESTRATOR_API_PORT || 3721);
+      const server = createOrchestratorServer({
+        vaultRoot: options.vault,
+        runsRoot: options.runs,
+        port,
+        host: "127.0.0.1",
+      });
+      const info = await server.start();
+      console.log(JSON.stringify({
+        schemaVersion: 1,
+        event: "API_SERVER_STARTED",
+        host: info.host,
+        port: info.port,
+        token: info.token,
+        apiUrl: `http://${info.host}:${info.port}`,
+      }, null, 2));
+
+      await new Promise((resolve) => {
+        process.once("SIGINT", () => resolve("SIGINT"));
+        process.once("SIGTERM", () => resolve("SIGTERM"));
+      });
+      await server.stop();
       return;
     } else if (command === "watch") {
       const { scanReadyTasks, watchReadyTasks } = await import("./adapters/vault-task-watcher.mjs");
