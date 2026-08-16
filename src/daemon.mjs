@@ -9,6 +9,7 @@ import { scanReadyTasks, watchReadyTasks } from "./adapters/vault-task-watcher.m
 import { claimNextJob, JOB_STATES, listJobs, reconcileJobs, updateJob } from "./job-queue.mjs";
 import { startTaskRun } from "./task-workflow.mjs";
 import { notificationSummary, notifyTaskOutcome } from "./notification-service.mjs";
+import { createOrchestratorServer } from "./server.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -587,6 +588,14 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
   const pidRecord = { pid: process.pid, startedAt, vaultRoot, runsRoot, maxWorkers };
   writeJsonAtomic(paths.pid, pidRecord);
 
+  const apiServer = createOrchestratorServer({
+    vaultRoot,
+    runsRoot,
+    port: Number(process.env.ORCHESTRATOR_API_PORT || 3721),
+    host: "127.0.0.1",
+  });
+  await apiServer.start();
+
   const health = {
     schemaVersion: 1,
     pid: process.pid,
@@ -594,6 +603,10 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
     heartbeatAt: startedAt,
     vaultRoot,
     runsRoot,
+    api: {
+      port: apiServer.port,
+      host: apiServer.host,
+    },
     parallel: parallelQueueStatus(listJobs(runsRoot), maxWorkers),
     counters: {
       readyEvents: 0,
@@ -725,6 +738,7 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
       process.once("SIGTERM", () => resolve("SIGTERM"));
     });
   } finally {
+    if (apiServer) await apiServer.stop();
     workerPool.stop();
     if (heartbeat) clearInterval(heartbeat);
     if (jobPoller) clearInterval(jobPoller);
