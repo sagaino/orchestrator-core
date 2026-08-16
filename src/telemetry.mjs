@@ -108,6 +108,7 @@ export function createAgentTelemetryRecord({
   invocationId = null,
   metadata = {},
   recordedAt = new Date().toISOString(),
+  source = "explicit",
 }) {
   const normalizedStage = normalizeTelemetryStage(stage);
   const payload = finalAgentPayload(result);
@@ -118,6 +119,7 @@ export function createAgentTelemetryRecord({
   return {
     schemaVersion: 1,
     recordId: recordIdFor({ stage: normalizedStage, conversationId, invocationId, usage, durationSeconds }),
+    source,
     stage: normalizedStage,
     provider: "ANTIGRAVITY",
     model: agentConfig?.model ?? null,
@@ -204,8 +206,12 @@ export function buildTelemetry(records = [], { threshold = configuredTokenWarnin
 export function appendRunTelemetry({ runsRoot, runId, record, env = process.env }) {
   if (!record) return getRun(runsRoot, runId);
   const manifest = getRun(runsRoot, runId);
-  const existing = manifest.execution?.telemetry?.records ?? [];
-  const telemetry = buildTelemetry([...existing, record], {
+  const existing = manifest.telemetry?.records ?? manifest.execution?.telemetry?.records ?? [];
+  if (existing.some((r) => r.recordId === record.recordId)) {
+    return { deduplicated: true, existingRecordId: record.recordId };
+  }
+  const currentRecords = manifest.execution?.telemetry?.records ?? [];
+  const telemetry = buildTelemetry([...currentRecords, record], {
     threshold: configuredTokenWarningThreshold(env),
   });
   return updateRunExecution({
@@ -283,6 +289,7 @@ function inferredIntakeTelemetry(runsRoot) {
         invocationId: intakeId,
         metadata: { intakeId, projectId, inferred: true },
         recordedAt: event.at,
+        source: "inferred",
       }));
     }
   }
@@ -338,6 +345,7 @@ function recordsFromEventLog(runsRoot, run) {
       invocationId: `${run.runId}:${processStage}`,
       metadata: { runId: run.runId, taskId: run.task?.id ?? null, projectId: run.project?.id ?? null, inferred: true },
       recordedAt: event.at,
+      source: "inferred",
     }));
   }
   return records;
@@ -346,9 +354,21 @@ function recordsFromEventLog(runsRoot, run) {
 export function collectRunTelemetry({ runsRoot, run, env = process.env }) {
   const explicit = run.execution?.telemetry?.records ?? [];
   const inferred = recordsFromEventLog(runsRoot, run);
-  return buildTelemetry([...inferred, ...explicit], {
+  const explicitIds = new Set(explicit.map((r) => r.recordId));
+  let inferredSkipped = 0;
+  const filteredInferred = [];
+  for (const record of inferred) {
+    if (explicitIds.has(record.recordId)) {
+      inferredSkipped++;
+    } else {
+      filteredInferred.push(record);
+    }
+  }
+  const telemetry = buildTelemetry([...filteredInferred, ...explicit], {
     threshold: run.execution?.telemetry?.budget?.thresholdTokens ?? configuredTokenWarningThreshold(env),
   });
+  telemetry.summary.inferredSkipped = inferredSkipped;
+  return telemetry;
 }
 
 export function compactTelemetry(telemetry) {
@@ -375,12 +395,18 @@ export function telemetryReport({ runsRoot, selector = null, projectId = null, e
   if (selector) {
     const run = runs[0];
     if (!run) throw new Error(`Telemetry run atau task tidak ditemukan: ${selector}`);
+    const collectedTelemetry = collectRunTelemetry({ runsRoot, run, env });
     return {
       schemaVersion: 1,
       mode: "run-token-telemetry",
       generatedAt: new Date().toISOString(),
       run: { runId: run.runId, taskId: run.task?.id ?? null, projectId: run.project?.id ?? null, state: run.state },
-      telemetry: collectRunTelemetry({ runsRoot, run, env }),
+      telemetry: collectedTelemetry,
+      summary: {
+        explicitRecords: collectedTelemetry.records.filter((r) => r.source === "explicit").length,
+        inferredRecords: collectedTelemetry.records.filter((r) => r.source === "inferred").length,
+        inferredSkippedByExplicit: collectedTelemetry.summary.inferredSkipped ?? 0,
+      },
       cost: { status: "NOT_ESTIMATED", reason: "Pricing provider tidak tersedia pada result Antigravity." },
     };
   }
@@ -413,6 +439,11 @@ export function telemetryReport({ runsRoot, selector = null, projectId = null, e
     projectId,
     runCount: runs.length,
     telemetry,
+    summary: {
+      explicitRecords: telemetry.records.filter((r) => r.source === "explicit").length,
+      inferredRecords: telemetry.records.filter((r) => r.source === "inferred").length,
+      inferredSkippedByExplicit: runReports.reduce((sum, { telemetry: t }) => sum + (t.summary.inferredSkipped ?? 0), 0),
+    },
     latestRuns: runReports.slice(0, 10).map(({ run, telemetry: current }) => ({
       runId: run.runId,
       taskId: run.task?.id ?? null,
