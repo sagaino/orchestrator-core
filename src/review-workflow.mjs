@@ -25,8 +25,26 @@ export async function previewReviewWorkspace({
   opener = openWithVsCode,
 }) {
   const manifest = getRun(runsRoot, runId);
+  if (manifest.state === RUN_STATES.DONE) {
+    const repoPath = manifest.project?.repository;
+    if (repoPath && fs.existsSync(repoPath)) {
+      const openedWith = await opener(repoPath);
+      return {
+        schemaVersion: 1,
+        action: "PROJECT_REPOSITORY_OPENED",
+        taskId: manifest.task?.id ?? null,
+        runId: manifest.runId,
+        projectId: manifest.project?.id ?? null,
+        workspacePath: repoPath,
+        workspaceState: "APPLIED_IN_MAIN",
+        repositoryMainUnchanged: false,
+        openedWith,
+      };
+    }
+  }
+
   if (![RUN_STATES.REVIEW, RUN_STATES.RETROSPECTIVE].includes(manifest.state)) {
-    throw new Error(`Preview hanya tersedia saat run menunggu review; state saat ini ${manifest.state}.`);
+    throw new Error(`Preview hanya tersedia saat run menunggu review atau DONE; state saat ini ${manifest.state}.`);
   }
   const workspace = manifest.execution?.workspace;
   if (!workspace?.path || !fs.existsSync(workspace.path)) {
