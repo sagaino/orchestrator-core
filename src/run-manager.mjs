@@ -585,12 +585,16 @@ export function beginFailedRunRecovery({
 
   const reviewer = String(recoveredBy).trim() || "user";
   const previousError = String(manifest.execution?.result?.error ?? "Unknown failure");
+  const manifestBackup = JSON.stringify(manifest);
+  const taskFilePath = path.join(vaultRoot, manifest.task.path);
+  const taskFileBackup = fs.existsSync(taskFilePath) ? fs.readFileSync(taskFilePath, "utf8") : null;
   const claim = acquireClaimLock(runsRoot, manifest);
   let taskUpdated = false;
+  let manifestWritten = false;
   try {
     const recoveredAt = new Date().toISOString();
     updateTaskForRecovery(
-      path.join(vaultRoot, manifest.task.path),
+      taskFilePath,
       manifest,
       reviewer,
       recoveredAt,
@@ -625,9 +629,16 @@ export function beginFailedRunRecovery({
       previousError,
     });
     writeManifestAtomic(filePath, manifest);
+    manifestWritten = true;
     return manifest;
   } catch (error) {
-    if (!taskUpdated) releaseClaimLock(claim.filePath);
+    if (taskUpdated && taskFileBackup !== null) {
+      try { fs.writeFileSync(taskFilePath, taskFileBackup, "utf8"); } catch {}
+    }
+    if (manifestWritten) {
+      try { fs.writeFileSync(filePath, `${manifestBackup}\n`, "utf8"); } catch {}
+    }
+    releaseClaimLock(claim.filePath);
     throw error;
   }
 }
@@ -652,12 +663,17 @@ export function beginReviewRevision({
   const reviewer = String(requestedBy).trim() || "user";
   const revisionReason = String(reason ?? "").trim();
   if (!revisionReason) throw new Error("Request changes membutuhkan --reason yang jelas.");
+
+  const manifestBackup = JSON.stringify(manifest);
+  const taskFilePath = path.join(vaultRoot, manifest.task.path);
+  const taskFileBackup = fs.existsSync(taskFilePath) ? fs.readFileSync(taskFilePath, "utf8") : null;
   const claim = acquireClaimLock(runsRoot, manifest);
   let taskUpdated = false;
+  let manifestWritten = false;
   try {
     const requestedAt = new Date().toISOString();
     updateTaskForRequestedChanges(
-      path.join(vaultRoot, manifest.task.path),
+      taskFilePath,
       manifest,
       reviewer,
       revisionReason,
@@ -705,9 +721,16 @@ export function beginReviewRevision({
       reason: revisionReason,
     });
     writeManifestAtomic(filePath, manifest);
+    manifestWritten = true;
     return manifest;
   } catch (error) {
-    if (!taskUpdated) releaseClaimLock(claim.filePath);
+    if (taskUpdated && taskFileBackup !== null) {
+      try { fs.writeFileSync(taskFilePath, taskFileBackup, "utf8"); } catch {}
+    }
+    if (manifestWritten) {
+      try { fs.writeFileSync(filePath, `${manifestBackup}\n`, "utf8"); } catch {}
+    }
+    releaseClaimLock(claim.filePath);
     throw error;
   }
 }
