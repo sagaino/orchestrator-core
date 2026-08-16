@@ -410,6 +410,9 @@ export function daemonStatus({ runsRoot }) {
   const heartbeatAgeMs = Number.isFinite(heartbeatAt) ? Math.max(0, Date.now() - heartbeatAt) : null;
   const healthy = running && healthMatchesProcess && heartbeatAgeMs !== null && heartbeatAgeMs <= HEALTH_STALE_AFTER_MS;
   const runs = listRuns(runsRoot);
+  try {
+    reconcileJobs(runsRoot, runs);
+  } catch {}
   const jobs = listJobs(runsRoot);
   const maxWorkers = healthMatchesProcess
     ? health?.parallel?.maxWorkers ?? configuredParallelWorkers()
