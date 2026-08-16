@@ -78,7 +78,13 @@ function createRunId(event, now) {
   return `${taskId}-${compactTimestamp(now)}-${randomUUID().slice(0, 8)}`;
 }
 
+import { validateManifest } from "./schema.mjs";
+
 function writeNewManifest(filePath, manifest) {
+  const validation = validateManifest(manifest);
+  if (!validation.valid) {
+    throw new Error(`Manifest schema invalid: ${validation.errors.join(", ")}`);
+  }
   const descriptor = fs.openSync(filePath, "wx");
   try {
     fs.writeFileSync(descriptor, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
@@ -88,6 +94,10 @@ function writeNewManifest(filePath, manifest) {
 }
 
 function writeManifestAtomic(filePath, manifest) {
+  const validation = validateManifest(manifest);
+  if (!validation.valid) {
+    throw new Error(`Manifest schema invalid: ${validation.errors.join(", ")}`);
+  }
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   fs.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   fs.renameSync(temporaryPath, filePath);
@@ -344,15 +354,27 @@ function releaseClaimLock(filePath) {
 export function getRun(runsRoot, runId) {
   const filePath = manifestPath(runsRoot, runId);
   if (!fs.existsSync(filePath)) throw new Error(`Run manifest tidak ditemukan: ${runId}`);
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const validation = validateManifest(manifest);
+  if (!validation.valid) {
+    throw new Error(`Corrupted run manifest ${runId}: ${validation.errors.join(", ")}`);
+  }
+  return manifest;
 }
 
 export function listRuns(runsRoot) {
   if (!fs.existsSync(runsRoot)) return [];
-  return fs.readdirSync(runsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-    .map((entry) => JSON.parse(fs.readFileSync(path.join(runsRoot, entry.name), "utf8")))
-    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+  const runs = [];
+  for (const entry of fs.readdirSync(runsRoot, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    try {
+      const run = JSON.parse(fs.readFileSync(path.join(runsRoot, entry.name), "utf8"));
+      if (validateManifest(run).valid) {
+        runs.push(run);
+      }
+    } catch {}
+  }
+  return runs.sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
 }
 
 export function prepareRunFromEvent({ runsRoot, event, origin = "watcher-daemon" }) {
