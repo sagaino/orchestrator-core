@@ -1,0 +1,28 @@
+{
+  "blueprint": "frontend-vite",
+  "templateVersion": 2,
+  "policyVersion": 3,
+  "wikiBlueprint": "01-Knowledge/patterns/frontend/project-skeleton-template.md",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "axios": "^1.19.0",
+    "crypto-js": "^4.2.0",
+    "i18next": "^26.3.6",
+    "react-i18next": "^17.0.11",
+    "react-router-dom": "^7.18.2",
+    "zod": "^4.4.3",
+    "@hookform/resolvers": "^5.7.1",
+    "react-hook-form": "^7.84.0",
+    "sweetalert2": "^11.26.25"
+  },
+  "devDependencies": {
+    "@types/crypto-js": "^4.2.2"
+  }
+}

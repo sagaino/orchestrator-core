@@ -1,0 +1,5 @@
+node_modules/
+runs/
+native/macos-notifier/build/
+*.log
+.DS_Store
