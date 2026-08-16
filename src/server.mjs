@@ -16,6 +16,7 @@ import { ensureApiToken, authenticateRequest, validateOrigin, IdempotencyStore }
 import { createEventHub } from "./api/events.mjs";
 import { Router, sendJson, sendError, parseJsonBody } from "./api/router.mjs";
 import { getRunDiff, globalDevServerManager } from "./dev-server-manager.mjs";
+import { collectRtkAnalytics } from "./rtk-analytics.mjs";
 
 export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   const router = new Router();
@@ -326,6 +327,15 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     const projectId = parsedUrl.searchParams.get("projectId");
     const report = telemetryReport({ runsRoot, selector, projectId });
     sendJson(res, 200, { success: true, data: report });
+  });
+
+  router.get("/api/telemetry/rtk", async (req, res) => {
+    try {
+      const rtkStats = await collectRtkAnalytics();
+      sendJson(res, 200, { success: true, data: rtkStats });
+    } catch (err) {
+      sendError(res, 500, err.message);
+    }
   });
 
   return router;
