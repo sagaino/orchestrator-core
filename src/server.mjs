@@ -6,7 +6,7 @@ import { requestTask } from "./task-intake.mjs";
 import { startTaskRun, recoverTaskRun, requestChangesTaskRun, rejectTaskRun, retryTaskRun } from "./task-workflow.mjs";
 import { previewReviewWorkspace } from "./review-workflow.mjs";
 import { listRuns, getRun } from "./run-manager.mjs";
-import { listJobs, getJob } from "./job-queue.mjs";
+import { listJobs, getJob, updateJobForRun, reconcileJobs, JOB_STATES } from "./job-queue.mjs";
 import { listKnowledgeCandidates, promoteKnowledgeCandidate, rejectKnowledgeCandidate, acceptRun } from "./knowledge-workflow.mjs";
 import { knowledgeHealth } from "./knowledge-quality.mjs";
 import { listNotifications, acknowledgeNotifications, emitTestNotification } from "./notification-service.mjs";
@@ -124,6 +124,9 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   });
 
   router.get("/api/jobs", async (req, res) => {
+    try {
+      reconcileJobs(runsRoot, listRuns(runsRoot));
+    } catch {}
     const jobs = listJobs(runsRoot);
     sendJson(res, 200, { success: true, data: jobs });
   });
@@ -166,6 +169,11 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
     });
 
+    updateJobForRun(runsRoot, manifest.runId, {
+      state: manifest.state === "REVIEW" ? JOB_STATES.REVIEW : JOB_STATES.RUNNING,
+      runState: manifest.state,
+    });
+
     eventHub.broadcast("RUN_CHANGES_REQUESTED", { runId: manifest.runId, state: manifest.state });
     sendJson(res, 200, { success: true, data: manifest });
   });
@@ -184,6 +192,12 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       targetPath,
     });
 
+    updateJobForRun(runsRoot, manifest.runId, {
+      state: JOB_STATES.DONE,
+      runState: manifest.state,
+      finishedAt: new Date().toISOString(),
+    });
+
     eventHub.broadcast("RUN_ACCEPTED", { runId: manifest.runId, state: manifest.state });
     sendJson(res, 200, { success: true, data: manifest });
   });
@@ -198,6 +212,13 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       runId: params.id,
       rejectedBy,
       reason,
+    });
+
+    updateJobForRun(runsRoot, manifest.runId, {
+      state: JOB_STATES.FAILED,
+      runState: manifest.state,
+      error: reason,
+      finishedAt: new Date().toISOString(),
     });
 
     eventHub.broadcast("RUN_REJECTED", { runId: manifest.runId, state: manifest.state });
