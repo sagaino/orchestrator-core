@@ -80,7 +80,10 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       requestedBy,
       autoStart,
       readMarkdown: services.readMarkdown,
-      validateTask: services.validateTaskReadiness,
+      validateTask: (resolvedProjectId, taskPath) => validateTaskReadiness(
+        buildContext(vaultRoot, resolvedProjectId, taskPath),
+        { readMarkdown: services.readMarkdown },
+      ),
     });
 
     eventHub.broadcast("TASK_REQUESTED", {
