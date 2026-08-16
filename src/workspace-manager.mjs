@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { isDeniedPath, validateSymlink } from "./security.mjs";
 
 const SNAPSHOT_EXCLUDES = new Set([
   ".git",
@@ -57,6 +58,7 @@ export function repositorySnapshot(repository) {
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) walk(absolute);
       else if (entry.isFile() || entry.isSymbolicLink()) {
+        if (entry.isSymbolicLink() && !validateSymlink(absolute, repository).valid) continue;
         const relative = path.relative(repository, absolute).split(path.sep).join("/");
         snapshot.set(relative, hashPath(absolute));
       }
@@ -116,7 +118,12 @@ function seedWorkingTree(sourceRepository, workspacePath) {
     if (pathExists(target)) fs.unlinkSync(target);
   }
   for (const relative of source.keys()) {
-    copyEntry(path.join(sourceRepository, relative), path.join(workspacePath, relative));
+    if (isDeniedPath(relative).denied) continue;
+    const sourcePath = path.join(sourceRepository, relative);
+    if (fs.lstatSync(sourcePath).isSymbolicLink()) {
+      if (!validateSymlink(sourcePath, sourceRepository).valid) continue;
+    }
+    copyEntry(sourcePath, path.join(workspacePath, relative));
   }
   pruneEmptyDirectories(workspacePath);
   return source;

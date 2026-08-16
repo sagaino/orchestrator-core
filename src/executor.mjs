@@ -17,6 +17,7 @@ import {
   snapshotFromObject,
 } from "./workspace-manager.mjs";
 import { appendRunTelemetry, createAgentTelemetryRecord } from "./telemetry.mjs";
+import { isDeniedPath } from "./security.mjs";
 
 function appendEvent(eventLogPath, event) {
   fs.mkdirSync(path.dirname(eventLogPath), { recursive: true });
@@ -384,15 +385,18 @@ function parseVerificationCommand(command) {
 function createScopeAudit({ beforeSnapshot, afterSnapshot, allowedPaths, requiresChanges, agentChangedPaths = null }) {
   const changed = changedPaths(beforeSnapshot, afterSnapshot);
   const effectivePaths = effectiveAllowedPaths(allowedPaths);
+  const deniedPaths = changed.filter((filePath) => isDeniedPath(filePath).denied);
+  const outOfScope = allowedPaths.length
+    ? changed.filter((filePath) => !pathAllowed(filePath, effectivePaths))
+    : [];
   return {
     changedPaths: changed,
     ...(agentChangedPaths ? { agentChangedPaths } : {}),
     allowedPaths,
     automaticAllowedPaths: effectivePaths.filter((item) => !allowedPaths.includes(item)),
     effectiveAllowedPaths: effectivePaths,
-    outOfScopePaths: allowedPaths.length
-      ? changed.filter((filePath) => !pathAllowed(filePath, effectivePaths))
-      : [],
+    outOfScopePaths: [...new Set([...outOfScope, ...deniedPaths])],
+    deniedPaths,
     requiresChanges,
   };
 }
