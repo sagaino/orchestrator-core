@@ -129,9 +129,25 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   });
 
   router.post("/api/runs/:id/preview", async (req, res, { params }) => {
-    const result = previewReviewWorkspace({ runsRoot, runId: params.id });
+    const result = await previewReviewWorkspace({ runsRoot, runId: params.id });
     eventHub.broadcast("PREVIEW_OPENED", { runId: params.id, ...result });
     sendJson(res, 200, { success: true, data: result });
+  });
+
+  router.post("/api/runs/:id/start", async (req, res, { params }) => {
+    const body = await parseJsonBody(req);
+    const { approvedBy = "user" } = body;
+
+    const manifest = await startTaskRun({
+      vaultRoot,
+      runsRoot,
+      runId: params.id,
+      approvedBy,
+      onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
+    });
+
+    eventHub.broadcast("RUN_STARTED", { runId: manifest.runId, state: manifest.state });
+    sendJson(res, 200, { success: true, data: manifest });
   });
 
   router.post("/api/runs/:id/request-changes", async (req, res, { params }) => {
