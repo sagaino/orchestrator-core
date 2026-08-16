@@ -93,6 +93,28 @@ function writeManifestAtomic(filePath, manifest) {
   fs.renameSync(temporaryPath, filePath);
 }
 
+export function captureVerificationScripts(repository, verificationCommands = []) {
+  const packagePath = path.join(repository, "package.json");
+  if (!fs.existsSync(packagePath)) return {};
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+    const scripts = pkg.scripts || {};
+    const frozen = {};
+    for (const cmd of verificationCommands) {
+      const match = String(cmd).match(/^npm run ([A-Za-z0-9:_-]+)$/);
+      if (match) {
+        const scriptName = match[1];
+        if (scripts[scriptName] !== undefined) {
+          frozen[scriptName] = String(scripts[scriptName]);
+        }
+      }
+    }
+    return frozen;
+  } catch {
+    return {};
+  }
+}
+
 function replaceFrontmatterField(content, field, value) {
   const lines = content.split(/\r?\n/);
   if (lines[0]?.trim() !== "---") throw new Error("Task tidak memiliki YAML frontmatter.");
@@ -497,10 +519,15 @@ export function claimRun({ vaultRoot, runsRoot, runId, services }) {
   let taskUpdated = false;
   try {
     validateCurrentTask();
+    const frozenVerificationScripts = captureVerificationScripts(
+      manifest.project.repository,
+      manifest.plan?.verificationCommands ?? [],
+    );
     const claimingAt = new Date().toISOString();
     manifest.state = RUN_STATES.CLAIMING;
     manifest.updatedAt = claimingAt;
     manifest.execution.claimedAt = claimingAt;
+    manifest.execution.frozenVerificationScripts = frozenVerificationScripts;
     manifest.execution.lock = path.relative(runsRoot, claim.filePath);
     manifest.history.push({
       at: claimingAt,

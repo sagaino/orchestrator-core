@@ -280,6 +280,29 @@ function restoreBackup({ sourceRepository, backupRoot, entries }) {
   pruneEmptyDirectories(sourceRepository);
 }
 
+function assertVerificationScriptsUnmodified(repository, frozenScripts) {
+  if (!frozenScripts || Object.keys(frozenScripts).length === 0) return;
+  const packagePath = path.join(repository, "package.json");
+  if (!fs.existsSync(packagePath)) {
+    throw new Error("package.json tidak ditemukan saat validasi verification script.");
+  }
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+  } catch (error) {
+    throw new Error(`Gagal membaca package.json untuk validasi script: ${error.message}`);
+  }
+  const currentScripts = pkg.scripts || {};
+  for (const [name, expectedCommand] of Object.entries(frozenScripts)) {
+    const actualCommand = currentScripts[name];
+    if (actualCommand !== expectedCommand) {
+      throw new Error(
+        `Verification script "${name}" berubah setelah claim (sebelumnya: "${expectedCommand}", sekarang: "${actualCommand ?? "dihapus"}"). Perubahan pada verification script membutuhkan otorisasi eksplisit.`
+      );
+    }
+  }
+}
+
 export async function applyIsolatedWorkspace({
   manifest,
   runsRoot,
@@ -340,6 +363,7 @@ export async function applyIsolatedWorkspace({
       }, "Dependency install setelah workspace apply gagal");
       dependency = { skipped: false, manager: invocation.manager, exitCode: result.exitCode };
     }
+    assertVerificationScriptsUnmodified(workspace.sourceRepository, manifest.execution?.frozenVerificationScripts);
     for (const verificationCommand of manifest.plan.verificationCommands) {
       const invocation = parseVerificationCommand(verificationCommand);
       const result = await requireSuccessfulProcess(processRunner, {
