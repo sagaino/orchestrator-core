@@ -120,7 +120,7 @@ export async function planTaskWithAgy({
   const scripts = packageScripts(project.repository);
   const tasks = existingTaskSummary(vaultRoot, project.id, readMarkdown);
   const graphContext = await graphifyContext(project, request, eventLogPath, processRunner);
-  const agentConfig = resolveAgyConfig();
+  const agentConfig = resolveAgyConfig(process.env, "task-intake");
   const prompt = [
     "Susun draft task software engineering dari permintaan user. Jangan mengubah file apa pun.",
     `Permintaan: ${request}`,

@@ -180,7 +180,7 @@ function retrospectiveSchema() {
 
 async function generateProposalWithAgy({ manifest, vaultRoot, runsRoot, processRunner = runProcess }) {
   const eventLogPath = path.join(runsRoot, "events", `${manifest.runId}.jsonl`);
-  const agentConfig = resolveAgyConfig();
+  const agentConfig = resolveAgyConfig(process.env, "retrospective");
   const projectRepository = manifest.execution?.workspace?.path ?? manifest.project.repository;
   const prompt = [
     "Lakukan retrospective read-only untuk task software engineering yang sudah berhasil diverifikasi.",
