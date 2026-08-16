@@ -15,6 +15,7 @@ import { daemonStatus } from "./daemon.mjs";
 import { ensureApiToken, authenticateRequest, validateOrigin, IdempotencyStore } from "./api/auth.mjs";
 import { createEventHub } from "./api/events.mjs";
 import { Router, sendJson, sendError, parseJsonBody } from "./api/router.mjs";
+import { getRunDiff, globalDevServerManager } from "./dev-server-manager.mjs";
 
 export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   const router = new Router();
@@ -214,6 +215,44 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
 
     eventHub.broadcast("RUN_RETRIED", { runId: params.id, newJobId: result.job?.jobId });
     sendJson(res, 200, { success: true, data: result });
+  });
+
+  router.get("/api/runs/:id/diff", async (req, res, { params }) => {
+    try {
+      const diffData = await getRunDiff({ runsRoot, runId: params.id });
+      sendJson(res, 200, { success: true, data: diffData });
+    } catch (err) {
+      sendError(res, 500, err.message);
+    }
+  });
+
+  router.post("/api/runs/:id/dev-server/start", async (req, res, { params }) => {
+    try {
+      const serverInfo = await globalDevServerManager.startDevServer({ runsRoot, runId: params.id });
+      eventHub.broadcast("DEV_SERVER_STARTED", { runId: params.id, ...serverInfo });
+      sendJson(res, 200, { success: true, data: serverInfo });
+    } catch (err) {
+      sendError(res, 500, err.message);
+    }
+  });
+
+  router.post("/api/runs/:id/dev-server/stop", async (req, res, { params }) => {
+    try {
+      const result = globalDevServerManager.stopDevServer(params.id);
+      eventHub.broadcast("DEV_SERVER_STOPPED", { runId: params.id, ...result });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (err) {
+      sendError(res, 500, err.message);
+    }
+  });
+
+  router.get("/api/runs/:id/dev-server/status", async (req, res, { params }) => {
+    try {
+      const status = globalDevServerManager.getDevServerStatus(params.id);
+      sendJson(res, 200, { success: true, data: status });
+    } catch (err) {
+      sendError(res, 500, err.message);
+    }
   });
 
   // --- 5. Knowledge ---
