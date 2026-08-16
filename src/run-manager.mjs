@@ -770,6 +770,7 @@ export function updateRunExecution({
   manifest.updatedAt = at;
   manifest.execution = { ...manifest.execution, ...executionPatch };
   if (event) {
+    manifest.history = Array.isArray(manifest.history) ? manifest.history : [];
     manifest.history.push({
       at,
       event,
