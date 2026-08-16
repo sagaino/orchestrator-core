@@ -204,7 +204,7 @@ export function buildAgyInvocation(
   const knowledge = manifest.retrieval.knowledge
     .map((item) => `- ${path.join(vaultRoot, item.path)}`)
     .join("\n");
-  const agentConfig = resolveAgyConfig();
+  const agentConfig = resolveAgyConfig(process.env, "implementation");
   const prompt = [
     `Eksekusi task: ${path.join(vaultRoot, manifest.task.path)}`,
     `Project repository: ${repository}`,
@@ -262,7 +262,7 @@ export function buildAgyRecoveryInvocation(
   const knowledge = manifest.retrieval.knowledge
     .map((item) => `- ${path.join(vaultRoot, item.path)}`)
     .join("\n");
-  const agentConfig = resolveAgyConfig();
+  const agentConfig = resolveAgyConfig(process.env, "recovery");
   const prompt = [
     `Automatic recovery attempt ${attempt} untuk task: ${path.join(vaultRoot, manifest.task.path)}`,
     `Project workspace: ${repository}`,
@@ -331,7 +331,7 @@ export function buildAgyRevisionInvocation(
   const knowledge = manifest.retrieval.knowledge
     .map((item) => `- ${path.join(vaultRoot, item.path)}`)
     .join("\n");
-  const agentConfig = resolveAgyConfig();
+  const agentConfig = resolveAgyConfig(process.env, "implementation");
   const prompt = [
     `Lanjutkan revisi review iteration ${revision.iteration} untuk task: ${path.join(vaultRoot, manifest.task.path)}`,
     `Project workspace: ${repository}`,
