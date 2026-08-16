@@ -1,0 +1,436 @@
+{
+  "info": {
+    "_postman_id": "personal-ai-orchestrator-api-v1",
+    "name": "Personal AI Orchestrator API",
+    "description": "Postman collection untuk Personal AI Orchestrator Local HTTP API (Fase 1).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{authToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "01 - System & Health",
+      "item": [
+        {
+          "name": "Health Probe (No Auth)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Probe health check tanpa token autentikasi."
+          }
+        },
+        {
+          "name": "Daemon Status & Worker Pool",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/daemon/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "daemon", "status"]
+            },
+            "description": "Mengambil status background daemon, worker slots, queue status, dan notifikasi terbaru."
+          }
+        },
+        {
+          "name": "Realtime SSE Stream",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/events?token={{authToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "events"],
+              "query": [
+                { "key": "token", "value": "{{authToken}}" }
+              ]
+            },
+            "description": "Berlangganan stream Server-Sent Events (SSE) untuk realtime lifecycle updates."
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Projects",
+      "item": [
+        {
+          "name": "List Projects",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/projects",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects"]
+            },
+            "description": "Mengambil semua daftar project terdaftar beserta status Graphify dan repo path."
+          }
+        },
+        {
+          "name": "Get Project Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/projects/starter-app",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "projects", "starter-app"]
+            },
+            "description": "Mengambil metadata project spesifik."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Tasks & Intake",
+      "item": [
+        {
+          "name": "Task Intake (Natural Language Request)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "intake-sample-001" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project\": \"starter-app\",\n  \"request\": \"Tambahkan komponen Badge status di src/components/ui/badge.tsx\",\n  \"autoStart\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/tasks/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tasks", "request"]
+            },
+            "description": "Mengirim instruksi bahasa alami. Orchestrator akan merancang task, memvalidasi readiness gate, dan mendaftarkannya ke antrean eksekusi."
+          }
+        },
+        {
+          "name": "Get Task Context",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/tasks/starter-app/FE-001/context",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tasks", "starter-app", "FE-001", "context"]
+            },
+            "description": "Mengambil context terkompilasi sebelum task dieksekusi."
+          }
+        },
+        {
+          "name": "Get Task Plan",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/tasks/starter-app/FE-001/plan",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tasks", "starter-app", "FE-001", "plan"]
+            },
+            "description": "Mengambil execution plan terstruktur untuk task terkait."
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Runs & Lifecycle",
+      "item": [
+        {
+          "name": "List Runs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/runs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "runs"]
+            },
+            "description": "Mengambil riwayat semua run manifest dan statusnya."
+          }
+        },
+        {
+          "name": "Get Run Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/runs/fe-019-20260815T164218Z-42a05d64",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "runs", "fe-019-20260815T164218Z-42a05d64"]
+            },
+            "description": "Mengambil detail lengkap manifest run: timeline, scope audit, verification output, telemetry, dan diff."
+          }
+        },
+        {
+          "name": "List Background Jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/jobs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "jobs"]
+            },
+            "description": "Mengambil antrean pekerjaan background worker pool."
+          }
+        },
+        {
+          "name": "Preview Run in VS Code",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/runs/fe-019-20260815T164218Z-42a05d64/preview",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "runs", "fe-019-20260815T164218Z-42a05d64", "preview"]
+            },
+            "description": "Membuka isolated git worktree run di VS Code untuk preview manual tanpa mengganggu main repository."
+          }
+        },
+        {
+          "name": "Request Changes (Revision)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestedBy\": \"user\",\n  \"reason\": \"Tolong sesuaikan varian warna badge agar konsisten dengan tema dark mode.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/runs/fe-019-20260815T164218Z-42a05d64/request-changes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "runs", "fe-019-20260815T164218Z-42a05d64", "request-changes"]
+            },
+            "description": "Mengirim revisi ke agent untuk diperbaiki di worktree yang sama."
+          }
+        },
+        {
+          "name": "Accept Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approvedBy\": \"user\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/runs/fe-019-20260815T164218Z-42a05d64/accept",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "runs", "fe-019-20260815T164218Z-42a05d64", "accept"]
+            },
+            "description": "Menyetujui run hasil review: mengaplikasikan diff ke repository utama, mensinkronkan pengetahuan ke Wiki, dan menandai task DONE."
+          }
+        },
+        {
+          "name": "Reject Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejectedBy\": \"user\",\n  \"reason\": \"Perubahan tidak diperlukan lagi.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/runs/fe-019-20260815T164218Z-42a05d64/reject",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "runs", "fe-019-20260815T164218Z-42a05d64", "reject"]
+            },
+            "description": "Menolak hasil run dan menghapus worktree terisolasi."
+          }
+        },
+        {
+          "name": "Recover Failed Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recoveredBy\": \"user\",\n  \"force\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/runs/fe-018-20260815T154201Z-60a85b18/recover",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "runs", "fe-018-20260815T154201Z-60a85b18", "recover"]
+            },
+            "description": "Melakukan recovery pada run yang gagal verifikasi/dependency tanpa mengulang eksekusi coding agent dari awal."
+          }
+        },
+        {
+          "name": "Retry Failed Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestedBy\": \"user\",\n  \"force\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/runs/fe-018-20260815T154201Z-60a85b18/retry",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "runs", "fe-018-20260815T154201Z-60a85b18", "retry"]
+            },
+            "description": "Mendaftarkan ulang task yang gagal ke antrean eksekusi baru."
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Knowledge",
+      "item": [
+        {
+          "name": "List Knowledge Candidates",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/candidates",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "candidates"]
+            },
+            "description": "Mengambil daftar calon pengetahuan baru di 05-Knowledge-Candidates/ yang menunggu keputusan human review."
+          }
+        },
+        {
+          "name": "Promote Knowledge Candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"selector\": \"candidate-name-or-file\",\n  \"approvedBy\": \"user\",\n  \"targetPath\": \"01-Knowledge/patterns/frontend/my-pattern.md\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/promote",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "promote"]
+            },
+            "description": "Mempromosikan candidate ke pengetahuan permanen di 01-Knowledge/."
+          }
+        },
+        {
+          "name": "Reject Knowledge Candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"selector\": \"candidate-name-or-file\",\n  \"rejectedBy\": \"user\",\n  \"reason\": \"Duplicate or project-specific only\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/reject",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "reject"]
+            },
+            "description": "Menolak calon pengetahuan dan mengarsipkannya."
+          }
+        },
+        {
+          "name": "Knowledge Vault Health Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "health"]
+            },
+            "description": "Memeriksa integritas vault: broken wikilinks, unindexed knowledge, orphan candidates, dan duplicate detection."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Notifications & Telemetry",
+      "item": [
+        {
+          "name": "List Notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notifications"]
+            },
+            "description": "Mengambil notifikasi inbox sistem."
+          }
+        },
+        {
+          "name": "Mark Notifications Read",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"selector\": null,\n  \"readBy\": \"user\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/read",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notifications", "read"]
+            },
+            "description": "Menandai notifikasi telah dibaca."
+          }
+        },
+        {
+          "name": "Emit Test Notification Banner",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/test",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notifications", "test"]
+            },
+            "description": "Menguji pengiriman notifikasi banner desktop macOS."
+          }
+        },
+        {
+          "name": "Telemetry & Token Usage Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/telemetry",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "telemetry"]
+            },
+            "description": "Mengambil agregasi token provider LLM, duration, dan efisiensi cache per run dan per stage."
+          }
+        }
+      ]
+    }
+  ]
+}
