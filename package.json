@@ -48,7 +48,7 @@
     "daemon:status": "node src/orchestrator.mjs daemon status",
     "daemon:stop": "node src/orchestrator.mjs daemon stop",
     "daemon:uninstall": "node src/orchestrator.mjs daemon uninstall",
-    "test:unit": "node test/security.test.mjs && node test/schema.test.mjs && node test/telemetry-dedup.test.mjs && node test/transaction.test.mjs",
+    "test:unit": "node test/security.test.mjs && node test/schema.test.mjs && node test/telemetry-dedup.test.mjs && node test/transaction.test.mjs && node test/api.test.mjs && node test/updater-rollback.test.mjs",
     "test:smoke": "node test/smoke.mjs",
     "test": "npm run test:unit && npm run test:smoke"
   },
