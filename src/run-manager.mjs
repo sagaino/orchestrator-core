@@ -325,10 +325,30 @@ function acquireClaimLock(runsRoot, manifest) {
     descriptor = fs.openSync(filePath, "wx");
   } catch (error) {
     if (error.code === "EEXIST") {
-      const owner = fs.readFileSync(filePath, "utf8").trim();
-      throw new Error(`Task sudah memiliki claim lock: ${owner || filePath}`);
+      let isStale = false;
+      try {
+        const lockData = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        if (lockData?.pid) {
+          try {
+            process.kill(lockData.pid, 0);
+          } catch {
+            isStale = true;
+          }
+        }
+      } catch {
+        isStale = true;
+      }
+
+      if (isStale) {
+        fs.unlinkSync(filePath);
+        descriptor = fs.openSync(filePath, "wx");
+      } else {
+        const owner = fs.readFileSync(filePath, "utf8").trim();
+        throw new Error(`Task sudah memiliki claim lock: ${owner || filePath}`);
+      }
+    } else {
+      throw error;
     }
-    throw error;
   }
 
   const lock = {
