@@ -23,7 +23,13 @@ function jobPath(runsRoot, jobId) {
   return path.join(jobsRoot(runsRoot), `${safeJobId(jobId)}.json`);
 }
 
+import { validateJob } from "./schema.mjs";
+
 function writeAtomic(filePath, value) {
+  const validation = validateJob(value);
+  if (!validation.valid) {
+    throw new Error(`Job schema invalid: ${validation.errors.join(", ")}`);
+  }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -33,16 +39,28 @@ function writeAtomic(filePath, value) {
 export function listJobs(runsRoot) {
   const root = jobsRoot(runsRoot);
   if (!fs.existsSync(root)) return [];
-  return fs.readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-    .map((entry) => JSON.parse(fs.readFileSync(path.join(root, entry.name), "utf8")))
-    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+  const jobs = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    try {
+      const job = JSON.parse(fs.readFileSync(path.join(root, entry.name), "utf8"));
+      if (validateJob(job).valid) {
+        jobs.push(job);
+      }
+    } catch {}
+  }
+  return jobs.sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
 }
 
 export function getJob(runsRoot, jobId) {
   const filePath = jobPath(runsRoot, jobId);
   if (!fs.existsSync(filePath)) throw new Error(`Job tidak ditemukan: ${jobId}`);
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const job = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const validation = validateJob(job);
+  if (!validation.valid) {
+    throw new Error(`Corrupted job ${jobId}: ${validation.errors.join(", ")}`);
+  }
+  return job;
 }
 
 export function enqueueTaskJob({
