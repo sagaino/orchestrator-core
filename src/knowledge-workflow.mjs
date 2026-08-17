@@ -241,7 +241,57 @@ export function buildCompressedRetrospectivePrompt({ manifest, vaultRoot, projec
   ].join("\n");
 }
 
+export function isDeterministicProjectOnlyTask(manifest) {
+  const changedPaths = manifest.execution?.scopeAudit?.changedPaths || [];
+  if (changedPaths.length === 0) return false;
+
+  // Check if all changed paths are purely project-internal UI/pages/components/tests/configs
+  const isPurelyProjectInternal = changedPaths.every((p) => {
+    const normalized = p.toLowerCase();
+    return normalized.includes("/pages/")
+      || normalized.includes("/components/")
+      || normalized.includes("/views/")
+      || normalized.includes("/layouts/")
+      || normalized.includes("test/")
+      || normalized.endsWith(".css")
+      || normalized.endsWith(".scss")
+      || normalized.endsWith(".json")
+      || normalized.endsWith(".svg")
+      || normalized.endsWith(".png")
+      || normalized.endsWith(".md");
+  });
+
+  return isPurelyProjectInternal;
+}
+
+export function buildDeterministicProjectOnlyProposal(manifest) {
+  const taskId = manifest.task?.id || "TASK";
+  const title = manifest.task?.title || "Perubahan internal project";
+  return {
+    classification: "PROJECT_ONLY",
+    confidence: 0.98,
+    title: `${taskId}: ${title}`,
+    type: "snippet",
+    targetPath: null,
+    summary: `${taskId} melakukan modifikasi murni internal komponen/halaman/konfigurasi project (${manifest.project?.id || "local"}). Diklasifikasikan secara deterministik sebagai PROJECT_ONLY.`,
+    rationale: "Perubahan cakupan file berada di dalam lapisan presentasi/konfigurasi/pengujian internal project tanpa abstraksi generic yang reusable untuk global knowledge vault.",
+    considerations: [
+      "Perubahan murni lokal project dan tidak memerlukan pembuatan konsep arsitektur global baru.",
+    ],
+    relatedKnowledge: [],
+  };
+}
+
 async function generateProposalWithAgy({ manifest, vaultRoot, runsRoot, processRunner = runProcess }) {
+  // Fast-path: If task is purely project-internal UI/layout/test change, bypass LLM completely (0 tokens consumed)
+  if (isDeterministicProjectOnlyTask(manifest)) {
+    const proposal = buildDeterministicProjectOnlyProposal(manifest);
+    return {
+      proposal,
+      agentConfig: { model: "deterministic-fast-path", effort: "zero" },
+    };
+  }
+
   const eventLogPath = path.join(runsRoot, "events", `${manifest.runId}.jsonl`);
   const agentConfig = resolveAgyConfig(process.env, "retrospective");
   const projectRepository = manifest.execution?.workspace?.path ?? manifest.project.repository;
