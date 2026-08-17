@@ -5,7 +5,7 @@ import path from "node:path";
 import http from "node:http";
 import { createOrchestratorServer } from "../src/server.mjs";
 import { RUN_STATES } from "../src/run-manager.mjs";
-import { computeAdaptivePollInterval, ACTIVE_POLL_INTERVAL_MS, IDLE_POLL_INTERVAL_MS } from "../src/daemon.mjs";
+import { computeAdaptivePollInterval, ACTIVE_POLL_INTERVAL_MS, IDLE_POLL_INTERVAL_MS, parallelQueueStatus, daemonStatus } from "../src/daemon.mjs";
 import { hasActiveJobs, JOB_STATES } from "../src/job-queue.mjs";
 
 console.log("Running api.test.mjs...");
@@ -323,6 +323,220 @@ try {
 
   // Test 15: hasActiveJobs helper
   assert.equal(hasActiveJobs(tempRuns), false);
+
+  // Test 16: POST /api/knowledge/health/fix-safe and SSE KNOWLEDGE_HEALTH_UPDATED broadcast
+  const indexFile = path.join(tempVault, "index.md");
+  fs.writeFileSync(
+    indexFile,
+    [
+      "---",
+      "title: Index",
+      "type: schema",
+      "tags: [index]",
+      "created: 2026-08-16",
+      "updated: 2026-08-16",
+      "sources: []",
+      "---",
+      "# Index",
+      "",
+      "## Knowledge",
+      "",
+    ].join("\n")
+  );
+
+  const wikiLogFile = path.join(tempVault, "wiki-log.md");
+  fs.writeFileSync(
+    wikiLogFile,
+    [
+      "---",
+      "title: Wiki Log",
+      "type: schema",
+      "tags: [log]",
+      "created: 2026-08-16",
+      "updated: 2026-08-16",
+      "sources: []",
+      "---",
+      "# Wiki Log",
+      "",
+    ].join("\n")
+  );
+
+  const conceptsDir = path.join(tempVault, "01-Knowledge", "concepts");
+  fs.mkdirSync(conceptsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(conceptsDir, "sample-concept.md"),
+    [
+      "---",
+      "title: Sample Concept",
+      "type: concept",
+      "tags: [test]",
+      "created: 2026-08-16",
+      "updated: 2026-08-16",
+      "sources: []",
+      "---",
+      "# Sample Concept",
+      "This is a sample concept for testing health check and fix-safe.",
+    ].join("\n")
+  );
+
+  // Check read-only health endpoint first
+  const healthReadOnly = await request({ path: "/api/knowledge/health", port, token });
+  assert.equal(healthReadOnly.status, 200);
+  assert.equal(healthReadOnly.data.success, true);
+  assert.equal(healthReadOnly.data.data.mode, "read-only");
+  assert.equal(healthReadOnly.data.data.summary.safeFixesAvailable >= 1, true);
+
+  // Listen to SSE events for KNOWLEDGE_HEALTH_UPDATED
+  let sseEventData = null;
+  const sseHealthPromise = new Promise((resolve, reject) => {
+    const sseReq = http.request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: `/api/events?token=${token}`,
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+      },
+      (res) => {
+        assert.equal(res.statusCode, 200);
+        let buffer = "";
+        res.on("data", (chunk) => {
+          buffer += chunk.toString();
+          if (buffer.includes("event: KNOWLEDGE_HEALTH_UPDATED")) {
+            sseEventData = buffer;
+            sseReq.destroy();
+            resolve(true);
+          }
+        });
+      }
+    );
+    sseReq.on("error", (err) => {
+      if (err.code === "ECONNRESET") resolve(true);
+      else reject(err);
+    });
+    sseReq.end();
+  });
+
+  // Short pause to ensure SSE connection is registered in eventHub
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Trigger POST /api/knowledge/health/fix-safe
+  const fixSafeRes = await request({
+    method: "POST",
+    path: "/api/knowledge/health/fix-safe",
+    port,
+    token,
+    body: { fixedBy: "unit-tester" },
+  });
+
+  assert.equal(fixSafeRes.status, 200);
+  assert.equal(fixSafeRes.data.success, true);
+  assert.equal(fixSafeRes.data.data.mode, "safe-fix");
+  assert.equal(fixSafeRes.data.data.summary.safeFixesApplied >= 1, true);
+  assert.equal(Array.isArray(fixSafeRes.data.data.fixes), true);
+  assert.equal(
+    fixSafeRes.data.data.fixes.some((f) => f.action === "ADD_TO_INDEX" && f.path.includes("sample-concept")),
+    true
+  );
+
+  // Verify index.md updated
+  const updatedIndex = fs.readFileSync(indexFile, "utf8");
+  assert.equal(updatedIndex.includes("01-Knowledge/concepts/sample-concept"), true);
+
+  // Verify wiki-log.md updated
+  const updatedWikiLog = fs.readFileSync(wikiLogFile, "utf8");
+  assert.equal(updatedWikiLog.includes("lint | Knowledge Quality"), true);
+  assert.equal(updatedWikiLog.includes("unit-tester"), true);
+
+  // Wait for SSE broadcast
+  await sseHealthPromise;
+  assert.ok(sseEventData);
+  assert.equal(sseEventData.includes("event: KNOWLEDGE_HEALTH_UPDATED"), true);
+
+  // Test 17: Worker slot synchronization & activeWorkers calculation in daemon status and parallelQueueStatus
+  // Case A: parallelQueueStatus with job in RUNNING state
+  const runningJob = {
+    jobId: "job-sync-1",
+    projectId: "project-sync-a",
+    taskId: "TASK-SYNC-1",
+    state: JOB_STATES.RUNNING,
+    runId: null,
+  };
+  const statusJobRunning = parallelQueueStatus([runningJob], 2);
+  assert.equal(statusJobRunning.activeWorkers, 1);
+  assert.equal(statusJobRunning.availableWorkerSlots, 1);
+  assert.deepEqual(statusJobRunning.activeProjects, ["project-sync-a"]);
+
+  // Case B: parallelQueueStatus with run in RUNNING or EXECUTING state without matching running job
+  const runningRun = {
+    runId: "run-sync-1",
+    state: RUN_STATES.RUNNING,
+    project: { id: "project-sync-b" },
+    task: { id: "TASK-SYNC-2" },
+  };
+  const statusRunRunning = parallelQueueStatus([], 2, [runningRun]);
+  assert.equal(statusRunRunning.activeWorkers, 1);
+  assert.equal(statusRunRunning.availableWorkerSlots, 1);
+  assert.deepEqual(statusRunRunning.activeProjects, ["project-sync-b"]);
+
+  // Case C: Deduplication when job and run refer to same execution
+  const linkedJob = {
+    jobId: "job-sync-linked",
+    projectId: "project-sync-c",
+    taskId: "TASK-SYNC-3",
+    state: JOB_STATES.RUNNING,
+    runId: "run-sync-linked",
+  };
+  const linkedRun = {
+    runId: "run-sync-linked",
+    state: RUN_STATES.RUNNING,
+    project: { id: "project-sync-c" },
+    task: { id: "TASK-SYNC-3" },
+  };
+  const statusDeduplicated = parallelQueueStatus([linkedJob], 2, [linkedRun]);
+  assert.equal(statusDeduplicated.activeWorkers, 1, "Should deduplicate matching job and run");
+  assert.equal(statusDeduplicated.availableWorkerSlots, 1);
+
+  // Case D: Multiple distinct running executions across projects
+  const executingRun = {
+    runId: "run-sync-executing",
+    state: "EXECUTING",
+    project: { id: "project-sync-d" },
+    task: { id: "TASK-SYNC-4" },
+  };
+  const statusMultiple = parallelQueueStatus([runningJob], 2, [runningRun, executingRun]);
+  assert.equal(statusMultiple.activeWorkers, 3);
+  assert.equal(statusMultiple.availableWorkerSlots, 0); // Math.max(0, 2 - 3) = 0
+  assert.deepEqual(statusMultiple.activeProjects, ["project-sync-a", "project-sync-b", "project-sync-d"]);
+
+  // Case E: daemonStatus live calculation & HTTP /api/daemon/status response
+  const activeSyncRunId = "run-active-sync-test-99";
+  const activeSyncManifest = {
+    schemaVersion: 1,
+    runId: activeSyncRunId,
+    state: RUN_STATES.RUNNING,
+    project: { id: "starter-app", repository: "/tmp/starter-app" },
+    task: { id: "FE-001", path: "02-Projects/starter-app/tasks/task-001.md", status: "IN_PROGRESS" },
+    history: [],
+  };
+  fs.writeFileSync(path.join(tempRuns, `${activeSyncRunId}.json`), JSON.stringify(activeSyncManifest, null, 2));
+
+  // Verify daemonStatus function reflects active running run
+  const liveDaemonStatus = daemonStatus({ runsRoot: tempRuns });
+  assert.equal(liveDaemonStatus.parallel.activeWorkers >= 1, true, "activeWorkers must never be 0 when a run is RUNNING");
+  assert.equal(liveDaemonStatus.parallel.availableWorkerSlots, Math.max(0, liveDaemonStatus.parallel.maxWorkers - liveDaemonStatus.parallel.activeWorkers));
+
+  // Verify GET /api/daemon/status HTTP endpoint
+  const daemonHttpRes = await request({ path: "/api/daemon/status", port, token });
+  assert.equal(daemonHttpRes.status, 200);
+  assert.equal(daemonHttpRes.data.data.parallel.activeWorkers >= 1, true);
+  assert.equal(
+    daemonHttpRes.data.data.parallel.availableWorkerSlots,
+    Math.max(0, daemonHttpRes.data.data.parallel.maxWorkers - daemonHttpRes.data.data.parallel.activeWorkers)
+  );
+
+  // Clean up active sync run manifest
+  fs.unlinkSync(path.join(tempRuns, `${activeSyncRunId}.json`));
 
   // Cleanup
   await apiServer.stop();
