@@ -245,6 +245,22 @@ export function isDeterministicProjectOnlyTask(manifest) {
   const changedPaths = manifest.execution?.scopeAudit?.changedPaths || [];
   if (changedPaths.length === 0) return false;
 
+  // If any changed file touches architectural/convention-defining layers,
+  // do NOT skip LLM retrospective — these may produce reusable patterns.
+  const hasArchitecturalChange = changedPaths.some((p) => {
+    const normalized = p.toLowerCase();
+    return normalized.includes("/hooks/")
+      || normalized.includes("/services/")
+      || normalized.includes("/providers/")
+      || normalized.includes("/routes/")
+      || normalized.includes("/lib/")
+      || normalized.includes("/utils/")
+      || normalized.includes("/store/")
+      || normalized.includes("/middleware/")
+      || normalized.includes("/api/");
+  });
+  if (hasArchitecturalChange) return false;
+
   // Check if all changed paths are purely project-internal UI/pages/components/tests/configs
   const isPurelyProjectInternal = changedPaths.every((p) => {
     const normalized = p.toLowerCase();
