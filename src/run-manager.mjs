@@ -592,6 +592,27 @@ export function claimRun({ vaultRoot, runsRoot, runId, services }) {
       taskStatus: "IN_PROGRESS",
     });
     writeManifestAtomic(filePath, manifest);
+
+    for (const other of listRuns(runsRoot)) {
+      if (
+        other.runId !== manifest.runId &&
+        other.project?.id === manifest.project?.id &&
+        other.task?.path === manifest.task?.path &&
+        SUPERSEDEABLE_RUN_STATES.has(other.state)
+      ) {
+        const at = new Date().toISOString();
+        other.state = RUN_STATES.SUPERSEDED;
+        other.updatedAt = at;
+        other.history.push({
+          at,
+          event: "RUN_SUPERSEDED",
+          state: RUN_STATES.SUPERSEDED,
+          message: `Task telah diklaim oleh run ${manifest.runId}.`,
+        });
+        writeManifestAtomic(manifestPath(runsRoot, other.runId), other);
+      }
+    }
+
     return manifest;
   } catch (error) {
     if (!taskUpdated) {
