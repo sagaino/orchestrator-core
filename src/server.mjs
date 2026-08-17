@@ -124,9 +124,6 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   });
 
   router.get("/api/jobs", async (req, res) => {
-    try {
-      reconcileJobs(runsRoot, listRuns(runsRoot));
-    } catch {}
     const jobs = listJobs(runsRoot);
     sendJson(res, 200, { success: true, data: jobs });
   });
@@ -413,6 +410,14 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
 
   router.get("/api/knowledge/health", async (req, res) => {
     const health = knowledgeHealth({ vaultRoot, fixSafe: false });
+    sendJson(res, 200, { success: true, data: health });
+  });
+
+  router.post("/api/knowledge/health/fix-safe", async (req, res) => {
+    const body = await parseJsonBody(req);
+    const { fixedBy = "user" } = body || {};
+    const health = knowledgeHealth({ vaultRoot, fixSafe: true, fixedBy });
+    eventHub.broadcast("KNOWLEDGE_HEALTH_UPDATED", health);
     sendJson(res, 200, { success: true, data: health });
   });
 
