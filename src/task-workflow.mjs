@@ -18,6 +18,58 @@ import path from "node:path";
 import { cleanupIsolatedWorkspace } from "./workspace-manager.mjs";
 import { appendRunTelemetry } from "./telemetry.mjs";
 
+export function cleanTerminalOutput(rawOutput) {
+  if (!rawOutput || typeof rawOutput !== "string") return "";
+
+  // Strip ANSI escape codes
+  const cleanAnsi = rawOutput.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
+  const lines = cleanAnsi.split(/\r?\n/);
+  const filteredLines = [];
+  let previousLine = null;
+  let omittedNodeModulesCount = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Identify node_modules / internal runtime stack trace lines
+    const isNodeModulesTrace =
+      /\bat\s+.*[/\\]node_modules[/\\]/.test(line) ||
+      /\bat\s+.*node:internal[/\\]/.test(line) ||
+      (trimmed.startsWith("at ") && (line.includes("node_modules/") || line.includes("node_modules\\")));
+
+    if (isNodeModulesTrace) {
+      omittedNodeModulesCount++;
+      continue;
+    }
+
+    if (omittedNodeModulesCount > 0) {
+      filteredLines.push(`    [... ${omittedNodeModulesCount} node_modules stack trace lines omitted ...]`);
+      omittedNodeModulesCount = 0;
+    }
+
+    // Deduplicate consecutive identical lines
+    if (trimmed && trimmed === previousLine) {
+      continue;
+    }
+
+    filteredLines.push(line);
+    if (trimmed) {
+      previousLine = trimmed;
+    }
+  }
+
+  if (omittedNodeModulesCount > 0) {
+    filteredLines.push(`    [... ${omittedNodeModulesCount} node_modules stack trace lines omitted ...]`);
+  }
+
+  return filteredLines.join("\n").trim();
+}
+
+export function cleanErrorTail(errorText, maxLength = 4000) {
+  const cleaned = cleanTerminalOutput(errorText);
+  return cleaned.length > maxLength ? cleaned.slice(-maxLength) : cleaned;
+}
+
 export async function startTaskRun({
   vaultRoot,
   runsRoot,
@@ -121,12 +173,13 @@ export async function requestChangesTaskRun({
   retrospective = retrospectRun,
   onProgress = () => {},
 }) {
+  const cleanedReason = cleanTerminalOutput(reason);
   let manifest = beginReviewRevision({
     vaultRoot,
     runsRoot,
     runId,
     requestedBy,
-    reason,
+    reason: cleanedReason || reason,
   });
   updateJobForRun(runsRoot, runId, {
     state: JOB_STATES.RUNNING,
@@ -154,7 +207,7 @@ export async function requestChangesTaskRun({
     const entry = [
       `## [${new Date().toISOString().slice(0, 10)}] task-request-changes | ${manifest.task.id}`,
       `- Revision iteration \`${latest?.iteration ?? "unknown"}\` selesai dan kembali ke REVIEW.`,
-      `- Requested by \`${String(requestedBy).trim() || "user"}\`; feedback: ${String(reason).trim()}.`,
+      `- Requested by \`${String(requestedBy).trim() || "user"}\`; feedback: ${String(cleanedReason || reason).trim()}.`,
     ].join("\n");
     fs.appendFileSync(path.join(vaultRoot, "wiki-log.md"), `\n\n${entry}\n`, "utf8");
     return manifest;
@@ -208,12 +261,13 @@ export async function rejectTaskRun({
   let manifest = getRun(runsRoot, runId);
   if (manifest.state === RUN_STATES.FAILED) return manifest;
   manifest = await discardWorkspace({ runsRoot, manifest });
+  const cleanedReason = cleanTerminalOutput(reason);
   return rejectReviewRun({
     vaultRoot,
     runsRoot,
     runId,
     rejectedBy,
-    reason,
+    reason: cleanedReason || reason,
   });
 }
 
@@ -228,8 +282,9 @@ export async function retryTaskRun({
   if (manifest.state !== RUN_STATES.FAILED) {
     throw new Error(`Retry hanya dapat dilakukan untuk run FAILED; state ${manifest.state}.`);
   }
-  const error = String(manifest.execution?.result?.error ?? "Unknown failure");
-  const safeInfrastructureFailure = /\bENOENT\b|executable.*not found|command not found/i.test(error)
+  const rawError = String(manifest.execution?.result?.error ?? "Unknown failure");
+  const error = cleanErrorTail(rawError);
+  const safeInfrastructureFailure = /\bENOENT\b|executable.*not found|command not found/i.test(rawError)
     && !manifest.execution?.agent
     && !(manifest.execution?.scopeAudit?.changedPaths?.length > 0);
   if (!safeInfrastructureFailure && !force) {

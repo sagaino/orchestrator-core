@@ -178,24 +178,74 @@ function retrospectiveSchema() {
   });
 }
 
+export function compactRetrospectiveContext(manifest) {
+  const verification = (manifest.execution?.verification ?? []).map((v) => ({
+    command: v.command,
+    exitCode: v.exitCode,
+  }));
+
+  let agentSummary = null;
+  const rawAgent = manifest.execution?.agent?.finalResult;
+  if (rawAgent) {
+    if (typeof rawAgent === "object") {
+      agentSummary = {
+        summary: rawAgent.summary || rawAgent.description || rawAgent.message || undefined,
+        changedFiles: rawAgent.changedFiles || rawAgent.files || undefined,
+        status: rawAgent.status || undefined,
+      };
+      if (!agentSummary.summary && !agentSummary.changedFiles && !agentSummary.status) {
+        const serialized = JSON.stringify(rawAgent);
+        agentSummary = serialized.length > 500 ? `${serialized.slice(0, 500)}…` : rawAgent;
+      }
+    } else {
+      const str = String(rawAgent).trim();
+      agentSummary = str.length > 500 ? `${str.slice(0, 500)}…` : str;
+    }
+  }
+
+  const recovery = manifest.execution?.automaticRecovery
+    ? {
+        attempts: manifest.execution.automaticRecovery.attempts,
+        succeeded: manifest.execution.automaticRecovery.succeeded,
+      }
+    : null;
+
+  const changedPaths = manifest.execution?.scopeAudit?.changedPaths?.length
+    ? manifest.execution.scopeAudit.changedPaths
+    : undefined;
+
+  return {
+    taskId: manifest.task?.id ?? undefined,
+    verification: verification.length > 0 ? verification : undefined,
+    recovery: recovery || undefined,
+    agent: agentSummary || undefined,
+    changedPaths,
+  };
+}
+
+export function buildCompressedRetrospectivePrompt({ manifest, vaultRoot, projectRepository }) {
+  const compactContext = compactRetrospectiveContext(manifest);
+  return [
+    "Retrospective read-only untuk task software engineering terverifikasi.",
+    `Task: ${path.join(vaultRoot, manifest.task.path)} (${manifest.task.id || "TASK"})`,
+    `Project: ${projectRepository}`,
+    `Index: ${path.join(vaultRoot, "index.md")}`,
+    "",
+    "Instruksi: Klasifikasikan insight reusable (NEW|UPDATE|PROJECT_ONLY|IGNORE) dan hasilkan JSON payload kompak.",
+    "- NEW: Reusable lintas project; cari existing Wiki page sebelum memilih NEW.",
+    "- UPDATE: Update halaman existing jika konsep/snippet sudah ada.",
+    "- PROJECT_ONLY: Khusus project ini saja.",
+    "- IGNORE: Tidak ada insight/knowledge durable yang perlu disimpan.",
+    "",
+    `Context: ${JSON.stringify(compactContext)}`,
+  ].join("\n");
+}
+
 async function generateProposalWithAgy({ manifest, vaultRoot, runsRoot, processRunner = runProcess }) {
   const eventLogPath = path.join(runsRoot, "events", `${manifest.runId}.jsonl`);
   const agentConfig = resolveAgyConfig(process.env, "retrospective");
   const projectRepository = manifest.execution?.workspace?.path ?? manifest.project.repository;
-  const prompt = [
-    "Lakukan retrospective read-only untuk task software engineering yang sudah berhasil diverifikasi.",
-    `Task: ${path.join(vaultRoot, manifest.task.path)}`,
-    `Project: ${projectRepository}`,
-    `Wiki index: ${path.join(vaultRoot, "index.md")}`,
-    "",
-    "Klasifikasikan hasil sebagai NEW, UPDATE, PROJECT_ONLY, atau IGNORE.",
-    "Cari existing Wiki page sebelum memilih NEW. Jangan mengubah file apa pun.",
-    "Gunakan PROJECT_ONLY jika insight hanya berlaku pada project ini.",
-    "Gunakan IGNORE jika tidak ada knowledge durable.",
-    `Verification: ${JSON.stringify(manifest.execution.verification ?? [])}`,
-    `Automatic recovery: ${JSON.stringify(manifest.execution.automaticRecovery ?? null)}`,
-    `Agent result: ${JSON.stringify(manifest.execution.agent?.finalResult ?? null)}`,
-  ].join("\n");
+  const prompt = buildCompressedRetrospectivePrompt({ manifest, vaultRoot, projectRepository });
   const result = await processRunner({
     command: "agy",
     args: [
