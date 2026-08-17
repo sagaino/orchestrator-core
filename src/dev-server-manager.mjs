@@ -8,6 +8,17 @@ import { getRun } from "./run-manager.mjs";
 const execFileAsync = promisify(execFile);
 
 export function findWorkspacePath(runsRoot, runId) {
+  // Primary: resolve from manifest.execution.workspace.path
+  try {
+    const manifest = getRun(runsRoot, runId);
+    const wsPath = manifest?.execution?.workspace?.path;
+    const wsState = manifest?.execution?.workspace?.state;
+    if (wsPath && fs.existsSync(wsPath) && !["CLEANED", "DISCARDED", "APPLIED"].includes(wsState)) {
+      return wsPath;
+    }
+  } catch {}
+
+  // Fallback: check legacy hardcoded paths
   const runDir = path.join(runsRoot, runId);
   const possiblePaths = [
     path.join(runDir, "workspace"),
@@ -76,7 +87,29 @@ export function parseGitDiff(rawDiff) {
 export async function getRunDiff({ runsRoot, runId }) {
   const workspacePath = findWorkspacePath(runsRoot, runId);
   if (!workspacePath) {
-    const run = getRun(runsRoot, runId);
+    // Try loading archived diff for DONE/CLEANED runs
+    try {
+      const run = getRun(runsRoot, runId);
+      const artifactRelPath = run?.execution?.workspace?.cleanup?.artifactPath;
+      if (artifactRelPath) {
+        const artifactDir = path.join(runsRoot, artifactRelPath);
+        const diffFile = path.join(artifactDir, "changes.patch");
+        if (fs.existsSync(diffFile)) {
+          const rawDiff = fs.readFileSync(diffFile, "utf8");
+          const files = parseGitDiff(rawDiff);
+          return {
+            runId,
+            workspaceExists: false,
+            archived: true,
+            rawDiff,
+            filesCount: files.length,
+            files,
+            message: "Diff diambil dari arsip workspace (worktree telah dibersihkan).",
+          };
+        }
+      }
+    } catch {}
+
     return {
       runId,
       workspaceExists: false,
