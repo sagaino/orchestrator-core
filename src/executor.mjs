@@ -192,6 +192,24 @@ function buildGraphifyQuestion(manifest) {
   return [manifest.task.title, ...allowedPaths].filter(Boolean).join(" ");
 }
 
+export function pruneGraphifyContext(rawContext, maxCharacters = 2500) {
+  if (!rawContext || typeof rawContext !== "string") return "";
+  const lines = rawContext.split(/\r?\n/);
+  const pruned = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Strip verbose community detection boilerplate or verbose statistics
+    if (trimmed.startsWith("Graph statistics:") || trimmed.startsWith("Community detection:")) continue;
+    pruned.push(trimmed);
+    if (pruned.join("\n").length >= maxCharacters) break;
+  }
+
+  const result = pruned.join("\n");
+  return result.length > maxCharacters ? `${result.slice(0, maxCharacters)}…` : result;
+}
+
 export function buildAgyInvocation(
   manifest,
   vaultRoot,
@@ -960,7 +978,7 @@ export async function executeRun({
       if (result.exitCode !== 0) {
         throw new Error(`Graphify query gagal dengan exit code ${result.exitCode}: ${result.stderrTail.trim()}`);
       }
-      graphifyContext = result.stdoutTail.trim();
+      graphifyContext = pruneGraphifyContext(result.stdoutTail.trim());
     }
 
     const invocation = agentInvocationBuilder(manifest, vaultRoot, { graphifyContext, repository });
@@ -1176,7 +1194,7 @@ export async function reviseRun({
       if (result.exitCode !== 0) {
         throw new Error(`Graphify query gagal dengan exit code ${result.exitCode}: ${result.stderrTail.trim()}`);
       }
-      graphifyContext = result.stdoutTail.trim();
+      graphifyContext = pruneGraphifyContext(result.stdoutTail.trim());
     }
 
     const invocation = revisionInvocationBuilder(manifest, vaultRoot, { repository, graphifyContext });
