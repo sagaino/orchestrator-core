@@ -594,10 +594,13 @@ export function claimRun({ vaultRoot, runsRoot, runId, services }) {
     writeManifestAtomic(filePath, manifest);
 
     for (const other of listRuns(runsRoot)) {
+      const matchProject = other.project?.id?.toLowerCase() === manifest.project?.id?.toLowerCase();
+      const matchTask = (other.task?.id && other.task.id.toLowerCase() === manifest.task?.id?.toLowerCase()) ||
+        (other.task?.path && other.task.path.toLowerCase() === manifest.task?.path?.toLowerCase());
       if (
         other.runId !== manifest.runId &&
-        other.project?.id === manifest.project?.id &&
-        other.task?.path === manifest.task?.path &&
+        matchProject &&
+        matchTask &&
         SUPERSEDEABLE_RUN_STATES.has(other.state)
       ) {
         const at = new Date().toISOString();
