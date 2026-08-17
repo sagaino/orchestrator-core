@@ -147,6 +147,12 @@ function existingTaskSummary(vaultRoot, projectId, readMarkdown) {
     .filter((task) => task.id);
 }
 
+export function compactActiveTaskSummary(tasks) {
+  return (tasks || [])
+    .filter((task) => task.status !== "DONE" && task.status !== "SUPERSEDED")
+    .slice(0, 5);
+}
+
 async function graphifyContext(project, request, eventLogPath, processRunner) {
   if (!project.graphify) return "Graphify disabled for this project.";
   const result = await processRunner({
@@ -188,7 +194,7 @@ export async function planTaskWithAgy({
     `Project: ${project.id} (${project.repository})`,
     `Package scripts: ${JSON.stringify(scripts)}`,
     `Project verification defaults: ${JSON.stringify(project.verificationDefaults ?? [])}`,
-    `Existing tasks: ${JSON.stringify(tasks)}`,
+    `Existing tasks: ${JSON.stringify(compactActiveTaskSummary(tasks))}`,
     "",
     "=== GRAPHIFY TARGETED CONTEXT ===",
     graphContext || "Tidak ada node relevan.",
