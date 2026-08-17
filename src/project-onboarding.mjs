@@ -950,17 +950,21 @@ export async function addNewProject({
   vaultRoot,
   runsRoot,
   projectName,
+  projectId: customProjectId,
   targetPath,
+  targetDirectory,
   blueprint = DEFAULT_BLUEPRINT,
   registeredBy = "user",
   processRunner = runProcess,
   onProgress = () => {},
   allowAgentFallback = configuredOnboardingAiFallback(),
 }) {
-  const projectId = slugify(projectName);
+  const resolvedName = projectName ?? customProjectId;
+  const projectId = slugify(resolvedName);
   if (!projectId) throw new Error("Nama project baru tidak valid.");
   if (!BLUEPRINT_PATHS[blueprint]) throw new Error(`Blueprint belum didukung: ${blueprint}.`);
-  const target = ensureAbsoluteSafePath(targetPath, { mustNotExist: true });
+  const resolvedTarget = targetPath ?? targetDirectory;
+  const target = ensureAbsoluteSafePath(resolvedTarget, { mustNotExist: true });
   const parent = path.dirname(target);
   if (!fs.existsSync(parent) || !fs.statSync(parent).isDirectory()) {
     throw new Error(`Parent directory target tidak ditemukan: ${parent}`);
@@ -1590,3 +1594,5 @@ export function purgeProjectArchive({
 }
 
 export const PROJECT_BLUEPRINTS = BLUEPRINT_PATHS;
+export const onboardExistingProject = addExistingProject;
+export const onboardNewProject = addNewProject;

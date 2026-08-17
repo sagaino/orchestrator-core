@@ -17,6 +17,7 @@ import { createEventHub } from "./api/events.mjs";
 import { Router, sendJson, sendError, parseJsonBody } from "./api/router.mjs";
 import { getRunDiff, globalDevServerManager } from "./dev-server-manager.mjs";
 import { collectRtkAnalytics } from "./rtk-analytics.mjs";
+import { onboardExistingProject, onboardNewProject } from "./project-onboarding.mjs";
 
 export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   const router = new Router();
@@ -47,6 +48,71 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   router.get("/api/projects", async (req, res) => {
     const data = listProjects(vaultRoot);
     sendJson(res, 200, { success: true, data });
+  });
+
+  router.post("/api/projects/onboard/existing", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const { repositoryPath, projectId = null } = body || {};
+      if (!repositoryPath || typeof repositoryPath !== "string" || !repositoryPath.trim()) {
+        return sendError(res, 400, "Missing required field: repositoryPath");
+      }
+
+      const onboardExisting = services?.onboardExistingProject ?? onboardExistingProject;
+      const result = await onboardExisting({
+        vaultRoot,
+        runsRoot,
+        repositoryPath: repositoryPath.trim(),
+        projectId: projectId && typeof projectId === "string" ? projectId.trim() : null,
+      });
+
+      const effectiveProjectId = result?.project?.id || (projectId && typeof projectId === "string" ? projectId.trim() : null);
+      eventHub.broadcast("PROJECT_ONBOARDED", {
+        projectId: effectiveProjectId,
+        mode: "existing",
+      });
+
+      sendJson(res, 201, { success: true, data: result });
+    } catch (err) {
+      sendError(res, err.statusCode || 500, err.message);
+    }
+  });
+
+  router.post("/api/projects/onboard/new", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const { projectId, projectName, targetDirectory, targetPath, blueprint = "frontend-vite" } = body || {};
+      const resolvedProjectId = projectId || projectName;
+      const resolvedTarget = targetDirectory || targetPath;
+
+      if (!resolvedProjectId || typeof resolvedProjectId !== "string" || !resolvedProjectId.trim()) {
+        return sendError(res, 400, "Missing required field: projectId");
+      }
+      if (!resolvedTarget || typeof resolvedTarget !== "string" || !resolvedTarget.trim()) {
+        return sendError(res, 400, "Missing required field: targetDirectory");
+      }
+
+      const onboardNew = services?.onboardNewProject ?? onboardNewProject;
+      const result = await onboardNew({
+        vaultRoot,
+        runsRoot,
+        projectId: resolvedProjectId.trim(),
+        projectName: resolvedProjectId.trim(),
+        targetDirectory: resolvedTarget.trim(),
+        targetPath: resolvedTarget.trim(),
+        blueprint: blueprint || "frontend-vite",
+      });
+
+      const effectiveProjectId = result?.project?.id || resolvedProjectId.trim();
+      eventHub.broadcast("PROJECT_ONBOARDED", {
+        projectId: effectiveProjectId,
+        mode: "new",
+      });
+
+      sendJson(res, 201, { success: true, data: result });
+    } catch (err) {
+      sendError(res, err.statusCode || 500, err.message);
+    }
   });
 
   router.get("/api/projects/:id", async (req, res, { params }) => {
@@ -466,6 +532,7 @@ export function createOrchestratorServer({
   host = "127.0.0.1",
   eventHub = null,
   apiToken = null,
+  services: customServices = {},
 } = {}) {
   const token = apiToken || ensureApiToken(runsRoot);
   const hub = eventHub || createEventHub();
@@ -476,6 +543,9 @@ export function createOrchestratorServer({
     validateTaskReadiness,
     buildContext,
     buildPlan,
+    onboardExistingProject,
+    onboardNewProject,
+    ...customServices,
   };
 
   const router = createRouter({ vaultRoot, runsRoot, eventHub: hub, services });

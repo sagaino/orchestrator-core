@@ -7,6 +7,7 @@ import { createOrchestratorServer } from "../src/server.mjs";
 import { RUN_STATES } from "../src/run-manager.mjs";
 import { computeAdaptivePollInterval, ACTIVE_POLL_INTERVAL_MS, IDLE_POLL_INTERVAL_MS, parallelQueueStatus, daemonStatus } from "../src/daemon.mjs";
 import { hasActiveJobs, JOB_STATES } from "../src/job-queue.mjs";
+import { onboardExistingProject, onboardNewProject, addExistingProject, addNewProject } from "../src/project-onboarding.mjs";
 
 console.log("Running api.test.mjs...");
 
@@ -537,6 +538,206 @@ try {
 
   // Clean up active sync run manifest
   fs.unlinkSync(path.join(tempRuns, `${activeSyncRunId}.json`));
+
+  // Test 18: Project Onboarding Endpoints and Aliases
+  // 18.1. Verify exports / aliases from project-onboarding.mjs
+  assert.equal(typeof onboardExistingProject, "function");
+  assert.equal(typeof onboardNewProject, "function");
+  assert.equal(onboardExistingProject, addExistingProject);
+  assert.equal(onboardNewProject, addNewProject);
+
+  // 18.2. POST /api/projects/onboard/existing validation
+  // Missing repositoryPath -> 400
+  const onboardExistingNoPath = await request({
+    method: "POST",
+    path: "/api/projects/onboard/existing",
+    port,
+    token,
+    body: {},
+  });
+  assert.equal(onboardExistingNoPath.status, 400);
+  assert.equal(onboardExistingNoPath.data.success, false);
+  assert.equal(onboardExistingNoPath.data.error.message, "Missing required field: repositoryPath");
+
+  // Empty repositoryPath -> 400
+  const onboardExistingEmptyPath = await request({
+    method: "POST",
+    path: "/api/projects/onboard/existing",
+    port,
+    token,
+    body: { repositoryPath: "   " },
+  });
+  assert.equal(onboardExistingEmptyPath.status, 400);
+
+  // 18.3. POST /api/projects/onboard/new validation
+  // Missing projectId -> 400
+  const onboardNewNoProjectId = await request({
+    method: "POST",
+    path: "/api/projects/onboard/new",
+    port,
+    token,
+    body: { targetDirectory: "/tmp/some-dir" },
+  });
+  assert.equal(onboardNewNoProjectId.status, 400);
+  assert.equal(onboardNewNoProjectId.data.success, false);
+  assert.equal(onboardNewNoProjectId.data.error.message, "Missing required field: projectId");
+
+  // Missing targetDirectory -> 400
+  const onboardNewNoTarget = await request({
+    method: "POST",
+    path: "/api/projects/onboard/new",
+    port,
+    token,
+    body: { projectId: "some-project" },
+  });
+  assert.equal(onboardNewNoTarget.status, 400);
+  assert.equal(onboardNewNoTarget.data.success, false);
+  assert.equal(onboardNewNoTarget.data.error.message, "Missing required field: targetDirectory");
+
+  // 18.4. End-to-end execution & SSE broadcast with mock onboarding services
+  const mockOnboardExistingCalls = [];
+  const mockOnboardNewCalls = [];
+
+  const mockOnboardServer = createOrchestratorServer({
+    vaultRoot: tempVault,
+    runsRoot: tempRuns,
+    port: 0,
+    host: "127.0.0.1",
+    services: {
+      onboardExistingProject: async (options) => {
+        mockOnboardExistingCalls.push(options);
+        if (options.repositoryPath.includes("fail-test")) {
+          throw new Error("Mock existing onboarding failure");
+        }
+        return {
+          schemaVersion: 1,
+          action: "EXISTING_PROJECT_ADDED",
+          onboardingId: "existing-onboard-mock-1",
+          project: {
+            id: options.projectId || "mock-existing-app",
+            title: "Mock Existing App",
+            repository: options.repositoryPath,
+            valid: true,
+          },
+        };
+      },
+      onboardNewProject: async (options) => {
+        mockOnboardNewCalls.push(options);
+        if (options.projectId.includes("fail-test")) {
+          throw new Error("Mock new onboarding failure");
+        }
+        return {
+          schemaVersion: 1,
+          action: "NEW_PROJECT_INITIALIZED",
+          onboardingId: "new-onboard-mock-1",
+          project: {
+            id: options.projectId,
+            title: options.projectName,
+            repository: options.targetDirectory,
+            blueprint: options.blueprint,
+            valid: true,
+          },
+        };
+      },
+    },
+  });
+
+  const mockServerInfo = await mockOnboardServer.start();
+  const mockPort = mockOnboardServer.server.address().port;
+  const mockToken = mockServerInfo.token;
+
+  // SSE event collector for mock server
+  let sseOnboardEvents = [];
+  const sseMockReq = http.request(
+    {
+      hostname: "127.0.0.1",
+      port: mockPort,
+      path: `/api/events?token=${mockToken}`,
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+    },
+    (res) => {
+      res.on("data", (chunk) => {
+        sseOnboardEvents.push(chunk.toString());
+      });
+    }
+  );
+  sseMockReq.on("error", () => {});
+  sseMockReq.end();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Test POST /api/projects/onboard/existing success
+  const existingRes = await request({
+    method: "POST",
+    path: "/api/projects/onboard/existing",
+    port: mockPort,
+    token: mockToken,
+    body: {
+      repositoryPath: "/mock/path/existing-app",
+      projectId: "existing-app-id",
+    },
+  });
+  assert.equal(existingRes.status, 201);
+  assert.equal(existingRes.data.success, true);
+  assert.equal(existingRes.data.data.onboardingId, "existing-onboard-mock-1");
+  assert.equal(existingRes.data.data.project.id, "existing-app-id");
+  assert.equal(mockOnboardExistingCalls.length, 1);
+  assert.equal(mockOnboardExistingCalls[0].repositoryPath, "/mock/path/existing-app");
+  assert.equal(mockOnboardExistingCalls[0].projectId, "existing-app-id");
+
+  // Test POST /api/projects/onboard/new success
+  const newRes = await request({
+    method: "POST",
+    path: "/api/projects/onboard/new",
+    port: mockPort,
+    token: mockToken,
+    body: {
+      projectId: "new-frontend-app",
+      targetDirectory: "/mock/path/new-frontend-app",
+      blueprint: "frontend-vite",
+    },
+  });
+  assert.equal(newRes.status, 201);
+  assert.equal(newRes.data.success, true);
+  assert.equal(newRes.data.data.onboardingId, "new-onboard-mock-1");
+  assert.equal(newRes.data.data.project.id, "new-frontend-app");
+  assert.equal(mockOnboardNewCalls.length, 1);
+  assert.equal(mockOnboardNewCalls[0].projectId, "new-frontend-app");
+  assert.equal(mockOnboardNewCalls[0].targetDirectory, "/mock/path/new-frontend-app");
+  assert.equal(mockOnboardNewCalls[0].blueprint, "frontend-vite");
+
+  // Wait for SSE events
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const fullSseOutput = sseOnboardEvents.join("");
+  assert.equal(fullSseOutput.includes("event: PROJECT_ONBOARDED"), true);
+  assert.equal(fullSseOutput.includes('"mode":"existing"'), true);
+  assert.equal(fullSseOutput.includes('"mode":"new"'), true);
+
+  // 18.5. Test onboarding execution error handling (HTTP 500)
+  const failExistingRes = await request({
+    method: "POST",
+    path: "/api/projects/onboard/existing",
+    port: mockPort,
+    token: mockToken,
+    body: { repositoryPath: "/mock/fail-test/path" },
+  });
+  assert.equal(failExistingRes.status, 500);
+  assert.equal(failExistingRes.data.success, false);
+  assert.equal(failExistingRes.data.error.message, "Mock existing onboarding failure");
+
+  const failNewRes = await request({
+    method: "POST",
+    path: "/api/projects/onboard/new",
+    port: mockPort,
+    token: mockToken,
+    body: { projectId: "fail-test-project", targetDirectory: "/mock/target" },
+  });
+  assert.equal(failNewRes.status, 500);
+  assert.equal(failNewRes.data.success, false);
+  assert.equal(failNewRes.data.error.message, "Mock new onboarding failure");
+
+  sseMockReq.destroy();
+  await mockOnboardServer.stop();
 
   // Cleanup
   await apiServer.stop();
