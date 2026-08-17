@@ -475,7 +475,7 @@ export function createOrchestratorServer({
         await match.handler(req, res, { params: match.params });
       }
     } catch (err) {
-      sendError(res, 500, err.message, err.stack);
+      sendError(res, err.statusCode || 500, err.message, err.details ?? err.stack);
     }
   };
 

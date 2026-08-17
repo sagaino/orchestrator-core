@@ -118,6 +118,9 @@ function parseArguments(args) {
       index += 1;
     } else if (args[index] === "--port") {
       options.port = Number(args[index + 1]);
+      if (Number.isNaN(options.port) || options.port < 1 || options.port > 65535) {
+        throw new Error(`Invalid port: "${args[index + 1]}". Port harus berupa angka antara 1-65535.`);
+      }
       index += 1;
     } else if (args[index] === "--start") {
       options.autoStart = true;
