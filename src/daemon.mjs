@@ -37,26 +37,119 @@ export function configuredParallelWorkers(env = process.env) {
   return value;
 }
 
-export function parallelQueueStatus(jobs, maxWorkers = DEFAULT_PARALLEL_WORKERS) {
-  const running = jobs.filter((job) => job.state === JOB_STATES.RUNNING);
-  const review = jobs.filter((job) => job.state === JOB_STATES.REVIEW);
-  const queued = jobs.filter((job) => job.state === JOB_STATES.QUEUED);
-  const reservedProjects = new Set([...running, ...review].map((job) => job.projectId));
-  const blocked = queued.filter((job) => reservedProjects.has(job.projectId));
-  const eligible = queued.filter((job) => !reservedProjects.has(job.projectId));
+export const ACTIVE_EXECUTION_STATES = new Set([
+  "RUNNING",
+  "EXECUTING",
+  "CLAIMING",
+  "CLAIMED",
+  "VERIFYING",
+  "CHANGES_REQUESTED",
+]);
+
+export const REVIEW_STATES = new Set([
+  "REVIEW",
+  "RETROSPECTIVE",
+  "KNOWLEDGE_APPROVAL",
+  "WIKI_SYNCED",
+]);
+
+export function parallelQueueStatus(jobs = [], maxWorkers = DEFAULT_PARALLEL_WORKERS, runs = []) {
+  const rawRunning = [];
+  const rawReview = [];
+
+  const processItem = (item) => {
+    if (!item || typeof item !== "object") return;
+    const runId = item.runId || null;
+    const jobId = item.jobId || null;
+    const projectId = item.projectId || item.project?.id || null;
+    const taskId = item.taskId || item.task?.id || null;
+    const state = String(item.state || "").toUpperCase();
+    const runState = item.runState ? String(item.runState).toUpperCase() : null;
+
+    const isTerminal = ["DONE", "FAILED", "BLOCKED", "SUPERSEDED"].includes(state);
+    if (isTerminal) return;
+
+    const isRunning = ACTIVE_EXECUTION_STATES.has(state)
+      || state === JOB_STATES.RUNNING
+      || state === "EXECUTING";
+
+    const isReview = REVIEW_STATES.has(state)
+      || state === JOB_STATES.REVIEW;
+
+    if (isRunning) {
+      rawRunning.push({ runId, jobId, projectId, taskId, raw: item });
+    } else if (isReview) {
+      rawReview.push({ runId, jobId, projectId, taskId, raw: item });
+    }
+  };
+
+  for (const job of (jobs || [])) {
+    processItem(job);
+  }
+  for (const run of (runs || [])) {
+    processItem(run);
+  }
+
+  const uniqueRunning = [];
+  for (const item of rawRunning) {
+    const existing = uniqueRunning.find((u) => (
+      (item.runId && u.runId && item.runId === u.runId)
+      || (item.jobId && u.jobId && item.jobId === u.jobId)
+      || (item.projectId && item.taskId && u.projectId && u.taskId && item.projectId === u.projectId && item.taskId === u.taskId)
+    ));
+    if (existing) {
+      if (!existing.runId && item.runId) existing.runId = item.runId;
+      if (!existing.jobId && item.jobId) existing.jobId = item.jobId;
+      if (!existing.projectId && item.projectId) existing.projectId = item.projectId;
+      if (!existing.taskId && item.taskId) existing.taskId = item.taskId;
+    } else {
+      uniqueRunning.push({ ...item });
+    }
+  }
+
+  const uniqueReview = [];
+  for (const item of rawReview) {
+    const existing = uniqueReview.find((u) => (
+      (item.runId && u.runId && item.runId === u.runId)
+      || (item.jobId && u.jobId && item.jobId === u.jobId)
+      || (item.projectId && item.taskId && u.projectId && u.taskId && item.projectId === u.projectId && item.taskId === u.taskId)
+    ));
+    if (existing) {
+      if (!existing.runId && item.runId) existing.runId = item.runId;
+      if (!existing.jobId && item.jobId) existing.jobId = item.jobId;
+      if (!existing.projectId && item.projectId) existing.projectId = item.projectId;
+      if (!existing.taskId && item.taskId) existing.taskId = item.taskId;
+    } else {
+      uniqueReview.push({ ...item });
+    }
+  }
+
+  const activeWorkers = uniqueRunning.length;
+  const availableWorkerSlots = Math.max(0, maxWorkers - activeWorkers);
+  const activeProjects = [...new Set(uniqueRunning.map((item) => item.projectId).filter(Boolean))].sort();
+  const reservedProjects = new Set([...uniqueRunning, ...uniqueReview].map((item) => item.projectId).filter(Boolean));
+
+  const queued = (jobs || []).filter((job) => (
+    (job.state === JOB_STATES.QUEUED || job.state === "QUEUED")
+    && !uniqueRunning.some((u) => (u.jobId && u.jobId === job.jobId) || (u.runId && job.runId && u.runId === job.runId))
+  ));
+
+  const blocked = queued.filter((job) => reservedProjects.has(job.projectId || job.project?.id));
+  const eligible = queued.filter((job) => !reservedProjects.has(job.projectId || job.project?.id));
+
   return {
     strategy: "PARALLEL_DISTINCT_PROJECTS",
     maxWorkers,
-    activeWorkers: running.length,
-    availableWorkerSlots: Math.max(0, maxWorkers - running.length),
-    activeProjects: [...new Set(running.map((job) => job.projectId))].sort(),
+    activeWorkers,
+    availableWorkerSlots,
+    activeProjects,
     reservedProjects: [...reservedProjects].sort(),
     eligibleQueuedJobCount: eligible.length,
     blockedQueuedJobCount: blocked.length,
     blockedQueuedJobs: blocked.map((job) => ({
       jobId: job.jobId,
-      taskId: job.taskId,
-      project: job.projectId,
+      taskId: job.taskId || job.task?.id,
+      project: job.projectId || job.project?.id,
       reason: "PROJECT_RESERVED_UNTIL_ACCEPT_OR_REJECT",
     })),
   };
@@ -457,7 +550,7 @@ export function daemonStatus({ runsRoot }) {
       errors: 0,
     },
     lastEvent: healthMatchesProcess ? health?.lastEvent ?? null : null,
-    parallel: parallelQueueStatus(jobs, maxWorkers),
+    parallel: parallelQueueStatus(jobs, maxWorkers, runs),
     notifications: notificationSummary(runsRoot),
     queue: {
       queuedJobCount: jobs.filter((job) => job.state === JOB_STATES.QUEUED).length,
@@ -616,7 +709,7 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
       port: apiServer.port,
       host: apiServer.host,
     },
-    parallel: parallelQueueStatus(listJobs(runsRoot), maxWorkers),
+    parallel: parallelQueueStatus(listJobs(runsRoot), maxWorkers, listRuns(runsRoot)),
     counters: {
       readyEvents: 0,
       manifestsCreated: 0,
@@ -631,7 +724,7 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
   appendLog(paths.log, { event: "DAEMON_STARTED", pid: process.pid, vaultRoot, runsRoot });
   const persistHealth = () => {
     health.heartbeatAt = new Date().toISOString();
-    health.parallel = parallelQueueStatus(listJobs(runsRoot), maxWorkers);
+    health.parallel = parallelQueueStatus(listJobs(runsRoot), maxWorkers, listRuns(runsRoot));
     writeJsonAtomic(paths.health, health);
   };
   const record = (event, patch = {}) => {
@@ -733,8 +826,10 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
       fillWorkerPool();
       const snapshot = workerPool.snapshot();
       const jobs = listJobs(runsRoot);
+      const runs = listRuns(runsRoot);
+      const queueStatus = parallelQueueStatus(jobs, maxWorkers, runs);
       const nextInterval = computeAdaptivePollInterval({
-        activeWorkers: snapshot.activeWorkers,
+        activeWorkers: Math.max(snapshot.activeWorkers, queueStatus.activeWorkers),
         jobs,
       });
       jobPollerTimeout = setTimeout(pollTick, nextInterval);
