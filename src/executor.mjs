@@ -224,25 +224,26 @@ export function buildAgyInvocation(
     .join("\n");
   const agentConfig = resolveAgyConfig(process.env, "implementation");
   const prompt = [
-    `Eksekusi task: ${path.join(vaultRoot, manifest.task.path)}`,
-    `Project repository: ${repository}`,
-    `Run ID: ${manifest.runId}`,
-    "",
-    "Knowledge yang sudah di-retrieve:",
-    knowledge || "- Tidak ada knowledge match yang cukup relevan.",
-    "",
-    "Konteks Graphify targeted yang sudah di-query oleh orchestrator:",
-    graphifyContext || "- Graphify tidak aktif atau tidak menemukan node yang relevan.",
-    "",
-    "Kontrak eksekusi:",
+    "=== KONTRAK EKSEKUSI CODING AGENT ===",
     "1. Baca task, project metadata, dan hanya knowledge/source yang relevan.",
-    "2. Gunakan konteks Graphify targeted di atas; jangan query atau bulk-load graph.json sendiri.",
+    "2. Gunakan konteks Graphify targeted di bawah; jangan query atau bulk-load graph.json sendiri.",
     "3. Implementasikan perubahan hanya di repository project.",
     "4. Jangan mengubah status task, run manifest, index Wiki, atau wiki-log; orchestrator memiliki lifecycle tersebut.",
     "5. Jangan menandai task DONE.",
     "6. Laporkan file berubah, verification yang disarankan, dan retrospective knowledge: NEW, UPDATE, PROJECT_ONLY, atau IGNORE.",
     "7. Jangan gunakan terminal/run_command, termasuk git, Graphify, test, lint, atau build; orchestrator menangani query, audit, dan verification.",
     "8. Jangan berhenti setelah inspeksi. Selesaikan edit yang diminta dan pastikan acceptance criteria task terpenuhi.",
+    "",
+    "=== RETRIEVED KNOWLEDGE ===",
+    knowledge || "- Tidak ada knowledge match yang cukup relevan.",
+    "",
+    "=== GRAPHIFY TARGETED CONTEXT ===",
+    graphifyContext || "- Graphify tidak aktif atau tidak menemukan node yang relevan.",
+    "",
+    "=== TARGET EXECUTION METADATA ===",
+    `Project repository: ${repository}`,
+    `Task file: ${path.join(vaultRoot, manifest.task.path)}`,
+    `Run ID: ${manifest.runId}`,
   ].join("\n");
 
   return {
@@ -281,30 +282,33 @@ export function buildAgyRecoveryInvocation(
     .map((item) => `- ${path.join(vaultRoot, item.path)}`)
     .join("\n");
   const agentConfig = resolveAgyConfig(process.env, "recovery");
+  const failureDetail = typeof failure === "string"
+    ? failure
+    : (diagnosticTail(failure?.result) || String(failure ?? "Unknown failure"));
   const prompt = [
-    `Automatic recovery attempt ${attempt} untuk task: ${path.join(vaultRoot, manifest.task.path)}`,
-    `Project workspace: ${repository}`,
-    `Run ID: ${manifest.runId}`,
-    "",
-    "Kegagalan yang harus didiagnosis:",
-    String(failure ?? "Unknown verification failure").slice(-8_000),
-    "",
-    `Allowed paths: ${allowedPaths.length ? allowedPaths.join(", ") : "seluruh repository sesuai task"}`,
-    `Current audited changes: ${changedPathsList.length ? changedPathsList.join(", ") : "none"}`,
-    "",
-    "Knowledge relevan:",
-    knowledge || "- Tidak ada knowledge match yang cukup relevan.",
-    "",
-    "Konteks Graphify targeted:",
-    graphifyContext || "- Tidak tersedia.",
-    "",
-    "Kontrak recovery:",
+    "=== KONTRAK AUTOMATIC RECOVERY AGENT ===",
     "1. Cari root cause dari error dan perbaiki implementasi yang sudah ada; jangan mengulang task dari awal.",
     "2. Pertahankan perubahan valid dari coding agent dan edit hanya allowed paths.",
     "3. Jangan mengubah task Wiki, run manifest, index, wiki-log, atau repository utama.",
     "4. Jangan menggunakan terminal/run_command, git, package install, Graphify, test, lint, atau build; orchestrator menjalankannya.",
     "5. Jika kegagalan tampak eksternal/transient dan code sudah benar, jangan membuat perubahan spekulatif.",
     "6. Laporkan root cause dan file yang diperbaiki secara ringkas.",
+    "",
+    `Allowed paths: ${allowedPaths.length ? allowedPaths.join(", ") : "seluruh repository sesuai task"}`,
+    `Current audited changes: ${changedPathsList.length ? changedPathsList.join(", ") : "none"}`,
+    "",
+    "=== RETRIEVED KNOWLEDGE ===",
+    knowledge || "- Tidak ada knowledge match yang cukup relevan.",
+    "",
+    "=== GRAPHIFY TARGETED CONTEXT ===",
+    graphifyContext || "- Tidak tersedia.",
+    "",
+    "=== RECOVERY FAILURE DETAILS ===",
+    `Kegagalan yang harus didiagnosis: ${failureDetail}`,
+    `Tahap kegagalan: ${failure?.stage ?? "verification"} (Attempt ${attempt ?? 1})`,
+    `Project workspace: ${repository}`,
+    `Task file: ${path.join(vaultRoot, manifest.task.path)}`,
+    `Run ID: ${manifest.runId}`,
   ].join("\n");
 
   return {
