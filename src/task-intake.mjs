@@ -53,9 +53,62 @@ function unwrapStructured(payload) {
   return null;
 }
 
+export function cleanTerminalOutput(rawOutput) {
+  if (!rawOutput || typeof rawOutput !== "string") return "";
+
+  // Strip ANSI escape codes
+  const cleanAnsi = rawOutput.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
+  const lines = cleanAnsi.split(/\r?\n/);
+  const filteredLines = [];
+  let previousLine = null;
+  let omittedNodeModulesCount = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Identify node_modules / internal runtime stack trace lines
+    const isNodeModulesTrace =
+      /\bat\s+.*[/\\]node_modules[/\\]/.test(line) ||
+      /\bat\s+.*node:internal[/\\]/.test(line) ||
+      (trimmed.startsWith("at ") && (line.includes("node_modules/") || line.includes("node_modules\\")));
+
+    if (isNodeModulesTrace) {
+      omittedNodeModulesCount++;
+      continue;
+    }
+
+    if (omittedNodeModulesCount > 0) {
+      filteredLines.push(`    [... ${omittedNodeModulesCount} node_modules stack trace lines omitted ...]`);
+      omittedNodeModulesCount = 0;
+    }
+
+    // Deduplicate consecutive identical lines
+    if (trimmed && trimmed === previousLine) {
+      continue;
+    }
+
+    filteredLines.push(line);
+    if (trimmed) {
+      previousLine = trimmed;
+    }
+  }
+
+  if (omittedNodeModulesCount > 0) {
+    filteredLines.push(`    [... ${omittedNodeModulesCount} node_modules stack trace lines omitted ...]`);
+  }
+
+  return filteredLines.join("\n").trim();
+}
+
+export function cleanErrorTail(errorText, maxLength = 4000) {
+  const cleaned = cleanTerminalOutput(errorText);
+  return cleaned.length > maxLength ? cleaned.slice(-maxLength) : cleaned;
+}
+
 function parsePlannerResult(result) {
   const candidates = [result.finalResult];
-  for (const line of String(result.stdoutTail ?? "").split("\n").reverse()) {
+  const cleanedStdout = cleanTerminalOutput(result.stdoutTail ?? "");
+  for (const line of cleanedStdout.split("\n").reverse()) {
     try {
       candidates.push(JSON.parse(line));
     } catch {
@@ -103,8 +156,11 @@ async function graphifyContext(project, request, eventLogPath, processRunner) {
     stage: "task-intake-graphify",
     eventLogPath,
   });
-  if (result.exitCode !== 0) return `Graphify query unavailable: ${result.stderrTail.trim()}`;
-  return result.stdoutTail.trim();
+  if (result.exitCode !== 0) {
+    const errorTail = cleanErrorTail(result.stderrTail || result.stdoutTail || "");
+    return `Graphify query unavailable: ${errorTail || "unknown error"}`;
+  }
+  return cleanTerminalOutput(result.stdoutTail).trim();
 }
 
 export async function planTaskWithAgy({
@@ -162,7 +218,10 @@ export async function planTaskWithAgy({
     metadata: { intakeId, projectId: project.id },
   });
   persistIntakeTelemetry({ runsRoot, intakeId, record: telemetry, project });
-  if (result.exitCode !== 0) throw new Error(`Task planner gagal dengan exit code ${result.exitCode}.`);
+  if (result.exitCode !== 0) {
+    const errorTail = cleanErrorTail(result.stderrTail || result.stdoutTail || "");
+    throw new Error(`Task planner gagal dengan exit code ${result.exitCode}${errorTail ? `: ${errorTail}` : "."}`);
+  }
   return { draft: parsePlannerResult(result), agentConfig, intakeId, telemetry };
 }
 

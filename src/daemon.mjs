@@ -13,10 +13,19 @@ import { createOrchestratorServer } from "./server.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
+export const ACTIVE_POLL_INTERVAL_MS = 1_000;
+export const IDLE_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_PARALLEL_WORKERS = 2;
 const MAX_PARALLEL_WORKERS = 8;
 const LAUNCH_AGENT_LABEL = "com.sagaino.personal-ai-orchestrator";
 const execFileAsync = promisify(execFile);
+
+export function computeAdaptivePollInterval({ activeWorkers = 0, queuedJobCount = 0, jobs = [] } = {}) {
+  const hasActiveJobs = activeWorkers > 0
+    || queuedJobCount > 0
+    || jobs.some((job) => [JOB_STATES.QUEUED, JOB_STATES.RUNNING].includes(job.state));
+  return hasActiveJobs ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;
+}
 
 export function configuredParallelWorkers(env = process.env) {
   const raw = env.ORCHESTRATOR_MAX_PARALLEL_JOBS;
@@ -719,13 +728,30 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
 
   let watcher;
   let heartbeat;
-  let jobPoller;
+  let jobPollerTimeout;
+  let isRunning = true;
   try {
+    const pollTick = () => {
+      if (!isRunning) return;
+      fillWorkerPool();
+      const snapshot = workerPool.snapshot();
+      const jobs = listJobs(runsRoot);
+      const nextInterval = computeAdaptivePollInterval({
+        activeWorkers: snapshot.activeWorkers,
+        jobs,
+      });
+      jobPollerTimeout = setTimeout(pollTick, nextInterval);
+    };
+
     watcher = watchReadyTasks({
       vaultRoot,
       services,
       ignoreInitial: true,
-      onEvent: processEvent,
+      onEvent: (event) => {
+        processEvent(event);
+        if (jobPollerTimeout) clearTimeout(jobPollerTimeout);
+        pollTick();
+      },
       onError: processError,
     });
     const initial = scanReadyTasks(vaultRoot, services);
@@ -733,18 +759,18 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
     for (const event of initial.events) processEvent(event);
     persistHealth();
     heartbeat = setInterval(persistHealth, HEARTBEAT_INTERVAL_MS);
-    fillWorkerPool();
-    jobPoller = setInterval(fillWorkerPool, 1_000);
+    pollTick();
 
     await new Promise((resolve) => {
       process.once("SIGINT", () => resolve("SIGINT"));
       process.once("SIGTERM", () => resolve("SIGTERM"));
     });
   } finally {
+    isRunning = false;
+    if (jobPollerTimeout) clearTimeout(jobPollerTimeout);
     if (apiServer) await apiServer.stop();
     workerPool.stop();
     if (heartbeat) clearInterval(heartbeat);
-    if (jobPoller) clearInterval(jobPoller);
     if (watcher) await watcher.close();
     const stoppedAt = new Date().toISOString();
     health.heartbeatAt = stoppedAt;

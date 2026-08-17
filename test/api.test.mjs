@@ -5,6 +5,8 @@ import path from "node:path";
 import http from "node:http";
 import { createOrchestratorServer } from "../src/server.mjs";
 import { RUN_STATES } from "../src/run-manager.mjs";
+import { computeAdaptivePollInterval, ACTIVE_POLL_INTERVAL_MS, IDLE_POLL_INTERVAL_MS } from "../src/daemon.mjs";
+import { hasActiveJobs, JOB_STATES } from "../src/job-queue.mjs";
 
 console.log("Running api.test.mjs...");
 
@@ -217,6 +219,110 @@ try {
   });
 
   await ssePromise;
+
+  // Test 11: Non-blocking POST /api/runs/:id/start returns 202 Accepted
+  const startRunId = "fe-002-20260816T040000Z-22334455";
+  const startManifest = {
+    schemaVersion: 1,
+    runId: startRunId,
+    state: RUN_STATES.PENDING_APPROVAL,
+    project: { id: "starter-app", repository: "/tmp/starter-app" },
+    task: { id: "FE-001", path: "02-Projects/starter-app/tasks/task-001.md", status: "READY" },
+    history: [],
+  };
+  fs.writeFileSync(path.join(tempRuns, `${startRunId}.json`), JSON.stringify(startManifest, null, 2));
+
+  const startRes = await request({
+    method: "POST",
+    path: `/api/runs/${startRunId}/start`,
+    port,
+    token,
+    body: { approvedBy: "test-user" },
+  });
+  assert.equal(startRes.status, 202);
+  assert.equal(startRes.data.success, true);
+  assert.equal(startRes.data.data.runId, startRunId);
+  assert.equal(startRes.data.data.status, "running");
+
+  // Non-existent run returns 404
+  const notFoundStart = await request({
+    method: "POST",
+    path: "/api/runs/non-existent-run/start",
+    port,
+    token,
+  });
+  assert.equal(notFoundStart.status, 404);
+
+  // Test 12: Non-blocking POST /api/runs/:id/request-changes
+  // Missing reason returns 400
+  const reqChangesNoReason = await request({
+    method: "POST",
+    path: `/api/runs/${runId}/request-changes`,
+    port,
+    token,
+    body: { reason: "" },
+  });
+  assert.equal(reqChangesNoReason.status, 400);
+
+  // Valid request changes on review run returns 202 Accepted
+  const reqChangesRes = await request({
+    method: "POST",
+    path: `/api/runs/${runId}/request-changes`,
+    port,
+    token,
+    body: { reason: "Please refine the navbar styling" },
+  });
+  assert.equal(reqChangesRes.status, 202);
+  assert.equal(reqChangesRes.data.success, true);
+  assert.equal(reqChangesRes.data.data.runId, runId);
+  assert.equal(reqChangesRes.data.data.status, "running");
+  assert.equal(reqChangesRes.data.data.state, RUN_STATES.CHANGES_REQUESTED);
+
+  // Test 13: Non-blocking POST /api/runs/:id/recover
+  // Run not in FAILED state returns 400 without force
+  const recoverNotFailed = await request({
+    method: "POST",
+    path: `/api/runs/${runId}/recover`,
+    port,
+    token,
+    body: { force: false },
+  });
+  assert.equal(recoverNotFailed.status, 400);
+
+  // Recover on FAILED run returns 202 Accepted
+  const failedRunId = "fe-003-20260816T050000Z-33445566";
+  const failedManifest = {
+    schemaVersion: 1,
+    runId: failedRunId,
+    state: RUN_STATES.FAILED,
+    project: { id: "starter-app", repository: "/tmp/starter-app" },
+    task: { id: "FE-001", path: "02-Projects/starter-app/tasks/task-001.md", status: "FAILED" },
+    history: [],
+  };
+  fs.writeFileSync(path.join(tempRuns, `${failedRunId}.json`), JSON.stringify(failedManifest, null, 2));
+
+  const recoverRes = await request({
+    method: "POST",
+    path: `/api/runs/${failedRunId}/recover`,
+    port,
+    token,
+    body: { force: true },
+  });
+  assert.equal(recoverRes.status, 202);
+  assert.equal(recoverRes.data.success, true);
+  assert.equal(recoverRes.data.data.runId, failedRunId);
+  assert.equal(recoverRes.data.data.status, "running");
+  assert.equal(recoverRes.data.data.state, RUN_STATES.VERIFYING);
+
+  // Test 14: Adaptive backoff polling calculation in daemon
+  assert.equal(computeAdaptivePollInterval({ activeWorkers: 0, queuedJobCount: 0, jobs: [] }), IDLE_POLL_INTERVAL_MS);
+  assert.equal(computeAdaptivePollInterval({ activeWorkers: 1, queuedJobCount: 0, jobs: [] }), ACTIVE_POLL_INTERVAL_MS);
+  assert.equal(computeAdaptivePollInterval({ activeWorkers: 0, queuedJobCount: 2, jobs: [] }), ACTIVE_POLL_INTERVAL_MS);
+  assert.equal(computeAdaptivePollInterval({ activeWorkers: 0, queuedJobCount: 0, jobs: [{ state: JOB_STATES.QUEUED }] }), ACTIVE_POLL_INTERVAL_MS);
+  assert.equal(computeAdaptivePollInterval({ activeWorkers: 0, queuedJobCount: 0, jobs: [{ state: JOB_STATES.DONE }] }), IDLE_POLL_INTERVAL_MS);
+
+  // Test 15: hasActiveJobs helper
+  assert.equal(hasActiveJobs(tempRuns), false);
 
   // Cleanup
   await apiServer.stop();

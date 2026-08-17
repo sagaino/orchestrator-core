@@ -5,7 +5,7 @@ import { validateTaskReadiness } from "./task-readiness.mjs";
 import { requestTask } from "./task-intake.mjs";
 import { startTaskRun, recoverTaskRun, requestChangesTaskRun, rejectTaskRun, retryTaskRun } from "./task-workflow.mjs";
 import { previewReviewWorkspace } from "./review-workflow.mjs";
-import { listRuns, getRun } from "./run-manager.mjs";
+import { listRuns, getRun, RUN_STATES } from "./run-manager.mjs";
 import { listJobs, getJob, updateJobForRun, reconcileJobs, JOB_STATES } from "./job-queue.mjs";
 import { listKnowledgeCandidates, promoteKnowledgeCandidate, rejectKnowledgeCandidate, acceptRun } from "./knowledge-workflow.mjs";
 import { knowledgeHealth } from "./knowledge-quality.mjs";
@@ -141,16 +141,39 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     const body = await parseJsonBody(req);
     const { approvedBy = "user" } = body;
 
-    const manifest = await startTaskRun({
-      vaultRoot,
-      runsRoot,
-      runId: params.id,
-      approvedBy,
-      onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
+    let run = null;
+    try {
+      run = getRun(runsRoot, params.id);
+    } catch (err) {
+      return sendError(res, 404, err.message);
+    }
+
+    eventHub.broadcast("RUN_STARTED", { runId: run.runId, state: RUN_STATES.RUNNING });
+    sendJson(res, 202, {
+      success: true,
+      data: {
+        runId: run.runId,
+        status: "running",
+        state: RUN_STATES.RUNNING,
+      },
     });
 
-    eventHub.broadcast("RUN_STARTED", { runId: manifest.runId, state: manifest.state });
-    sendJson(res, 200, { success: true, data: manifest });
+    (async () => {
+      try {
+        const manifest = await startTaskRun({
+          vaultRoot,
+          runsRoot,
+          projectId: run.project?.id,
+          taskInput: run.task?.id || run.task?.path,
+          approvedBy,
+          services,
+          onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
+        });
+        eventHub.broadcast("RUN_PROGRESS", { runId: manifest.runId, state: manifest.state });
+      } catch (err) {
+        eventHub.broadcast("RUN_FAILED", { runId: run.runId, error: err.message });
+      }
+    })();
   });
 
   router.post("/api/runs/:id/request-changes", async (req, res, { params }) => {
@@ -160,22 +183,47 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       return sendError(res, 400, "Missing required field: reason");
     }
 
-    const manifest = await requestChangesTaskRun({
-      vaultRoot,
-      runsRoot,
-      runId: params.id,
-      requestedBy,
-      reason: reason.trim(),
-      onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
+    let run = null;
+    try {
+      run = getRun(runsRoot, params.id);
+      if (![RUN_STATES.REVIEW, RUN_STATES.RETROSPECTIVE].includes(run.state)) {
+        return sendError(res, 400, `Request changes requires run in REVIEW or RETROSPECTIVE; current state: ${run.state}`);
+      }
+    } catch (err) {
+      return sendError(res, 404, err.message);
+    }
+
+    eventHub.broadcast("RUN_CHANGES_REQUESTED", { runId: params.id, state: RUN_STATES.CHANGES_REQUESTED });
+    sendJson(res, 202, {
+      success: true,
+      data: {
+        runId: params.id,
+        status: "running",
+        state: RUN_STATES.CHANGES_REQUESTED,
+      },
     });
 
-    updateJobForRun(runsRoot, manifest.runId, {
-      state: manifest.state === "REVIEW" ? JOB_STATES.REVIEW : JOB_STATES.RUNNING,
-      runState: manifest.state,
-    });
+    (async () => {
+      try {
+        const manifest = await requestChangesTaskRun({
+          vaultRoot,
+          runsRoot,
+          runId: params.id,
+          requestedBy,
+          reason: reason.trim(),
+          onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
+        });
 
-    eventHub.broadcast("RUN_CHANGES_REQUESTED", { runId: manifest.runId, state: manifest.state });
-    sendJson(res, 200, { success: true, data: manifest });
+        updateJobForRun(runsRoot, manifest.runId, {
+          state: manifest.state === "REVIEW" ? JOB_STATES.REVIEW : JOB_STATES.RUNNING,
+          runState: manifest.state,
+        });
+
+        eventHub.broadcast("RUN_PROGRESS", { runId: manifest.runId, state: manifest.state });
+      } catch (err) {
+        eventHub.broadcast("RUN_FAILED", { runId: params.id, error: err.message });
+      }
+    })();
   });
 
   router.post("/api/runs/:id/accept", async (req, res, { params }) => {
@@ -229,17 +277,42 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     const body = await parseJsonBody(req);
     const { recoveredBy = "user", force = false } = body;
 
-    const manifest = await recoverTaskRun({
-      vaultRoot,
-      runsRoot,
-      runId: params.id,
-      recoveredBy,
-      force,
-      onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
+    let run = null;
+    try {
+      run = getRun(runsRoot, params.id);
+      if (run.state !== RUN_STATES.FAILED && !force) {
+        return sendError(res, 400, `Recover requires run in FAILED; current state: ${run.state}`);
+      }
+    } catch (err) {
+      return sendError(res, 404, err.message);
+    }
+
+    eventHub.broadcast("RUN_PROGRESS", { runId: params.id, state: RUN_STATES.VERIFYING });
+    sendJson(res, 202, {
+      success: true,
+      data: {
+        runId: params.id,
+        status: "running",
+        state: RUN_STATES.VERIFYING,
+      },
     });
 
-    eventHub.broadcast("RUN_RECOVERED", { runId: manifest.runId, state: manifest.state });
-    sendJson(res, 200, { success: true, data: manifest });
+    (async () => {
+      try {
+        const manifest = await recoverTaskRun({
+          vaultRoot,
+          runsRoot,
+          runId: params.id,
+          recoveredBy,
+          force,
+          onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
+        });
+
+        eventHub.broadcast("RUN_RECOVERED", { runId: manifest.runId, state: manifest.state });
+      } catch (err) {
+        eventHub.broadcast("RUN_FAILED", { runId: params.id, error: err.message });
+      }
+    })();
   });
 
   router.post("/api/runs/:id/retry", async (req, res, { params }) => {
@@ -396,6 +469,8 @@ export function createOrchestratorServer({
   const services = {
     readMarkdown,
     validateTaskReadiness,
+    buildContext,
+    buildPlan,
   };
 
   const router = createRouter({ vaultRoot, runsRoot, eventHub: hub, services });

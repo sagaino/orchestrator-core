@@ -181,3 +181,8 @@ export function reconcileJobs(runsRoot, runs) {
   }
   return reconciled;
 }
+
+export function hasActiveJobs(runsRoot) {
+  const jobs = listJobs(runsRoot);
+  return jobs.some((job) => [JOB_STATES.QUEUED, JOB_STATES.RUNNING].includes(job.state));
+}
