@@ -178,18 +178,23 @@ export async function planTaskWithAgy({
   const graphContext = await graphifyContext(project, request, eventLogPath, processRunner);
   const agentConfig = resolveAgyConfig(process.env, "task-intake");
   const prompt = [
-    "Susun draft task software engineering dari permintaan user. Jangan mengubah file apa pun.",
-    `Permintaan: ${request}`,
-    `Project: ${project.id}`,
-    `Repository: ${project.repository}`,
+    "=== ATURAN INTAKE & TASK PLANNER ===",
+    "1. Susun draft task software engineering dari permintaan user. Jangan mengubah file apa pun.",
+    "2. Gunakan path relatif repository dan pilih allowedPaths paling sempit yang praktis.",
+    "3. Verification hanya boleh menggunakan nama script package.json yang tersedia.",
+    "4. Dependencies hanya diisi bila task benar-benar bergantung pada task existing.",
+    "5. Set clarificationNeeded=true hanya jika implementasi aman tidak mungkin direncanakan tanpa jawaban user.",
+    "",
+    `Project: ${project.id} (${project.repository})`,
     `Package scripts: ${JSON.stringify(scripts)}`,
     `Project verification defaults: ${JSON.stringify(project.verificationDefaults ?? [])}`,
     `Existing tasks: ${JSON.stringify(tasks)}`,
-    `Graphify context: ${graphContext || "Tidak ada node relevan."}`,
-    "Gunakan path relatif repository dan pilih allowedPaths paling sempit yang praktis.",
-    "Verification hanya boleh menggunakan nama script package.json yang tersedia.",
-    "Dependencies hanya diisi bila task benar-benar bergantung pada task existing.",
-    "Set clarificationNeeded=true hanya jika implementasi aman tidak mungkin direncanakan tanpa jawaban user.",
+    "",
+    "=== GRAPHIFY TARGETED CONTEXT ===",
+    graphContext || "Tidak ada node relevan.",
+    "",
+    "=== USER NATURAL LANGUAGE REQUEST ===",
+    request,
   ].join("\n");
   const result = await processRunner({
     command: "agy",
