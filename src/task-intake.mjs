@@ -366,6 +366,7 @@ export async function requestTask({
     requestedBy,
   });
   const temporaryPath = `${absolutePath}.intake-${randomUUID().slice(0, 8)}.tmp`;
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
   fs.writeFileSync(temporaryPath, content, { encoding: "utf8", flag: "wx" });
   let readiness = null;
   try {
