@@ -4,6 +4,8 @@
  * to prevent context explosion and reduce token usage.
  */
 
+import { formatInlineComments } from "./review-workflow.mjs";
+
 export function estimateTokenCount(text = "") {
   if (!text || typeof text !== "string") return 0;
   // Standard approximation: ~4 characters per token for typical code + english text
@@ -34,6 +36,7 @@ export function buildCompactedRevisionPrompt({
   previousRevisions = [],
   latestDiff = "",
   allowedPaths = [],
+  inlineComments = [],
 }) {
   const compactedHistory = compactRevisionHistory(previousRevisions);
   
@@ -54,13 +57,22 @@ export function buildCompactedRevisionPrompt({
     diffSection = `\n## Diff Kode Saat Ini di Workspace:\n\`\`\`diff\n${truncatedDiff}\n\`\`\`\n`;
   }
 
+  let inlineCommentsSection = "";
+  if (Array.isArray(inlineComments) && inlineComments.length > 0) {
+    const formatted = formatInlineComments(inlineComments);
+    if (formatted) {
+      inlineCommentsSection = `\n${formatted}\n\nInstruksi: Prioritaskan perbaikan pada baris-baris spesifik yang diberi catatan oleh reviewer di atas.\n`;
+    }
+  }
+
   const prompt = `Anda sedang melanjutkan pengerjaan Task ${task?.id || "TASK"} pada project ${projectId || "PROJECT"}.
 
 ## Permintaan Perubahan (Human Review Feedback):
 > ${reason.trim()}
-${historySection}${diffSection}
+${inlineCommentsSection}${historySection}${diffSection}
 ## Batasan Wajib:
 - Edit HANYA file di dalam allowed_paths: [${(allowedPaths || []).join(", ")}]
+- Prioritaskan perbaikan pada baris-baris spesifik yang diberi catatan oleh reviewer jika terdapat inline code comments.
 - Perbaiki poin-poin yang diminta di atas hingga seluruh verifikasi lolos.
 `;
 

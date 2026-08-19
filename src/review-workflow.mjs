@@ -73,3 +73,32 @@ export async function previewReviewWorkspace({
     },
   };
 }
+
+export function formatInlineComments(inlineComments = []) {
+  if (!Array.isArray(inlineComments) || inlineComments.length === 0) return "";
+  const formattedLines = inlineComments
+    .filter((c) => c && (c.file || c.path) && c.line !== undefined && (c.comment || c.text || c.message))
+    .map((c) => {
+      const file = c.file || c.path;
+      const line = c.line;
+      const comment = c.comment || c.text || c.message;
+      return `File: ${file} (Line ${line}): "${comment}"`;
+    });
+  if (formattedLines.length === 0) return "";
+  return [
+    "=== INLINE CODE COMMENTS DARI REVIEWER ===",
+    ...formattedLines,
+  ].join("\n");
+}
+
+export function formatReviewRevisionFeedback({ reason = "", feedback = "", inlineComments = [] } = {}) {
+  const text = String(reason || feedback || "").trim();
+  const commentsBlock = formatInlineComments(inlineComments);
+  if (!commentsBlock) return text;
+  const instruction = "Instruksi: Prioritaskan perbaikan pada baris-baris spesifik yang diberi catatan oleh reviewer di atas.";
+  if (!text) {
+    return [commentsBlock, "", instruction].join("\n");
+  }
+  return [text, "", commentsBlock, "", instruction].join("\n");
+}
+

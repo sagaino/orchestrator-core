@@ -8,6 +8,11 @@ import { RUN_STATES } from "../src/run-manager.mjs";
 import { computeAdaptivePollInterval, ACTIVE_POLL_INTERVAL_MS, IDLE_POLL_INTERVAL_MS, parallelQueueStatus, daemonStatus } from "../src/daemon.mjs";
 import { hasActiveJobs, JOB_STATES } from "../src/job-queue.mjs";
 import { onboardExistingProject, onboardNewProject, addExistingProject, addNewProject } from "../src/project-onboarding.mjs";
+import { ingestRawKnowledge } from "../src/knowledge-ingest.mjs";
+import { harvestRepositoryKnowledge, scanRepositoryArchitecture } from "../src/knowledge-harvester.mjs";
+import { formatInlineComments, formatReviewRevisionFeedback } from "../src/review-workflow.mjs";
+import { buildCompactedRevisionPrompt } from "../src/context-compactor.mjs";
+import { buildAgyRevisionInvocation } from "../src/executor.mjs";
 
 console.log("Running api.test.mjs...");
 
@@ -255,7 +260,7 @@ try {
   assert.equal(notFoundStart.status, 404);
 
   // Test 12: Non-blocking POST /api/runs/:id/request-changes
-  // Missing reason returns 400
+  // Missing reason and feedback returns 400
   const reqChangesNoReason = await request({
     method: "POST",
     path: `/api/runs/${runId}/request-changes`,
@@ -265,19 +270,107 @@ try {
   });
   assert.equal(reqChangesNoReason.status, 400);
 
-  // Valid request changes on review run returns 202 Accepted
-  const reqChangesRes = await request({
+  // Invalid non-array inlineComments returns 400
+  const reqChangesInvalidInline = await request({
     method: "POST",
     path: `/api/runs/${runId}/request-changes`,
     port,
     token,
-    body: { reason: "Please refine the navbar styling" },
+    body: { reason: "Please refine", inlineComments: "not-an-array" },
   });
-  assert.equal(reqChangesRes.status, 202);
-  assert.equal(reqChangesRes.data.success, true);
-  assert.equal(reqChangesRes.data.data.runId, runId);
-  assert.equal(reqChangesRes.data.data.status, "running");
-  assert.equal(reqChangesRes.data.data.state, RUN_STATES.CHANGES_REQUESTED);
+  assert.equal(reqChangesInvalidInline.status, 400);
+  assert.match(reqChangesInvalidInline.data.error.message, /inlineComments must be an array/);
+
+  // Valid request changes using feedback field alias on review run returns 202 Accepted
+  const reqChangesFeedbackRes = await request({
+    method: "POST",
+    path: `/api/runs/${runId}/request-changes`,
+    port,
+    token,
+    body: { feedback: "Please refine the navbar styling using feedback alias" },
+  });
+  assert.equal(reqChangesFeedbackRes.status, 202);
+  assert.equal(reqChangesFeedbackRes.data.success, true);
+  assert.equal(reqChangesFeedbackRes.data.data.state, RUN_STATES.CHANGES_REQUESTED);
+
+  // Valid request changes with inlineComments on review run returns 202 Accepted
+  const reqChangesWithInlineRes = await request({
+    method: "POST",
+    path: `/api/runs/${runId}/request-changes`,
+    port,
+    token,
+    body: {
+      reason: "Refine navbar based on code review",
+      inlineComments: [
+        { file: "src/Navbar.tsx", line: 24, comment: "Please use flex-col on mobile screens" },
+        { file: "src/Navbar.tsx", line: 40, comment: "Add aria-label for accessibility" },
+      ],
+    },
+  });
+  assert.equal(reqChangesWithInlineRes.status, 202);
+  assert.equal(reqChangesWithInlineRes.data.success, true);
+  assert.equal(reqChangesWithInlineRes.data.data.runId, runId);
+  assert.equal(reqChangesWithInlineRes.data.data.status, "running");
+  assert.equal(reqChangesWithInlineRes.data.data.state, RUN_STATES.CHANGES_REQUESTED);
+
+  // Test 12.1: Unit tests for inline comments formatting and revision prompt builders
+  const emptyFormatted = formatInlineComments([]);
+  assert.equal(emptyFormatted, "");
+  const nullFormatted = formatInlineComments(null);
+  assert.equal(nullFormatted, "");
+
+  const sampleInlineComments = [
+    { file: "src/Navbar.tsx", line: 12, comment: "Perbaiki typo pada prop title" },
+    { file: "src/Footer.tsx", line: 45, comment: "Hapus import yang tidak digunakan" },
+  ];
+  const formattedComments = formatInlineComments(sampleInlineComments);
+  assert.ok(formattedComments.includes("=== INLINE CODE COMMENTS DARI REVIEWER ==="));
+  assert.ok(formattedComments.includes('File: src/Navbar.tsx (Line 12): "Perbaiki typo pada prop title"'));
+  assert.ok(formattedComments.includes('File: src/Footer.tsx (Line 45): "Hapus import yang tidak digunakan"'));
+
+  const fullRevisionFeedback = formatReviewRevisionFeedback({
+    reason: "Perbaiki styling navbar",
+    inlineComments: sampleInlineComments,
+  });
+  assert.ok(fullRevisionFeedback.includes("Perbaiki styling navbar"));
+  assert.ok(fullRevisionFeedback.includes("=== INLINE CODE COMMENTS DARI REVIEWER ==="));
+  assert.ok(fullRevisionFeedback.includes('File: src/Navbar.tsx (Line 12): "Perbaiki typo pada prop title"'));
+  assert.ok(fullRevisionFeedback.includes("Instruksi: Prioritaskan perbaikan pada baris-baris spesifik yang diberi catatan oleh reviewer di atas."));
+
+  // buildAgyRevisionInvocation format test
+  const mockRevisionManifest = {
+    runId: "test-rev-run-001",
+    project: { agent: "agy", repository: "/tmp/mock-repo" },
+    task: { path: "02-Projects/starter-app/tasks/task-001.md", allowedPaths: ["src/Navbar.tsx"] },
+    retrieval: { knowledge: [] },
+    execution: {
+      workspace: { path: "/tmp/mock-repo" },
+      reviewChanges: [
+        {
+          iteration: 1,
+          reason: "General styling feedback",
+          inlineComments: sampleInlineComments,
+        },
+      ],
+    },
+  };
+  const revisionInvocation = buildAgyRevisionInvocation(mockRevisionManifest, tempVault);
+  const promptText = revisionInvocation.args[revisionInvocation.args.indexOf("-p") + 1];
+  assert.ok(promptText.includes("=== INLINE CODE COMMENTS DARI REVIEWER ==="));
+  assert.ok(promptText.includes('File: src/Navbar.tsx (Line 12): "Perbaiki typo pada prop title"'));
+  assert.ok(promptText.includes("Prioritaskan perbaikan pada baris-baris spesifik yang diberi catatan oleh reviewer"));
+
+  // buildCompactedRevisionPrompt format test
+  const compactedPrompt = buildCompactedRevisionPrompt({
+    task: { id: "TASK-001" },
+    projectId: "starter-app",
+    reason: "Fix layout issues",
+    inlineComments: sampleInlineComments,
+    allowedPaths: ["src/Navbar.tsx"],
+  });
+  assert.ok(compactedPrompt.prompt.includes("=== INLINE CODE COMMENTS DARI REVIEWER ==="));
+  assert.ok(compactedPrompt.prompt.includes('File: src/Navbar.tsx (Line 12): "Perbaiki typo pada prop title"'));
+  assert.ok(compactedPrompt.prompt.includes("Prioritaskan perbaikan pada baris-baris spesifik yang diberi catatan oleh reviewer"));
 
   // Test 13: Non-blocking POST /api/runs/:id/recover
   // Run not in FAILED state returns 400 without force
@@ -738,6 +831,523 @@ try {
 
   sseMockReq.destroy();
   await mockOnboardServer.stop();
+
+  // Test 19: POST /api/knowledge/ingest and ingestRawKnowledge
+  // 19.1. Validation tests on apiServer
+  const ingestNoContent = await request({
+    method: "POST",
+    path: "/api/knowledge/ingest",
+    port,
+    token,
+    body: { domain: "frontend", type: "concept" },
+  });
+  assert.equal(ingestNoContent.status, 400);
+  assert.equal(ingestNoContent.data.success, false);
+  assert.equal(ingestNoContent.data.error.message, "Missing required field: content");
+
+  const ingestEmptyContent = await request({
+    method: "POST",
+    path: "/api/knowledge/ingest",
+    port,
+    token,
+    body: { content: "   ", domain: "frontend", type: "concept" },
+  });
+  assert.equal(ingestEmptyContent.status, 400);
+
+  const ingestNoDomain = await request({
+    method: "POST",
+    path: "/api/knowledge/ingest",
+    port,
+    token,
+    body: { content: "Sample raw knowledge text", type: "concept" },
+  });
+  assert.equal(ingestNoDomain.status, 400);
+  assert.equal(ingestNoDomain.data.error.message, "Missing required field: domain");
+
+  const ingestNoType = await request({
+    method: "POST",
+    path: "/api/knowledge/ingest",
+    port,
+    token,
+    body: { content: "Sample raw knowledge text", domain: "frontend" },
+  });
+  assert.equal(ingestNoType.status, 400);
+  assert.equal(ingestNoType.data.error.message, "Missing required field: type");
+
+  const ingestInvalidDomain = await request({
+    method: "POST",
+    path: "/api/knowledge/ingest",
+    port,
+    token,
+    body: { content: "Sample raw knowledge text", domain: "quantum-computing", type: "concept" },
+  });
+  assert.equal(ingestInvalidDomain.status, 400);
+  assert.match(ingestInvalidDomain.data.error.message, /Domain tidak valid/);
+
+  const ingestInvalidType = await request({
+    method: "POST",
+    path: "/api/knowledge/ingest",
+    port,
+    token,
+    body: { content: "Sample raw knowledge text", domain: "frontend", type: "opinion" },
+  });
+  assert.equal(ingestInvalidType.status, 400);
+  assert.match(ingestInvalidType.data.error.message, /Type tidak valid/);
+
+  const ingestInvalidDest = await request({
+    method: "POST",
+    path: "/api/knowledge/ingest",
+    port,
+    token,
+    body: { content: "Sample raw knowledge text", domain: "frontend", type: "concept", destination: "DATABASE" },
+  });
+  assert.equal(ingestInvalidDest.status, 400);
+  assert.match(ingestInvalidDest.data.error.message, /Destination tidak valid/);
+
+  // 19.2. Mock server with mock processRunner for agy synthesis
+  let sseIngestEvents = [];
+  const mockIngestServer = createOrchestratorServer({
+    vaultRoot: tempVault,
+    runsRoot: tempRuns,
+    port: 0,
+    host: "127.0.0.1",
+    services: {
+      processRunner: async (invocation) => {
+        if (invocation.stage === "knowledge-ingest") {
+          const prompt = invocation.args?.[1] || "";
+          const titleMatch = prompt.match(/Requested Title: (.*)/);
+          const title = titleMatch ? titleMatch[1].trim() : "Synthesized Knowledge";
+          return {
+            exitCode: 0,
+            stdoutTail: JSON.stringify({
+              title,
+              summary: `A robust overview for ${title}.`,
+              purpose: `Provide standard architecture and practices for ${title}.`,
+              keyPoints: [
+                "Synchronizes across distributed layers.",
+                "Provides structured error handling.",
+              ],
+              codeSnippets: [
+                {
+                  language: "typescript",
+                  code: "export const handler = () => null;",
+                  description: "Basic usage example",
+                },
+              ],
+              considerations: [
+                "Ensure proper concurrency guards and testing.",
+              ],
+              tags: ["storage", "distributed"],
+              relatedKnowledge: [
+                "01-Knowledge/concepts/sample-concept",
+              ],
+            }),
+            stderrTail: "",
+          };
+        }
+        return { exitCode: 0, stdoutTail: "", stderrTail: "" };
+      },
+    },
+  });
+
+  const mockIngestServerInfo = await mockIngestServer.start();
+  const mockIngestPort = mockIngestServer.server.address().port;
+  const mockIngestToken = mockIngestServerInfo.token;
+
+  // SSE event stream listener for ingest events
+  const sseIngestReq = http.request(
+    {
+      hostname: "127.0.0.1",
+      port: mockIngestPort,
+      path: `/api/events?token=${mockIngestToken}`,
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+    },
+    (res) => {
+      res.on("data", (chunk) => {
+        sseIngestEvents.push(chunk.toString());
+      });
+    }
+  );
+  sseIngestReq.on("error", () => {});
+  sseIngestReq.end();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // 19.3. Test ingestion to WIKI destination (HTTP 201)
+  const ingestWikiRes = await request({
+    method: "POST",
+    path: "/api/knowledge/ingest",
+    port: mockIngestPort,
+    token: mockIngestToken,
+    body: {
+      content: "Custom React hook useLocalStorage with AES encryption.",
+      title: "React useLocalStorage Hook",
+      domain: "frontend",
+      type: "snippet",
+      destination: "WIKI",
+    },
+  });
+
+  assert.equal(ingestWikiRes.status, 201);
+  assert.equal(ingestWikiRes.data.success, true);
+  assert.equal(ingestWikiRes.data.data.action, "KNOWLEDGE_INGESTED");
+  assert.equal(ingestWikiRes.data.data.destination, "WIKI");
+  assert.equal(ingestWikiRes.data.data.target.domain, "frontend");
+  assert.equal(ingestWikiRes.data.data.target.type, "snippet");
+  assert.equal(ingestWikiRes.data.data.target.path, "01-Knowledge/snippets/frontend/react-uselocalstorage-hook.md");
+
+  // Verify created file in vault
+  const wikiFilePath = path.join(tempVault, "01-Knowledge", "snippets", "frontend", "react-uselocalstorage-hook.md");
+  assert.ok(fs.existsSync(wikiFilePath), "Wiki file must exist");
+  const wikiContent = fs.readFileSync(wikiFilePath, "utf8");
+  assert.match(wikiContent, /title:\s*"React useLocalStorage Hook"/);
+  assert.match(wikiContent, /type:\s*snippet/);
+  assert.match(wikiContent, /orchestrator_run:\s*ingest-/);
+  assert.match(wikiContent, /## Key Implementation Points/);
+  assert.match(wikiContent, /## Code Examples/);
+  assert.match(wikiContent, /## Considerations/);
+  assert.match(wikiContent, /## Source/);
+
+  // Verify index.md and wiki-log.md updated
+  const indexAfterIngest = fs.readFileSync(indexFile, "utf8");
+  assert.ok(indexAfterIngest.includes("01-Knowledge/snippets/frontend/react-uselocalstorage-hook"));
+
+  const logAfterIngest = fs.readFileSync(wikiLogFile, "utf8");
+  assert.ok(logAfterIngest.includes("ingest | React useLocalStorage Hook"));
+  assert.ok(logAfterIngest.includes("Domain: `frontend`, Type: `snippet`, Destination: `WIKI`"));
+
+  // 19.4. Test ingestion to CANDIDATE destination (HTTP 201)
+  const ingestCandidateRes = await request({
+    method: "POST",
+    path: "/api/knowledge/ingest",
+    port: mockIngestPort,
+    token: mockIngestToken,
+    body: {
+      content: "Distributed lock algorithm using Redis multi-instance consensus.",
+      title: "Redis Redlock Distributed Locking",
+      domain: "backend",
+      type: "pattern",
+      destination: "CANDIDATE",
+    },
+  });
+
+  assert.equal(ingestCandidateRes.status, 201);
+  assert.equal(ingestCandidateRes.data.success, true);
+  assert.equal(ingestCandidateRes.data.data.destination, "CANDIDATE");
+  assert.equal(ingestCandidateRes.data.data.target.path, "05-Knowledge-Candidates/redis-redlock-distributed-locking.md");
+
+  // Verify candidate file exists and has type: candidate
+  const candidateFilePath = path.join(tempVault, "05-Knowledge-Candidates", "redis-redlock-distributed-locking.md");
+  assert.ok(fs.existsSync(candidateFilePath), "Candidate file must exist");
+  const candidateContent = fs.readFileSync(candidateFilePath, "utf8");
+  assert.match(candidateContent, /type:\s*candidate/);
+  assert.match(candidateContent, /orchestrator_run:\s*ingest-/);
+  assert.match(candidateContent, /## Observation/);
+  assert.match(candidateContent, /## Why It Is Not Promoted Yet/);
+  assert.match(candidateContent, /## Promotion Criteria/);
+
+  // Wait and verify SSE broadcast
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const fullIngestSse = sseIngestEvents.join("");
+  assert.ok(fullIngestSse.includes("event: KNOWLEDGE_INGESTED"), "SSE event KNOWLEDGE_INGESTED must be emitted");
+
+  sseIngestReq.destroy();
+  await mockIngestServer.stop();
+
+  // 19.5. Direct ingestRawKnowledge function tests
+  await assert.rejects(
+    ingestRawKnowledge({ vaultRoot: null, rawContent: "test", domain: "frontend", type: "concept" }),
+    /vaultRoot harus ditentukan/
+  );
+  await assert.rejects(
+    ingestRawKnowledge({ vaultRoot: tempVault, rawContent: "", domain: "frontend", type: "concept" }),
+    /rawContent tidak boleh kosong/
+  );
+
+  // Test 20: POST /api/knowledge/harvest and harvestRepositoryKnowledge
+  // 20.1. Validation tests on apiServer
+  const harvestNoRepo = await request({
+    method: "POST",
+    path: "/api/knowledge/harvest",
+    port,
+    token,
+    body: { domain: "backend" },
+  });
+  assert.equal(harvestNoRepo.status, 400);
+  assert.equal(harvestNoRepo.data.success, false);
+  assert.equal(harvestNoRepo.data.error.message, "Missing required field: repositoryPath");
+
+  const harvestEmptyRepo = await request({
+    method: "POST",
+    path: "/api/knowledge/harvest",
+    port,
+    token,
+    body: { repositoryPath: "   ", domain: "backend" },
+  });
+  assert.equal(harvestEmptyRepo.status, 400);
+
+  const harvestNonExistentRepo = await request({
+    method: "POST",
+    path: "/api/knowledge/harvest",
+    port,
+    token,
+    body: { repositoryPath: "/path/that/does/not/exist/anywhere", domain: "backend" },
+  });
+  assert.equal(harvestNonExistentRepo.status, 400);
+  assert.match(harvestNonExistentRepo.data.error.message, /Repository path tidak ditemukan/);
+
+  const harvestInvalidDomain = await request({
+    method: "POST",
+    path: "/api/knowledge/harvest",
+    port,
+    token,
+    body: { repositoryPath: tempVault, domain: "invalid-domain-xyz" },
+  });
+  assert.equal(harvestInvalidDomain.status, 400);
+  assert.match(harvestInvalidDomain.data.error.message, /Domain tidak valid/);
+
+  // 20.2. Setup sample mock backend repository
+  const mockBackendRepo = path.join(tempVault, "mock-backend-repo");
+  fs.mkdirSync(path.join(mockBackendRepo, "src", "controllers"), { recursive: true });
+  fs.mkdirSync(path.join(mockBackendRepo, "src", "services"), { recursive: true });
+  fs.mkdirSync(path.join(mockBackendRepo, "src", "repositories"), { recursive: true });
+  fs.mkdirSync(path.join(mockBackendRepo, "src", "middlewares"), { recursive: true });
+  fs.mkdirSync(path.join(mockBackendRepo, "graphify-out"), { recursive: true });
+
+  fs.writeFileSync(path.join(mockBackendRepo, "package.json"), JSON.stringify({
+    name: "mock-backend-service",
+    version: "1.0.0",
+    dependencies: {
+      jsonwebtoken: "^9.0.0",
+      bcrypt: "^5.1.0",
+      prisma: "^5.0.0",
+      "@prisma/client": "^5.0.0",
+      zod: "^3.22.0",
+    },
+    devDependencies: {
+      typescript: "^5.0.0",
+    },
+  }, null, 2));
+
+  fs.writeFileSync(path.join(mockBackendRepo, "graphify-out", "graph.json"), JSON.stringify({
+    nodes: [{ id: "auth.ts" }, { id: "user.service.ts" }],
+    links: [{ source: "auth.ts", target: "user.service.ts" }],
+  }));
+
+  fs.writeFileSync(path.join(mockBackendRepo, "src", "middlewares", "auth.middleware.ts"), "export const authGuard = () => null;");
+  fs.writeFileSync(path.join(mockBackendRepo, "src", "services", "user.service.ts"), "export class UserService {}");
+  fs.writeFileSync(path.join(mockBackendRepo, "src", "repositories", "user.repository.ts"), "export class UserRepository {}");
+
+  // Verify scanRepositoryArchitecture
+  const scan = scanRepositoryArchitecture(mockBackendRepo);
+  assert.equal(scan.packageName, "mock-backend-service");
+  assert.equal(scan.detectedPatterns.auth.detected, true);
+  assert.equal(scan.detectedPatterns.database.detected, true);
+  assert.equal(scan.detectedPatterns.errorHandling.detected, true);
+  assert.ok(scan.graphifySummary);
+  assert.equal(scan.graphifySummary.nodeCount, 2);
+
+  // Setup template in vault
+  const templatesDir = path.join(tempVault, "01-Knowledge", "_templates");
+  fs.mkdirSync(templatesDir, { recursive: true });
+  fs.writeFileSync(path.join(templatesDir, "backend-pattern-template.md"), [
+    "---",
+    "title: Backend Pattern Template",
+    "type: pattern",
+    "tags: [template, backend]",
+    "---",
+    "# {{Title}}",
+    "## 1. Overview & Architecture",
+  ].join("\n"));
+
+  // 20.3. Mock server with mock processRunner for agy harvest
+  let sseHarvestEvents = [];
+  const mockHarvestServer = createOrchestratorServer({
+    vaultRoot: tempVault,
+    runsRoot: tempRuns,
+    port: 0,
+    host: "127.0.0.1",
+    services: {
+      processRunner: async (invocation) => {
+        if (invocation.stage === "knowledge-harvest") {
+          return {
+            exitCode: 0,
+            stdoutTail: JSON.stringify({
+              patterns: [
+                {
+                  title: "JWT Authentication & RBAC Guard Pattern",
+                  summary: "Pola middleware autentikasi JWT terpusat dengan role-based access control.",
+                  confidence: 0.95,
+                  purpose: "Menstandarkan validasi token dan proteksi rute API.",
+                  overview: "Menggunakan JWT token validation di middleware layer sebelum request mencapai controller.",
+                  codeStructure: "src/middlewares/auth.middleware.ts -> src/controllers/*",
+                  keyImplementationPoints: [
+                    "Token validation dengan jsonwebtoken",
+                    "User claims injection ke context request",
+                    "Role-based permission check",
+                  ],
+                  codeSnippets: [
+                    {
+                      language: "typescript",
+                      code: "export const authGuard = (req, res, next) => next();",
+                      description: "Contoh implementasi middleware auth guard",
+                    },
+                  ],
+                  considerations: [
+                    "Pastikan refresh token disimpan dengan aman di httpOnly cookie.",
+                  ],
+                  tags: ["auth", "jwt", "security"],
+                  relatedKnowledge: [],
+                },
+                {
+                  title: "Prisma Transactional Unit of Work Pattern",
+                  summary: "Pola isolasi transaksi database menggunakan Prisma Client $transaction API.",
+                  confidence: 0.85,
+                  purpose: "Menjamin integritas data atomik pada operasi multi-tabel.",
+                  overview: "Membungkus rangkaian mutasi data dalam single interactive transaction block.",
+                  codeStructure: "src/services/* -> Prisma.$transaction -> src/repositories/*",
+                  keyImplementationPoints: [
+                    "Penggunaan interactive transaction",
+                    "Rollback otomatis saat terjadi unhandled exception",
+                  ],
+                  codeSnippets: [
+                    {
+                      language: "typescript",
+                      code: "await prisma.$transaction(async (tx) => { ... });",
+                      description: "Interactive transaction block",
+                    },
+                  ],
+                  considerations: [
+                    "Hindari operasi async I/O non-database di dalam blok transaksi.",
+                  ],
+                  tags: ["database", "prisma", "transactions"],
+                  relatedKnowledge: [],
+                },
+              ],
+            }),
+            stderrTail: "",
+          };
+        }
+        return { exitCode: 0, stdoutTail: "", stderrTail: "" };
+      },
+    },
+  });
+
+  const mockHarvestServerInfo = await mockHarvestServer.start();
+  const mockHarvestPort = mockHarvestServer.server.address().port;
+  const mockHarvestToken = mockHarvestServerInfo.token;
+
+  // SSE event stream listener for harvest events
+  const sseHarvestReq = http.request(
+    {
+      hostname: "127.0.0.1",
+      port: mockHarvestPort,
+      path: `/api/events?token=${mockHarvestToken}`,
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+    },
+    (res) => {
+      res.on("data", (chunk) => {
+        sseHarvestEvents.push(chunk.toString());
+      });
+    }
+  );
+  sseHarvestReq.on("error", () => {});
+  sseHarvestReq.end();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // 20.4. POST /api/knowledge/harvest execution
+  const harvestRes = await request({
+    method: "POST",
+    path: "/api/knowledge/harvest",
+    port: mockHarvestPort,
+    token: mockHarvestToken,
+    body: {
+      repositoryPath: mockBackendRepo,
+      domain: "backend",
+    },
+  });
+
+  assert.equal(harvestRes.status, 201);
+  assert.equal(harvestRes.data.success, true);
+  assert.equal(harvestRes.data.data.action, "KNOWLEDGE_HARVESTED");
+  assert.equal(harvestRes.data.data.domain, "backend");
+  assert.equal(harvestRes.data.data.count, 2);
+  assert.equal(harvestRes.data.data.harvested.length, 2);
+
+  // Pattern 1: confidence 0.95 -> destination WIKI
+  const item1 = harvestRes.data.data.harvested[0];
+  assert.equal(item1.destination, "WIKI");
+  assert.equal(item1.type, "pattern");
+  assert.equal(item1.path, "01-Knowledge/patterns/backend/jwt-authentication-rbac-guard-pattern.md");
+
+  // Verify created wiki file
+  const wikiPatternPath = path.join(tempVault, "01-Knowledge", "patterns", "backend", "jwt-authentication-rbac-guard-pattern.md");
+  assert.ok(fs.existsSync(wikiPatternPath), "Harvested wiki pattern file must exist");
+  const wikiPatternContent = fs.readFileSync(wikiPatternPath, "utf8");
+  assert.match(wikiPatternContent, /type:\s*pattern/);
+  assert.match(wikiPatternContent, /orchestrator_run:\s*harvest-/);
+  assert.match(wikiPatternContent, /## 1\. Overview & Architecture/);
+  assert.match(wikiPatternContent, /## 2\. Implementation & Code Structure/);
+  assert.match(wikiPatternContent, /## 3\. Key Implementation Points/);
+  assert.match(wikiPatternContent, /## 4\. Code Examples/);
+  assert.match(wikiPatternContent, /## 5\. Considerations & Best Practices/);
+  assert.match(wikiPatternContent, /## 7\. Source/);
+
+  // Pattern 2: confidence 0.85 -> destination CANDIDATE
+  const item2 = harvestRes.data.data.harvested[1];
+  assert.equal(item2.destination, "CANDIDATE");
+  assert.equal(item2.type, "candidate");
+  assert.equal(item2.path, "05-Knowledge-Candidates/prisma-transactional-unit-of-work-pattern.md");
+
+  // Verify created candidate file
+  const candidatePatternPath = path.join(tempVault, "05-Knowledge-Candidates", "prisma-transactional-unit-of-work-pattern.md");
+  assert.ok(fs.existsSync(candidatePatternPath), "Harvested candidate file must exist");
+  const candidatePatternContent = fs.readFileSync(candidatePatternPath, "utf8");
+  assert.match(candidatePatternContent, /type:\s*candidate/);
+  assert.match(candidatePatternContent, /orchestrator_run:\s*harvest-/);
+  assert.match(candidatePatternContent, /## Observation/);
+  assert.match(candidatePatternContent, /## Purpose/);
+  assert.match(candidatePatternContent, /## Why It Is Not Promoted Yet/);
+  assert.match(candidatePatternContent, /## Promotion Criteria/);
+
+  // Verify index.md and wiki-log.md updated
+  const indexAfterHarvest = fs.readFileSync(indexFile, "utf8");
+  assert.ok(indexAfterHarvest.includes("01-Knowledge/patterns/backend/jwt-authentication-rbac-guard-pattern"));
+  assert.ok(indexAfterHarvest.includes("05-Knowledge-Candidates/prisma-transactional-unit-of-work-pattern"));
+
+  const logAfterHarvest = fs.readFileSync(wikiLogFile, "utf8");
+  assert.ok(logAfterHarvest.includes("harvest | JWT Authentication & RBAC Guard Pattern"));
+  assert.ok(logAfterHarvest.includes("harvest | Prisma Transactional Unit of Work Pattern"));
+  assert.ok(logAfterHarvest.includes("Domain: `backend`, Type: `pattern`, Destination: `WIKI`"));
+  assert.ok(logAfterHarvest.includes("Destination: `CANDIDATE`"));
+
+  // Verify SSE event broadcast
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const fullHarvestSse = sseHarvestEvents.join("");
+  assert.ok(fullHarvestSse.includes("event: KNOWLEDGE_HARVESTED"), "SSE event KNOWLEDGE_HARVESTED must be emitted");
+  assert.ok(fullHarvestSse.includes("jwt-authentication-rbac-guard-pattern"));
+
+  sseHarvestReq.destroy();
+  await mockHarvestServer.stop();
+
+  // 20.5. Direct harvestRepositoryKnowledge validation tests
+  await assert.rejects(
+    harvestRepositoryKnowledge({ vaultRoot: null, repositoryPath: mockBackendRepo }),
+    /vaultRoot harus ditentukan/
+  );
+  await assert.rejects(
+    harvestRepositoryKnowledge({ vaultRoot: tempVault, repositoryPath: "" }),
+    /repositoryPath tidak boleh kosong/
+  );
+  await assert.rejects(
+    harvestRepositoryKnowledge({ vaultRoot: tempVault, repositoryPath: "/not/existing" }),
+    /Repository path tidak ditemukan/
+  );
+  await assert.rejects(
+    harvestRepositoryKnowledge({ vaultRoot: tempVault, repositoryPath: mockBackendRepo, domain: "invalid-domain" }),
+    /Domain tidak valid/
+  );
 
   // Cleanup
   await apiServer.stop();
