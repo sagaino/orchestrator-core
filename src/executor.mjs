@@ -154,23 +154,23 @@ export function runProcess({ command, args, cwd, stage, eventLogPath, env = proc
 
       for (const rawLine of lines) {
         if (!rawLine.trim()) continue;
-        const line = compactLine(rawLine);
         let payload = null;
         try {
-          payload = JSON.parse(line);
+          payload = JSON.parse(rawLine);
           if (payload.event === "result") finalResult = payload.result ?? payload;
           else if (payload.structured_output || payload.patterns || payload.response) finalResult = payload;
         } catch {
           payload = null;
         }
+        const line = compactLine(rawLine);
         appendEvent(eventLogPath, {
           event: "PROCESS_OUTPUT",
           stage,
           stream,
           ...(payload ? { payload } : { line }),
         });
-        if (stream === "stdout") stdoutTail = `${stdoutTail}\n${line}`.slice(-20_000);
-        else stderrTail = `${stderrTail}\n${line}`.slice(-20_000);
+        if (stream === "stdout") stdoutTail = `${stdoutTail}\n${line}`.slice(-50_000);
+        else stderrTail = `${stderrTail}\n${line}`.slice(-50_000);
       }
     };
 
