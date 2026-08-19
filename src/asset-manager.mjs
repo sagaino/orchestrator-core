@@ -75,3 +75,40 @@ export async function saveUploadedAsset({
 
   throw new Error(`Asset type tidak didukung: ${type}`);
 }
+
+/**
+ * Handles deleting an uploaded asset if removed before submission
+ */
+export async function deleteUploadedAsset({
+  vaultRoot,
+  projectRepository = null,
+  type = "MOCKUP",
+  relativeVaultPath = null,
+  relativeProjectPath = null,
+}) {
+  if (type === "MOCKUP" && relativeVaultPath) {
+    const normalized = path.normalize(relativeVaultPath).replace(/^(\.\.(\/|\\|$))+/, "");
+    // Ensure inside 03-Sources/assets/ui-mockups
+    if (!normalized.startsWith("03-Sources/assets/ui-mockups")) {
+      throw new Error("Penghapusan hanya diizinkan untuk file di 03-Sources/assets/ui-mockups.");
+    }
+    const fullPath = path.join(vaultRoot, normalized);
+    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+      fs.unlinkSync(fullPath);
+      return { deleted: true, path: relativeVaultPath };
+    }
+    return { deleted: false, reason: "File not found" };
+  }
+
+  if (type === "PROJECT_ASSET" && projectRepository && relativeProjectPath) {
+    const normalized = path.normalize(relativeProjectPath).replace(/^(\.\.(\/|\\|$))+/, "");
+    const fullPath = path.join(projectRepository, normalized);
+    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+      fs.unlinkSync(fullPath);
+      return { deleted: true, path: relativeProjectPath };
+    }
+    return { deleted: false, reason: "File not found" };
+  }
+
+  return { deleted: false, reason: "Invalid parameters" };
+}
