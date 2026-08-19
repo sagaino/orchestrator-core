@@ -1235,7 +1235,7 @@ async function finalizeCompletionNotifications({ runsRoot, manifest }) {
   }
 }
 
-export async function completeRun({ vaultRoot, runsRoot, runId, completedBy = "user" }) {
+export async function completeRun({ vaultRoot, runsRoot, runId, completedBy = "user", autoCommit = false, commitMessage = null }) {
   let manifest = getRun(runsRoot, runId);
   if (manifest.state === RUN_STATES.DONE) {
     manifest = await cleanupWorkspaceAfterCompletion({ runsRoot, manifest });
@@ -1245,6 +1245,50 @@ export async function completeRun({ vaultRoot, runsRoot, runId, completedBy = "u
     throw new Error(`Run ${runId} harus WIKI_SYNCED sebelum DONE; state ${manifest.state}.`);
   }
   manifest = await applyWorkspaceForAcceptance({ vaultRoot, runsRoot, runId });
+
+  // Optional Auto Git Commit
+  let gitCommitResult = null;
+  if (autoCommit && manifest.project?.repository) {
+    try {
+      const repoDir = manifest.project.repository;
+      const defaultMsg = `feat(${manifest.task?.id || "TASK"}): ${manifest.task?.title || "completed task"}`;
+      const finalMsg = (commitMessage && typeof commitMessage === "string" && commitMessage.trim())
+        ? commitMessage.trim()
+        : defaultMsg;
+
+      const eventLogPath = path.join(runsRoot, "events", `${runId}.jsonl`);
+      
+      // 1. git add
+      await runProcess({
+        command: "git",
+        args: ["add", "-A"],
+        cwd: repoDir,
+        stage: "workspace-apply:git-add",
+        eventLogPath,
+      });
+
+      // 2. git commit
+      const commitRes = await runProcess({
+        command: "git",
+        args: ["commit", "-m", finalMsg],
+        cwd: repoDir,
+        stage: "workspace-apply:git-commit",
+        eventLogPath,
+      });
+
+      gitCommitResult = {
+        committed: commitRes.exitCode === 0,
+        commitMessage: finalMsg,
+        exitCode: commitRes.exitCode,
+      };
+    } catch (gitErr) {
+      gitCommitResult = {
+        committed: false,
+        error: gitErr.message,
+      };
+    }
+  }
+
   const completed = transitionRun({
     vaultRoot,
     runsRoot,
@@ -1254,6 +1298,7 @@ export async function completeRun({ vaultRoot, runsRoot, runId, completedBy = "u
       result: {
         ...(manifest.execution.result ?? {}),
         knowledgeDecision: manifest.knowledge.approval.classification,
+        gitCommit: gitCommitResult,
       },
     },
     completionPatch: {
@@ -1276,6 +1321,8 @@ export async function acceptRun({
   decision = null,
   destination = null,
   targetPath = null,
+  autoCommit = false,
+  commitMessage = null,
   proposalGenerator = generateProposalWithAgy,
 }) {
   let manifest = getRun(runsRoot, runId);
@@ -1302,7 +1349,14 @@ export async function acceptRun({
     manifest = syncWikiRun({ vaultRoot, runsRoot, runId });
   }
   if (manifest.state === RUN_STATES.WIKI_SYNCED) {
-    manifest = await completeRun({ vaultRoot, runsRoot, runId, completedBy: approvedBy });
+    manifest = await completeRun({
+      vaultRoot,
+      runsRoot,
+      runId,
+      completedBy: approvedBy,
+      autoCommit,
+      commitMessage,
+    });
   }
 
   if (manifest.state !== RUN_STATES.DONE) {

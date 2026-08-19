@@ -309,7 +309,14 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
 
   router.post("/api/runs/:id/accept", async (req, res, { params }) => {
     const body = await parseJsonBody(req);
-    const { approvedBy = "user", decision = null, destination = null, targetPath = null } = body;
+    const {
+      approvedBy = "user",
+      decision = null,
+      destination = null,
+      targetPath = null,
+      autoCommit = false,
+      commitMessage = null,
+    } = body || {};
 
     const manifest = await acceptRun({
       vaultRoot,
@@ -319,6 +326,8 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       decision,
       destination,
       targetPath,
+      autoCommit: Boolean(autoCommit),
+      commitMessage,
     });
 
     updateJobForRun(runsRoot, manifest.runId, {
