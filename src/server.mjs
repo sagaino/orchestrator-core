@@ -507,7 +507,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
 
     return {
       ...report,
-      healthy: (report.summary?.errors || 0) === 0 && (report.summary?.warnings || 0) === 0,
+      healthy: (report.summary?.errors || 0) === 0,
       errors,
       warnings,
       brokenLinksCount,
