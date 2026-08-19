@@ -165,8 +165,8 @@ export function knowledgeHarvestSchema() {
     properties: {
       patterns: {
         type: "array",
-        minItems: 2,
-        maxItems: 4,
+        minItems: 1,
+        maxItems: 20,
         items: {
           type: "object",
           required: [

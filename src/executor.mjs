@@ -159,8 +159,7 @@ export function runProcess({ command, args, cwd, stage, eventLogPath, env = proc
         try {
           payload = JSON.parse(line);
           if (payload.event === "result") finalResult = payload.result ?? payload;
-          else if (payload.structured_output || (payload.status === "SUCCESS" && payload.response)) finalResult = payload;
-          else if (payload.patterns) finalResult = payload;
+          else if (payload.structured_output || payload.patterns || payload.response) finalResult = payload;
         } catch {
           payload = null;
         }
