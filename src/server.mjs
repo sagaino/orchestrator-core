@@ -492,15 +492,42 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     sendJson(res, 200, { success: true, data: result });
   });
 
+  function formatHealthResponse(report) {
+    const findings = report.findings || [];
+    const errors = findings
+      .filter((f) => f.severity === "ERROR")
+      .map((f) => ({ code: f.check || "ERROR", message: f.message, file: f.path }));
+    const warnings = findings
+      .filter((f) => f.severity === "WARNING")
+      .map((f) => ({ code: f.check || "WARNING", message: f.message, file: f.path }));
+
+    const brokenLinksCount = findings.filter((f) => f.check === "BROKEN_WIKILINK").length;
+    const unindexedCount = findings.filter((f) => f.check === "UNINDEXED_KNOWLEDGE" || f.check === "UNINDEXED_CANDIDATE").length;
+    const orphanCandidatesCount = findings.filter((f) => f.check === "ORPHAN_CANDIDATE").length;
+
+    return {
+      ...report,
+      healthy: (report.summary?.errors || 0) === 0 && (report.summary?.warnings || 0) === 0,
+      errors,
+      warnings,
+      brokenLinksCount,
+      unindexedCount,
+      orphanCandidatesCount,
+      timestamp: report.generatedAt,
+    };
+  }
+
   router.get("/api/knowledge/health", async (req, res) => {
-    const health = knowledgeHealth({ vaultRoot, fixSafe: false });
+    const rawReport = knowledgeHealth({ vaultRoot, fixSafe: false });
+    const health = formatHealthResponse(rawReport);
     sendJson(res, 200, { success: true, data: health });
   });
 
   router.post("/api/knowledge/health/fix-safe", async (req, res) => {
     const body = await parseJsonBody(req);
     const { fixedBy = "user" } = body || {};
-    const health = knowledgeHealth({ vaultRoot, fixSafe: true, fixedBy });
+    const rawReport = knowledgeHealth({ vaultRoot, fixSafe: true, fixedBy });
+    const health = formatHealthResponse(rawReport);
     eventHub.broadcast("KNOWLEDGE_HEALTH_UPDATED", health);
     sendJson(res, 200, { success: true, data: health });
   });
