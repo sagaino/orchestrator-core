@@ -343,6 +343,41 @@ function inferredIntakeTelemetry(runsRoot) {
   return records;
 }
 
+function inferredKnowledgeTelemetry(runsRoot) {
+  const root = path.join(runsRoot, "events");
+  if (!fs.existsSync(root)) return [];
+  const records = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+    if (!entry.name.startsWith("harvest-") && !entry.name.startsWith("ingest-")) continue;
+
+    const id = entry.name.replace(/\.jsonl$/, "");
+    const isHarvest = entry.name.startsWith("harvest-");
+    const stage = isHarvest ? "KNOWLEDGE_HARVEST" : "KNOWLEDGE_INGEST";
+
+    for (const line of fs.readFileSync(path.join(root, entry.name), "utf8").split("\n").filter(Boolean)) {
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (event.event !== "PROCESS_OUTPUT" || !event.payload) continue;
+      const payload = event.payload?.event === "result" ? event.payload.result : event.payload;
+      if (!payload?.usage || !payload?.conversation_id) continue;
+      records.push(createAgentTelemetryRecord({
+        stage,
+        result: { exitCode: payload.status === "SUCCESS" ? 0 : 1, finalResult: payload },
+        invocationId: id,
+        metadata: { id, inferred: true, type: isHarvest ? "codebase-harvest" : "raw-ingest" },
+        recordedAt: event.at,
+        source: "inferred",
+      }));
+    }
+  }
+  return records;
+}
+
 function agentConfigFromArguments(args = []) {
   if (!Array.isArray(args)) return null;
   const modelIndex = args.indexOf("--model");
@@ -473,6 +508,9 @@ export function telemetryReport({ runsRoot, selector = null, projectId = null, e
   for (const knowledge of listKnowledgeTelemetry(runsRoot)) {
     const recordProject = knowledge.record?.metadata?.projectId;
     if (!projectId || recordProject === projectId) records.push(knowledge.record);
+  }
+  for (const record of inferredKnowledgeTelemetry(runsRoot)) {
+    if (!projectId || record.metadata?.projectId === projectId) records.push(record);
   }
   const telemetry = buildTelemetry(records, { threshold: 0 });
   telemetry.budget = {
