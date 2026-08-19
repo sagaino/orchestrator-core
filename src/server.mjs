@@ -22,7 +22,7 @@ import { collectRtkAnalytics } from "./rtk-analytics.mjs";
 import { onboardExistingProject, onboardNewProject } from "./project-onboarding.mjs";
 import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
 import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvester.mjs";
-import { saveUploadedAsset } from "./asset-manager.mjs";
+import { saveUploadedAsset, deleteUploadedAsset } from "./asset-manager.mjs";
 
 export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   const router = new Router();
@@ -747,6 +747,32 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       });
 
       sendJson(res, 201, { success: true, data: result });
+    } catch (err) {
+      sendError(res, 400, err.message);
+    }
+  });
+
+  router.post("/api/assets/delete", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const { type = "MOCKUP", relativeVaultPath, relativeProjectPath, projectId } = body || {};
+
+      let projectRepo = null;
+      if (type === "PROJECT_ASSET") {
+        const registry = loadRegistry(vaultRoot);
+        const project = registry.projects.find((p) => p.id === projectId);
+        if (project) projectRepo = project.repository;
+      }
+
+      const result = await deleteUploadedAsset({
+        vaultRoot,
+        projectRepository: projectRepo,
+        type,
+        relativeVaultPath,
+        relativeProjectPath,
+      });
+
+      sendJson(res, 200, { success: true, data: result });
     } catch (err) {
       sendError(res, 400, err.message);
     }
