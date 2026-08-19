@@ -456,7 +456,8 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
 
   router.post("/api/knowledge/promote", async (req, res) => {
     const body = await parseJsonBody(req);
-    const { selector, approvedBy = "user", targetPath = null } = body;
+    const selector = body?.selector || body?.candidateId || body?.id || body?.candidatePath || body?.path || body?.targetPath;
+    const { approvedBy = "user", targetPath = null } = body || {};
     if (!selector) {
       return sendError(res, 400, "Missing required field: selector");
     }
