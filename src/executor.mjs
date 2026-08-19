@@ -18,8 +18,10 @@ import {
 } from "./workspace-manager.mjs";
 import { appendRunTelemetry, createAgentTelemetryRecord } from "./telemetry.mjs";
 import { isDeniedPath } from "./security.mjs";
+import { formatReviewRevisionFeedback, formatInlineComments } from "./review-workflow.mjs";
 
 function appendEvent(eventLogPath, event) {
+  if (!eventLogPath || typeof eventLogPath !== "string") return;
   fs.mkdirSync(path.dirname(eventLogPath), { recursive: true });
   fs.appendFileSync(eventLogPath, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`, "utf8");
 }
@@ -334,6 +336,7 @@ export function buildAgyRevisionInvocation(
   {
     repository = manifest.execution?.workspace?.path ?? manifest.project.repository,
     graphifyContext = "",
+    inlineComments = null,
   } = {},
 ) {
   if (manifest.project.agent !== "agy") {
@@ -354,13 +357,27 @@ export function buildAgyRevisionInvocation(
     .map((item) => `- ${path.join(vaultRoot, item.path)}`)
     .join("\n");
   const agentConfig = resolveAgyConfig(process.env, "implementation");
+
+  const effectiveInlineComments = inlineComments ?? revision.inlineComments ?? [];
+  let feedbackText = revision.reason;
+  if (
+    Array.isArray(effectiveInlineComments)
+    && effectiveInlineComments.length > 0
+    && !feedbackText.includes("=== INLINE CODE COMMENTS DARI REVIEWER ===")
+  ) {
+    feedbackText = formatReviewRevisionFeedback({
+      reason: feedbackText,
+      inlineComments: effectiveInlineComments,
+    });
+  }
+
   const prompt = [
     `Lanjutkan revisi review iteration ${revision.iteration} untuk task: ${path.join(vaultRoot, manifest.task.path)}`,
     `Project workspace: ${repository}`,
     `Run ID: ${manifest.runId}`,
     "",
     "Feedback human reviewer:",
-    revision.reason,
+    feedbackText,
     "",
     `Current audited changes: ${(manifest.execution?.scopeAudit?.changedPaths ?? []).join(", ") || "none"}`,
     `Allowed paths: ${(manifest.task.allowedPaths ?? []).join(", ") || "sesuai task"}`,
@@ -373,10 +390,11 @@ export function buildAgyRevisionInvocation(
     "",
     "Kontrak revisi:",
     "1. Pertahankan implementasi yang sudah benar dan lakukan hanya perubahan yang diminta reviewer.",
-    "2. Edit hanya allowed_paths di isolated worktree ini; jangan menyentuh repository utama.",
-    "3. Jangan mengubah task Wiki, run manifest, index, wiki-log, atau status lifecycle.",
-    "4. Jangan menggunakan terminal/run_command, git, package install, Graphify, test, lint, atau build; orchestrator menjalankannya.",
-    "5. Jangan berhenti setelah inspeksi. Selesaikan revisi dan laporkan file yang diubah secara ringkas.",
+    "2. Prioritaskan perbaikan pada baris-baris spesifik yang diberi catatan oleh reviewer (inline code comments).",
+    "3. Edit hanya allowed_paths di isolated worktree ini; jangan menyentuh repository utama.",
+    "4. Jangan mengubah task Wiki, run manifest, index, wiki-log, atau status lifecycle.",
+    "5. Jangan menggunakan terminal/run_command, git, package install, Graphify, test, lint, atau build; orchestrator menjalankannya.",
+    "6. Jangan berhenti setelah inspeksi. Selesaikan revisi dan laporkan file yang diubah secara ringkas.",
   ].join("\n");
 
   return {
