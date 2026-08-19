@@ -182,6 +182,21 @@ export async function planTaskWithAgy({
   const scripts = packageScripts(project.repository);
   const tasks = existingTaskSummary(vaultRoot, project.id, readMarkdown);
   const graphContext = await graphifyContext(project, request, eventLogPath, processRunner);
+  
+  // Knowledge Retrieval: retrieve top-3 relevant architectural patterns from 01-Knowledge/
+  const tempTaskDoc = { title: request.slice(0, 100), body: request };
+  let relevantKnowledge = [];
+  try {
+    const { findRelevantKnowledge } = await import("./core.mjs");
+    relevantKnowledge = findRelevantKnowledge(vaultRoot, tempTaskDoc);
+  } catch {}
+
+  const knowledgeContext = relevantKnowledge.length > 0
+    ? relevantKnowledge
+        .map((k) => `- [${k.title}] (${k.path})\n  Overview: ${k.summary}`)
+        .join("\n\n")
+    : "Tidak ada pola khusus.";
+
   const agentConfig = resolveAgyConfig(process.env, "task-intake");
   const prompt = [
     "=== ATURAN INTAKE & TASK PLANNER ===",
@@ -190,11 +205,15 @@ export async function planTaskWithAgy({
     "3. Verification hanya boleh menggunakan nama script package.json yang tersedia.",
     "4. Dependencies hanya diisi bila task benar-benar bergantung pada task existing.",
     "5. Set clarificationNeeded=true hanya jika implementasi aman tidak mungkin direncanakan tanpa jawaban user.",
+    "6. Pertimbangkan standar arsitektur dan pola implementasi yang relevan dari Wiki jika sesuai.",
     "",
     `Project: ${project.id} (${project.repository})`,
     `Package scripts: ${JSON.stringify(scripts)}`,
     `Project verification defaults: ${JSON.stringify(project.verificationDefaults ?? [])}`,
     `Existing tasks: ${JSON.stringify(compactActiveTaskSummary(tasks))}`,
+    "",
+    "=== RELEVANT WIKI ARCHITECTURE PATTERNS ===",
+    knowledgeContext,
     "",
     "=== GRAPHIFY TARGETED CONTEXT ===",
     graphContext || "Tidak ada node relevan.",
