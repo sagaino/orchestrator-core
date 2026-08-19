@@ -673,3 +673,50 @@ export async function harvestRepositoryKnowledge({
     },
   };
 }
+
+export function listHarvestRuns({ vaultRoot }) {
+  const runsDir = path.join(vaultRoot, "03-Sources", "other", "orchestrator-runs");
+  if (!fs.existsSync(runsDir)) return [];
+
+  const files = fs.readdirSync(runsDir)
+    .filter((f) => f.startsWith("harvest-") && f.endsWith(".json"));
+
+  const runs = [];
+  for (const file of files) {
+    const fullPath = path.join(runsDir, file);
+    try {
+      const data = JSON.parse(fs.readFileSync(fullPath, "utf8"));
+      if (data.type === "codebase-harvest" || data.harvestId) {
+        runs.push({
+          harvestId: data.harvestId || file.replace(".json", ""),
+          repositoryPath: data.repositoryPath || "",
+          packageName: data.scanSummary?.packageName || path.basename(data.repositoryPath || ""),
+          domain: data.domain || "general",
+          capturedAt: data.capturedAt || null,
+          count: (data.patterns || []).length,
+          patterns: (data.patterns || []).map((p) => ({
+            title: p.title,
+            summary: p.summary || p.overview || "",
+            confidence: p.confidence,
+            destination: (p.confidence >= 0.9 ? "WIKI" : "CANDIDATE"),
+            tags: p.tags || [],
+            keyPoints: p.keyImplementationPoints || [],
+            codeStructure: p.codeStructure || "",
+          })),
+          scanSummary: {
+            packageName: data.scanSummary?.packageName,
+            detectedPatterns: data.scanSummary?.detectedPatterns,
+          },
+          sourcePath: path.join("03-Sources", "other", "orchestrator-runs", file).split(path.sep).join("/"),
+        });
+      }
+    } catch {
+      // ignore corrupted files
+    }
+  }
+
+  // Sort latest first
+  runs.sort((a, b) => new Date(b.capturedAt || 0).getTime() - new Date(a.capturedAt || 0).getTime());
+  return runs;
+}
+

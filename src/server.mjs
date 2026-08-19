@@ -19,7 +19,7 @@ import { getRunDiff, globalDevServerManager } from "./dev-server-manager.mjs";
 import { collectRtkAnalytics } from "./rtk-analytics.mjs";
 import { onboardExistingProject, onboardNewProject } from "./project-onboarding.mjs";
 import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
-import { harvestRepositoryKnowledge } from "./knowledge-harvester.mjs";
+import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvester.mjs";
 
 export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   const router = new Router();
@@ -571,6 +571,16 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       sendJson(res, 201, { success: true, data: result });
     } catch (err) {
       sendError(res, err.statusCode || (err.message?.includes("tidak valid") || err.message?.includes("tidak ditemukan") ? 400 : 500), err.message);
+    }
+  });
+
+  router.get("/api/knowledge/harvests", async (req, res) => {
+    try {
+      const getHarvests = services?.listHarvestRuns ?? listHarvestRuns;
+      const data = getHarvests({ vaultRoot });
+      sendJson(res, 200, { success: true, data });
+    } catch (err) {
+      sendError(res, 500, err.message);
     }
   });
 
