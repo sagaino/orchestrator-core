@@ -365,8 +365,17 @@ export function formatHarvestMarkdown({
     : "- Memerlukan penyesuaian dependensi spesifik project.";
 
   const relatedKnowledgeSection = (pattern.relatedKnowledge || []).length > 0
-    ? pattern.relatedKnowledge.map((item) => `- ${item.startsWith("[[") ? item : `[[${item}]]`}`).join("\n")
-    : "- Belum ada halaman terkait yang dihubungkan.";
+    ? pattern.relatedKnowledge.map((item) => {
+        const raw = String(item).trim();
+        if (raw.startsWith("[[") && raw.endsWith("]]")) {
+          // If it is a full path inside 01-Knowledge or 03-Sources, keep wikilink
+          if (raw.includes("01-Knowledge/") || raw.includes("03-Sources/")) return `- ${raw}`;
+          return `- \`${raw.slice(2, -2)}\``;
+        }
+        if (raw.startsWith("01-Knowledge/") || raw.startsWith("03-Sources/")) return `- [[${raw}]]`;
+        return `- \`${raw}\``;
+      }).join("\n")
+    : "- `Architecture Conventions`";
 
   let body = "";
   if (destination === "CANDIDATE") {
