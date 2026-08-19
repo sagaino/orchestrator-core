@@ -546,18 +546,89 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   router.post("/api/knowledge/harvest", async (req, res) => {
     try {
       const body = await parseJsonBody(req);
-      const { repositoryPath, domain = "backend", mode = "normal" } = body || {};
+      const { repositoryPath, domain = "backend", mode = "normal", async: isAsync = false } = body || {};
       if (!repositoryPath || typeof repositoryPath !== "string" || !repositoryPath.trim()) {
         return sendError(res, 400, "Missing required field: repositoryPath");
       }
 
+      const cleanRepoPath = path.resolve(repositoryPath.trim());
+      const cleanDomain = String(domain || "backend").toLowerCase().trim();
+      const cleanMode = mode ? String(mode).trim() : "normal";
       const harvestKnowledge = services?.harvestRepositoryKnowledge ?? harvestRepositoryKnowledge;
+
+      // If user explicitly asks for async background processing:
+      if (isAsync) {
+        const harvestId = `harvest-${Date.now()}-${randomUUID().slice(0, 8)}`;
+        eventHub.broadcast("KNOWLEDGE_HARVEST_STARTED", {
+          harvestId,
+          repositoryPath: cleanRepoPath,
+          domain: cleanDomain,
+          mode: cleanMode,
+          startedAt: new Date().toISOString(),
+        });
+
+        // Background execution
+        (async () => {
+          try {
+            const result = await harvestKnowledge({
+              vaultRoot,
+              runsRoot,
+              repositoryPath: cleanRepoPath,
+              domain: cleanDomain,
+              mode: cleanMode,
+              requestedBy: "user",
+              processRunner: services?.processRunner,
+              onProgress: (prog) => {
+                eventHub.broadcast("KNOWLEDGE_HARVEST_PROGRESS", {
+                  harvestId,
+                  repositoryPath: cleanRepoPath,
+                  domain: cleanDomain,
+                  mode: cleanMode,
+                  ...prog,
+                });
+              },
+            });
+
+            eventHub.broadcast("KNOWLEDGE_HARVESTED", {
+              harvestId: result.harvestId || harvestId,
+              repositoryPath: result.repositoryPath,
+              domain: result.domain,
+              mode: result.mode || cleanMode,
+              count: result.count,
+              harvested: result.harvested,
+            });
+          } catch (bgErr) {
+            console.error("Background harvest error:", bgErr);
+            eventHub.broadcast("KNOWLEDGE_HARVEST_FAILED", {
+              harvestId,
+              repositoryPath: cleanRepoPath,
+              domain: cleanDomain,
+              mode: cleanMode,
+              error: bgErr.message || "Pemindaian arsitektur gagal.",
+            });
+          }
+        })();
+
+        return sendJson(res, 202, {
+          success: true,
+          status: "ACCEPTED",
+          message: "Pemindaian arsitektur telah dimulai di background.",
+          data: {
+            harvestId,
+            repositoryPath: cleanRepoPath,
+            domain: cleanDomain,
+            mode: cleanMode,
+          },
+        });
+      }
+
+      // Synchronous execution (default for tests / sync clients)
       const result = await harvestKnowledge({
         vaultRoot,
         runsRoot,
-        repositoryPath: repositoryPath.trim(),
-        domain: domain ? String(domain).trim() : "backend",
-        mode: mode ? String(mode).trim() : "normal",
+        repositoryPath: cleanRepoPath,
+        domain: cleanDomain,
+        mode: cleanMode,
         requestedBy: "user",
         processRunner: services?.processRunner,
       });
@@ -566,7 +637,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
         harvestId: result.harvestId,
         repositoryPath: result.repositoryPath,
         domain: result.domain,
-        mode: result.mode || mode,
+        mode: result.mode || cleanMode,
         count: result.count,
         harvested: result.harvested,
       });

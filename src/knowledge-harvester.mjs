@@ -273,108 +273,233 @@ export async function harvestWithAgy({
   mode = "normal",
   runsRoot = null,
   processRunner = runProcess,
+  onProgress = null,
 }) {
   const harvestId = `harvest-${Date.now()}-${randomUUID().slice(0, 8)}`;
-  const eventLogPath = runsRoot ? path.join(runsRoot, "events", `${harvestId}.jsonl`) : null;
   const isPro = String(mode).toLowerCase() === "pro";
-  const agentConfig = {
-    model: isPro ? "gemini-3.7-flash-high" : "gemini-3.7-flash",
-    effort: isPro ? "high" : "low",
-  };
 
-  const proInstructions = [
-    "=== ATURAN CODEBASE KNOWLEDGE HARVESTER (MODE PRO: EXHAUSTIVE DEEP HARVEST) ===",
-    "1. Lakukan pemindaian multi-layer dan mendalam ke SELURUH folder, sub-fitur, services, repositories, handlers/notifiers, models, security guards, dan native bridges.",
-    "2. Ekstrak SEMUA pola arsitektur, clean coding conventions, dan reusable design pattern yang ada secara lengkap dan komprehensif (target 8 sampai 15+ pola arsitektur bernilai tinggi).",
-    "3. Cakup seluruh lapisan: (a) Core Foundation & State Management, (b) Networking, Auth, Token Refresh & Request Signing, (c) Navigation & Route Guards, (d) Storage, Caching, Offline Sync & DB, (e) Feature Module Slicing & Pagination, (f) Native Hardware/SDK Integration & Permissions, (g) Error Handling, Validation DTO & Logging, (h) Environment Flavors / CI-CD Bootstrap.",
-    "4. Setiap pola wajib menyertakan: Overview, Purpose, Directory Structure, Key Implementation Points, Code Snippets konkret dari repositori, Considerations, dan Related Knowledge.",
-    "5. Tentukan confidence score (0.0 - 1.0) untuk setiap pola: confidence >= 0.90 akan dipromosikan langsung ke Wiki, < 0.90 disimpan sebagai candidate untuk review.",
-    `Domain: ${domain}`,
-    "",
-    "=== TEMPLATE DOMAIN SEBAGAI PANDUAN ===",
-    templateContent || "Standard pattern structure: Overview, Implementation, Code Examples, Considerations, Related Knowledge.",
-    "",
-    "=== REPOSITORY SCAN & AST SUMMARY ===",
-    JSON.stringify(scanSummary, null, 2),
-  ].join("\n");
+  if (!isPro) {
+    // Normal Mode: Single Adaptive Pass (Fast & Token-Efficient)
+    if (typeof onProgress === "function") {
+      onProgress({ pass: 1, totalPasses: 1, label: "Memindai pola arsitektur inti...", progress: 30 });
+    }
+    const eventLogPath = runsRoot ? path.join(runsRoot, "events", `${harvestId}.jsonl`) : null;
+    const agentConfig = {
+      model: "gemini-3.7-flash",
+      effort: "low",
+    };
+    const prompt = [
+      "=== ATURAN CODEBASE KNOWLEDGE HARVESTER (MODE NORMAL: ADAPTIVE QUALITY EXTRACTION) ===",
+      "1. Ekstrak seluruh best practice, pola arsitektur, dan reusable design pattern yang signifikan dan bermutu tinggi dari repositori lokal ini tanpa batasan kaku jumlah.",
+      "2. Sesuaikan jumlah pola secara proporsional dengan skala dan kompleksitas repositori (proyek besar/kompleks dapat mengekstrak 4-8 pola esensial, sedangkan proyek sederhana cukup 2-4 pola inti).",
+      "3. Cakup berbagai domain arsitektur penting: Autentikasi & Keamanan, State Management & Data Flow, Storage/Database Persistence & Transaksi, Error Handling & Logging, Modularity & Struktur Folder, IPC/Bridge (Desktop), atau API Contracts.",
+      "4. Hindari helper/utilitas sepele yang generik (misal format string sederhana). Fokus hanya pada pola yang memiliki nilai arsitektural dan dapat diterapkan kembali (reusable).",
+      "5. Format dokumen harus mengikuti struktur standar terstruktur (Overview, Purpose, Key Implementation Points, Code Examples yang konkret, Considerations, Related Knowledge).",
+      "6. Tentukan confidence score (0.0 - 1.0) untuk setiap pola: confidence >= 0.90 akan dipromosikan langsung ke Wiki, < 0.90 disimpan sebagai candidate untuk review.",
+      `Domain: ${domain}`,
+      "",
+      "=== TEMPLATE DOMAIN SEBAGAI PANDUAN ===",
+      templateContent || "Standard pattern structure: Overview, Implementation, Code Examples, Considerations, Related Knowledge.",
+      "",
+      "=== REPOSITORY SCAN & AST SUMMARY ===",
+      JSON.stringify(scanSummary, null, 2),
+    ].join("\n");
 
-  const normalInstructions = [
-    "=== ATURAN CODEBASE KNOWLEDGE HARVESTER (MODE NORMAL: ADAPTIVE QUALITY EXTRACTION) ===",
-    "1. Ekstrak seluruh best practice, pola arsitektur, dan reusable design pattern yang signifikan dan bermutu tinggi dari repositori lokal ini tanpa batasan kaku jumlah.",
-    "2. Sesuaikan jumlah pola secara proporsional dengan skala dan kompleksitas repositori (proyek besar/kompleks dapat mengekstrak 4-8 pola esensial, sedangkan proyek sederhana cukup 2-4 pola inti).",
-    "3. Cakup berbagai domain arsitektur penting: Autentikasi & Keamanan, State Management & Data Flow, Storage/Database Persistence & Transaksi, Error Handling & Logging, Modularity & Struktur Folder, IPC/Bridge (Desktop), atau API Contracts.",
-    "4. Hindari helper/utilitas sepele yang generik (misal format string sederhana). Fokus hanya pada pola yang memiliki nilai arsitektural dan dapat diterapkan kembali (reusable).",
-    "5. Format dokumen harus mengikuti struktur standar terstruktur (Overview, Purpose, Key Implementation Points, Code Examples yang konkret, Considerations, Related Knowledge).",
-    "6. Tentukan confidence score (0.0 - 1.0) untuk setiap pola: confidence >= 0.90 akan dipromosikan langsung ke Wiki, < 0.90 disimpan sebagai candidate untuk review.",
-    `Domain: ${domain}`,
-    "",
-    "=== TEMPLATE DOMAIN SEBAGAI PANDUAN ===",
-    templateContent || "Standard pattern structure: Overview, Implementation, Code Examples, Considerations, Related Knowledge.",
-    "",
-    "=== REPOSITORY SCAN & AST SUMMARY ===",
-    JSON.stringify(scanSummary, null, 2),
-  ].join("\n");
+    const result = await processRunner({
+      command: "agy",
+      args: [
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        "--json-schema",
+        knowledgeHarvestSchema(),
+        ...agyConfigArgs(agentConfig),
+        "--mode",
+        "plan",
+        "--dangerously-skip-permissions",
+        "--print-timeout",
+        "10m",
+      ],
+      cwd: scanSummary.repositoryPath || process.cwd(),
+      stage: "knowledge-harvest",
+      ...(eventLogPath ? { eventLogPath } : {}),
+    });
 
-  const prompt = isPro ? proInstructions : normalInstructions;
+    if (result.exitCode !== 0) {
+      const errorDetails = result.stderrTail || result.stdoutTail || "";
+      throw new Error(`Knowledge harvester agent gagal dengan exit code ${result.exitCode}${errorDetails ? `: ${errorDetails.slice(-300)}` : "."}`);
+    }
 
-  const result = await processRunner({
-    command: "agy",
-    args: [
-      "-p",
-      prompt,
-      "--output-format",
-      "json",
-      "--json-schema",
-      knowledgeHarvestSchema(),
-      ...agyConfigArgs(agentConfig),
-      "--mode",
-      "plan",
-      "--dangerously-skip-permissions",
-      "--print-timeout",
-      "10m",
-    ],
-    cwd: scanSummary.repositoryPath || process.cwd(),
-    stage: "knowledge-harvest",
-    ...(eventLogPath ? { eventLogPath } : {}),
-  });
+    const parsed = parseHarvestOutput(result);
 
-  if (result.exitCode !== 0) {
-    const errorDetails = result.stderrTail || result.stdoutTail || "";
-    throw new Error(`Knowledge harvester agent gagal dengan exit code ${result.exitCode}${errorDetails ? `: ${errorDetails.slice(-300)}` : "."}`);
+    if (runsRoot) {
+      try {
+        const telemetryRecord = createAgentTelemetryRecord({
+          stage: "KNOWLEDGE_HARVEST",
+          result,
+          agentConfig,
+          invocationId: harvestId,
+          metadata: {
+            harvestId,
+            repositoryPath: scanSummary.repositoryPath,
+            domain,
+            mode: "normal",
+            patternsCount: (parsed.patterns || []).length,
+          },
+        });
+        appendRunTelemetry(runsRoot, harvestId, telemetryRecord);
+      } catch {}
+    }
+
+    return { ...parsed, harvestId };
   }
 
-  const parsed = parseHarvestOutput(result);
+  // PRO MODE: Smart Exhaustive Multi-Pass Batching
+  const passes = [
+    {
+      id: "foundation",
+      label: "Lapisan 1: Core Architecture, State Flow & Routing",
+      focus: "Fokuskan analisis pada: (1) Core Foundation & Project Skeleton Structure, (2) Reactive State Management (Controllers, Stores, Notifiers), (3) Declarative Navigation, Dynamic Deep-Linking & Route Access Guards.",
+    },
+    {
+      id: "security_network",
+      label: "Lapisan 2: Security, Auth Interceptors & Cryptography",
+      focus: "Fokuskan analisis pada: (1) Authentication & Session Management, (2) Resilient HTTP Client Pipelines, Auto JWT Refresh Interceptors & Multipart Rebuilding, (3) Data Encryption, E2EE, Hardware Keystore/Keychain Persistence.",
+    },
+    {
+      id: "native_storage",
+      label: "Lapisan 3: Native Integration, Device Sensors & Local DB",
+      focus: "Fokuskan analisis pada: (1) Native Platform Views, Device Bridges, C++ Plugins, Camera/Biometrics, (2) Local Database / Offline Sync (SQLite, Drift, Hive, Room, CoreData), (3) In-App Purchases, Billing Lifecycle, Push Notification Handlers.",
+    },
+    {
+      id: "services_devops",
+      label: "Lapisan 4: Services, Error Handling & Multi-Flavor DevOps",
+      focus: "Fokuskan analisis pada: (1) Error Handling Architecture, Generic Envelope DTOs, Normalization, (2) Specialized Background Services / Mixins / Audio / Media, (3) Multi-Flavor Environment Bootstrapping & Secret Obfuscation.",
+    },
+  ];
 
-  // Record AI telemetry for the harvest run
-  if (runsRoot) {
+  const aggregatedPatterns = [];
+  const discoveredTitles = new Set();
+  const agentConfig = {
+    model: "gemini-3.7-flash",
+    effort: "low",
+  };
+
+  for (let i = 0; i < passes.length; i++) {
+    const pass = passes[i];
+    const progressPercent = Math.round(((i + 1) / (passes.length + 1)) * 100);
+
+    if (typeof onProgress === "function") {
+      onProgress({
+        pass: i + 1,
+        totalPasses: passes.length,
+        label: pass.label,
+        progress: progressPercent,
+        foundCount: aggregatedPatterns.length,
+      });
+    }
+
+    const passHarvestId = `${harvestId}-p${i + 1}`;
+    const passEventLogPath = runsRoot ? path.join(runsRoot, "events", `${passHarvestId}.jsonl`) : null;
+
+    const discoveredListPrompt = discoveredTitles.size > 0
+      ? `\n=== POLA YANG SUDAH DITEMUKAN SEBELUMNYA (JANGAN DUPLIKASI) ===\n${[...discoveredTitles].map((t) => `- ${t}`).join("\n")}\n`
+      : "";
+
+    const passPrompt = [
+      `=== ATURAN CODEBASE KNOWLEDGE HARVESTER (MODE PRO: MULTI-PASS BATCH ${i + 1}/${passes.length}) ===`,
+      `FOKUS TAHAP INI: ${pass.label}`,
+      pass.focus,
+      "",
+      "1. Ekstrak 3 sampai 5 pola arsitektur terbaik dan bermutu tinggi KHUSUS pada domain fokus di atas.",
+      "2. Jangan ulangi pola yang sudah ditemukan pada batch sebelumnya.",
+      "3. Pastikan setiap pola menyertakan Overview, Code Structure, Key Implementation Points, Code Examples nyata, Considerations, dan Related Knowledge.",
+      "4. Berikan confidence score (0.0 - 1.0) untuk setiap pola: >= 0.90 untuk promosi langsung ke Wiki.",
+      discoveredListPrompt,
+      `Domain: ${domain}`,
+      "",
+      "=== TEMPLATE DOMAIN SEBAGAI PANDUAN ===",
+      templateContent || "Standard pattern structure: Overview, Implementation, Code Examples, Considerations, Related Knowledge.",
+      "",
+      "=== REPOSITORY SCAN & AST SUMMARY ===",
+      JSON.stringify(scanSummary, null, 2),
+    ].join("\n");
+
     try {
-      const telemetryRecord = createAgentTelemetryRecord({
-        stage: "KNOWLEDGE_HARVEST",
-        result,
-        agentConfig,
-        invocationId: harvestId,
-        metadata: {
-          harvestId,
-          repositoryPath: scanSummary.repositoryPath,
-          domain,
-          patternsCount: (parsed.patterns || []).length,
-        },
+      const result = await processRunner({
+        command: "agy",
+        args: [
+          "-p",
+          passPrompt,
+          "--output-format",
+          "json",
+          "--json-schema",
+          knowledgeHarvestSchema(),
+          ...agyConfigArgs(agentConfig),
+          "--mode",
+          "plan",
+          "--dangerously-skip-permissions",
+          "--print-timeout",
+          "10m",
+        ],
+        cwd: scanSummary.repositoryPath || process.cwd(),
+        stage: `knowledge-harvest-pass-${i + 1}`,
+        ...(passEventLogPath ? { eventLogPath: passEventLogPath } : {}),
       });
-      persistKnowledgeTelemetry({
-        runsRoot,
-        id: harvestId,
-        record: telemetryRecord,
-        metadata: {
-          type: "codebase-harvest",
-          repositoryPath: scanSummary.repositoryPath,
-        },
-      });
-    } catch {
-      // Telemetry recording is non-blocking
+
+      if (result.exitCode === 0) {
+        const parsed = parseHarvestOutput(result);
+        const newPatterns = parsed.patterns || [];
+
+        for (const pat of newPatterns) {
+          const normalizedTitle = String(pat.title || "").trim().toLowerCase();
+          if (normalizedTitle && !discoveredTitles.has(normalizedTitle)) {
+            discoveredTitles.add(normalizedTitle);
+            aggregatedPatterns.push(pat);
+          }
+        }
+
+        if (runsRoot) {
+          try {
+            const telemetryRecord = createAgentTelemetryRecord({
+              stage: "KNOWLEDGE_HARVEST",
+              result,
+              agentConfig,
+              invocationId: passHarvestId,
+              metadata: {
+                harvestId,
+                pass: i + 1,
+                passName: pass.id,
+                domain,
+                mode: "pro",
+                patternsCount: newPatterns.length,
+              },
+            });
+            appendRunTelemetry(runsRoot, harvestId, telemetryRecord);
+          } catch {}
+        }
+      }
+    } catch (passErr) {
+      console.error(`Pass ${i + 1} (${pass.id}) error:`, passErr.message);
     }
   }
 
-  return { harvest: parsed, harvestId, agentConfig, result };
+  if (aggregatedPatterns.length === 0) {
+    throw new Error("Mode Pro tidak menghasilkan pattern baru dari semua batch pemindaian.");
+  }
+
+  if (typeof onProgress === "function") {
+    onProgress({
+      pass: passes.length,
+      totalPasses: passes.length,
+      label: "Pemindaian selesai! Menggabungkan & mensintesis seluruh knowledge...",
+      progress: 100,
+      foundCount: aggregatedPatterns.length,
+    });
+  }
+
+  return { patterns: aggregatedPatterns, harvestId };
 }
 
 export function formatHarvestMarkdown({
@@ -562,6 +687,7 @@ export async function harvestRepositoryKnowledge({
   requestedBy = "user",
   processRunner = runProcess,
   harvester = null,
+  onProgress = null,
 }) {
   if (!vaultRoot || typeof vaultRoot !== "string") {
     const error = new Error("vaultRoot harus ditentukan.");
@@ -614,6 +740,7 @@ export async function harvestRepositoryKnowledge({
       mode: normalizedMode,
       requestedBy,
       processRunner,
+      onProgress,
     });
   } else {
     harvestResult = await harvestWithAgy({
@@ -623,6 +750,7 @@ export async function harvestRepositoryKnowledge({
       mode: normalizedMode,
       runsRoot,
       processRunner,
+      onProgress,
     });
   }
 
