@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { runProcess } from "./executor.mjs";
 import { agyConfigArgs } from "./agent-config.mjs";
+import { createAgentTelemetryRecord, persistKnowledgeTelemetry } from "./telemetry.mjs";
 
 export const VALID_DOMAINS = new Set([
   "frontend",
@@ -179,7 +180,36 @@ export async function synthesizeWithAgy({
   }
 
   const parsed = parseSynthesisOutput(result);
-  return { synthesis: parsed, ingestId, agentConfig };
+
+  if (runsRoot) {
+    try {
+      const telemetryRecord = createAgentTelemetryRecord({
+        stage: "KNOWLEDGE_INGEST",
+        result,
+        agentConfig,
+        invocationId: ingestId,
+        metadata: {
+          ingestId,
+          domain,
+          type,
+          title: title || parsed.title,
+        },
+      });
+      persistKnowledgeTelemetry({
+        runsRoot,
+        id: ingestId,
+        record: telemetryRecord,
+        metadata: {
+          type: "raw-ingest",
+          domain,
+        },
+      });
+    } catch {
+      // Telemetry recording is non-blocking
+    }
+  }
+
+  return { synthesis: parsed, ingestId, agentConfig, result };
 }
 
 export function normalizeSynthesis(raw, defaultTitle = null, domain = "general", type = "concept") {

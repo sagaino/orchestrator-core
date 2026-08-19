@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { runProcess } from "./executor.mjs";
 import { agyConfigArgs } from "./agent-config.mjs";
+import { createAgentTelemetryRecord, persistKnowledgeTelemetry } from "./telemetry.mjs";
 
 export const VALID_DOMAINS = new Set([
   "frontend",
@@ -319,7 +320,37 @@ export async function harvestWithAgy({
   }
 
   const parsed = parseHarvestOutput(result);
-  return { harvest: parsed, harvestId, agentConfig };
+
+  // Record AI telemetry for the harvest run
+  if (runsRoot) {
+    try {
+      const telemetryRecord = createAgentTelemetryRecord({
+        stage: "KNOWLEDGE_HARVEST",
+        result,
+        agentConfig,
+        invocationId: harvestId,
+        metadata: {
+          harvestId,
+          repositoryPath: scanSummary.repositoryPath,
+          domain,
+          patternsCount: (parsed.patterns || []).length,
+        },
+      });
+      persistKnowledgeTelemetry({
+        runsRoot,
+        id: harvestId,
+        record: telemetryRecord,
+        metadata: {
+          type: "codebase-harvest",
+          repositoryPath: scanSummary.repositoryPath,
+        },
+      });
+    } catch {
+      // Telemetry recording is non-blocking
+    }
+  }
+
+  return { harvest: parsed, harvestId, agentConfig, result };
 }
 
 export function formatHarvestMarkdown({
