@@ -329,6 +329,7 @@ export async function harvestWithAgy({
       ...agyConfigArgs(agentConfig),
       "--mode",
       "plan",
+      "--dangerously-skip-permissions",
       "--print-timeout",
       "10m",
     ],
@@ -338,7 +339,8 @@ export async function harvestWithAgy({
   });
 
   if (result.exitCode !== 0) {
-    throw new Error(`Knowledge harvester agent gagal dengan exit code ${result.exitCode}.`);
+    const errorDetails = result.stderrTail || result.stdoutTail || "";
+    throw new Error(`Knowledge harvester agent gagal dengan exit code ${result.exitCode}${errorDetails ? `: ${errorDetails.slice(-300)}` : "."}`);
   }
 
   const parsed = parseHarvestOutput(result);
