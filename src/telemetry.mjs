@@ -98,6 +98,8 @@ export function normalizeTelemetryStage(stage) {
   if (value === "coding-agent" || value === "IMPLEMENTATION") return "IMPLEMENTATION";
   if (value.startsWith("automatic-recovery-agent:") || value === "AUTOMATIC_RECOVERY") return "AUTOMATIC_RECOVERY";
   if (value === "retrospective" || value === "RETROSPECTIVE") return "RETROSPECTIVE";
+  if (value === "knowledge-harvest" || value === "KNOWLEDGE_HARVEST") return "KNOWLEDGE_HARVEST";
+  if (value === "knowledge-ingest" || value === "KNOWLEDGE_INGEST") return "KNOWLEDGE_INGEST";
   return value.toUpperCase().replace(/[^A-Z0-9]+/g, "_") || "UNKNOWN";
 }
 
@@ -246,8 +248,38 @@ export function persistIntakeTelemetry({ runsRoot, intakeId, record, task = null
   return value;
 }
 
-export function listIntakeTelemetry(runsRoot) {
-  const root = intakeTelemetryRoot(runsRoot);
+function knowledgeTelemetryRoot(runsRoot) {
+  return path.join(runsRoot, "telemetry", "knowledge");
+}
+
+function knowledgeTelemetryPath(runsRoot, id) {
+  return path.join(knowledgeTelemetryRoot(runsRoot), `${safeTelemetryId(id)}.json`);
+}
+
+export function persistKnowledgeTelemetry({ runsRoot, id, record, metadata = {} }) {
+  const filePath = knowledgeTelemetryPath(runsRoot, id);
+  const existing = fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, "utf8")) : null;
+  const value = {
+    schemaVersion: 1,
+    id,
+    record: {
+      ...(existing?.record ?? {}),
+      ...record,
+      metadata: {
+        ...(existing?.record?.metadata ?? {}),
+        ...(record?.metadata ?? {}),
+        ...metadata,
+      },
+    },
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  writeAtomic(filePath, value);
+  return value;
+}
+
+export function listKnowledgeTelemetry(runsRoot) {
+  const root = knowledgeTelemetryRoot(runsRoot);
   if (!fs.existsSync(root)) return [];
   return fs.readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
@@ -422,6 +454,10 @@ export function telemetryReport({ runsRoot, selector = null, projectId = null, e
   }
   for (const record of inferredIntakeTelemetry(runsRoot)) {
     if (!projectId || record.metadata?.projectId === projectId) records.push(record);
+  }
+  for (const knowledge of listKnowledgeTelemetry(runsRoot)) {
+    const recordProject = knowledge.record?.metadata?.projectId;
+    if (!projectId || recordProject === projectId) records.push(knowledge.record);
   }
   const telemetry = buildTelemetry(records, { threshold: 0 });
   telemetry.budget = {
