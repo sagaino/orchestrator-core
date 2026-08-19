@@ -4,7 +4,7 @@ import { DEFAULT_VAULT, listProjects, buildContext, buildPlan, readMarkdown, loa
 import { validateTaskReadiness } from "./task-readiness.mjs";
 import { requestTask } from "./task-intake.mjs";
 import { startTaskRun, recoverTaskRun, requestChangesTaskRun, rejectTaskRun, retryTaskRun } from "./task-workflow.mjs";
-import { previewReviewWorkspace } from "./review-workflow.mjs";
+import { previewReviewWorkspace, formatReviewRevisionFeedback } from "./review-workflow.mjs";
 import { listRuns, getRun, RUN_STATES } from "./run-manager.mjs";
 import { listJobs, getJob, updateJobForRun, reconcileJobs, JOB_STATES } from "./job-queue.mjs";
 import { listKnowledgeCandidates, promoteKnowledgeCandidate, rejectKnowledgeCandidate, acceptRun } from "./knowledge-workflow.mjs";
@@ -18,6 +18,8 @@ import { Router, sendJson, sendError, parseJsonBody } from "./api/router.mjs";
 import { getRunDiff, globalDevServerManager } from "./dev-server-manager.mjs";
 import { collectRtkAnalytics } from "./rtk-analytics.mjs";
 import { onboardExistingProject, onboardNewProject } from "./project-onboarding.mjs";
+import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
+import { harvestRepositoryKnowledge } from "./knowledge-harvester.mjs";
 
 export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   const router = new Router();
@@ -241,9 +243,18 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
 
   router.post("/api/runs/:id/request-changes", async (req, res, { params }) => {
     const body = await parseJsonBody(req);
-    const { requestedBy = "user", reason } = body;
-    if (!reason || typeof reason !== "string" || !reason.trim()) {
+    const { requestedBy = "user", reason, feedback, inlineComments } = body || {};
+    const rawReason = (reason && typeof reason === "string" && reason.trim())
+      ? reason
+      : (feedback && typeof feedback === "string" && feedback.trim())
+        ? feedback
+        : null;
+    if (!rawReason) {
       return sendError(res, 400, "Missing required field: reason");
+    }
+
+    if (inlineComments !== undefined && inlineComments !== null && !Array.isArray(inlineComments)) {
+      return sendError(res, 400, "Invalid field: inlineComments must be an array");
     }
 
     let run = null;
@@ -255,6 +266,11 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     } catch (err) {
       return sendError(res, 404, err.message);
     }
+
+    const effectiveReason = formatReviewRevisionFeedback({
+      reason: rawReason.trim(),
+      inlineComments: Array.isArray(inlineComments) ? inlineComments : [],
+    });
 
     eventHub.broadcast("RUN_CHANGES_REQUESTED", { runId: params.id, state: RUN_STATES.CHANGES_REQUESTED });
     sendJson(res, 202, {
@@ -273,7 +289,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
           runsRoot,
           runId: params.id,
           requestedBy,
-          reason: reason.trim(),
+          reason: effectiveReason,
           onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
         });
 
@@ -487,6 +503,77 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     sendJson(res, 200, { success: true, data: health });
   });
 
+  router.post("/api/knowledge/ingest", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const { content, rawContent, title = null, domain, type, destination = "WIKI" } = body || {};
+      const rawText = content || rawContent;
+      if (!rawText || typeof rawText !== "string" || !rawText.trim()) {
+        return sendError(res, 400, "Missing required field: content");
+      }
+      if (!domain || typeof domain !== "string" || !domain.trim()) {
+        return sendError(res, 400, "Missing required field: domain");
+      }
+      if (!type || typeof type !== "string" || !type.trim()) {
+        return sendError(res, 400, "Missing required field: type");
+      }
+
+      const ingestKnowledge = services?.ingestRawKnowledge ?? ingestRawKnowledge;
+      const result = await ingestKnowledge({
+        vaultRoot,
+        runsRoot,
+        rawContent: rawText.trim(),
+        title: title && typeof title === "string" ? title.trim() : null,
+        domain: domain.trim(),
+        type: type.trim(),
+        destination: destination ? String(destination).trim() : "WIKI",
+        processRunner: services?.processRunner,
+      });
+
+      eventHub.broadcast("KNOWLEDGE_INGESTED", {
+        ingestId: result.ingestId,
+        destination: result.destination,
+        target: result.target,
+      });
+
+      sendJson(res, 201, { success: true, data: result });
+    } catch (err) {
+      sendError(res, err.statusCode || (err.message?.includes("tidak valid") ? 400 : 500), err.message);
+    }
+  });
+
+  router.post("/api/knowledge/harvest", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const { repositoryPath, domain = "backend" } = body || {};
+      if (!repositoryPath || typeof repositoryPath !== "string" || !repositoryPath.trim()) {
+        return sendError(res, 400, "Missing required field: repositoryPath");
+      }
+
+      const harvestKnowledge = services?.harvestRepositoryKnowledge ?? harvestRepositoryKnowledge;
+      const result = await harvestKnowledge({
+        vaultRoot,
+        runsRoot,
+        repositoryPath: repositoryPath.trim(),
+        domain: domain ? String(domain).trim() : "backend",
+        requestedBy: "user",
+        processRunner: services?.processRunner,
+      });
+
+      eventHub.broadcast("KNOWLEDGE_HARVESTED", {
+        harvestId: result.harvestId,
+        repositoryPath: result.repositoryPath,
+        domain: result.domain,
+        count: result.count,
+        harvested: result.harvested,
+      });
+
+      sendJson(res, 201, { success: true, data: result });
+    } catch (err) {
+      sendError(res, err.statusCode || (err.message?.includes("tidak valid") || err.message?.includes("tidak ditemukan") ? 400 : 500), err.message);
+    }
+  });
+
   // --- 6. Notifications & Telemetry ---
   router.get("/api/notifications", async (req, res) => {
     const notifications = listNotifications({ runsRoot });
@@ -545,6 +632,8 @@ export function createOrchestratorServer({
     buildPlan,
     onboardExistingProject,
     onboardNewProject,
+    ingestRawKnowledge,
+    harvestRepositoryKnowledge,
     ...customServices,
   };
 
