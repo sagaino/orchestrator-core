@@ -546,7 +546,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   router.post("/api/knowledge/harvest", async (req, res) => {
     try {
       const body = await parseJsonBody(req);
-      const { repositoryPath, domain = "backend" } = body || {};
+      const { repositoryPath, domain = "backend", mode = "normal" } = body || {};
       if (!repositoryPath || typeof repositoryPath !== "string" || !repositoryPath.trim()) {
         return sendError(res, 400, "Missing required field: repositoryPath");
       }
@@ -557,6 +557,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
         runsRoot,
         repositoryPath: repositoryPath.trim(),
         domain: domain ? String(domain).trim() : "backend",
+        mode: mode ? String(mode).trim() : "normal",
         requestedBy: "user",
         processRunner: services?.processRunner,
       });
@@ -565,6 +566,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
         harvestId: result.harvestId,
         repositoryPath: result.repositoryPath,
         domain: result.domain,
+        mode: result.mode || mode,
         count: result.count,
         harvested: result.harvested,
       });
