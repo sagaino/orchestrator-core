@@ -174,6 +174,7 @@ export async function planTaskWithAgy({
   runsRoot,
   project,
   request,
+  attachedAssets = [],
   readMarkdown,
   processRunner = runProcess,
 }) {
@@ -197,6 +198,17 @@ export async function planTaskWithAgy({
         .join("\n\n")
     : "Tidak ada pola khusus.";
 
+  // Attached UI Mockups / Project Assets Context
+  let assetsContext = "Tidak ada aset visual terlampir.";
+  if (Array.isArray(attachedAssets) && attachedAssets.length > 0) {
+    assetsContext = attachedAssets.map((asset, idx) => {
+      if (asset.type === "MOCKUP") {
+        return `${idx + 1}. [UI Mockup Reference] File: \`${asset.relativeVaultPath || asset.fileName}\` (Path absolut: \`${asset.absolutePath}\`). Instruksi: Gunakan gambar ini sebagai referensi visual utama untuk styling/slicing layout.`;
+      }
+      return `${idx + 1}. [Project Production Asset] File: \`${asset.relativeProjectPath || asset.fileName}\` (Import: \`${asset.importPath || asset.relativeProjectPath}\`). Instruksi: Aset ini sudah disimpan di project repo, gunakan langsung dalam import komponen kode.`;
+    }).join("\n");
+  }
+
   const agentConfig = resolveAgyConfig(process.env, "task-intake");
   const prompt = [
     "=== ATURAN INTAKE & TASK PLANNER ===",
@@ -206,11 +218,15 @@ export async function planTaskWithAgy({
     "4. Dependencies hanya diisi bila task benar-benar bergantung pada task existing.",
     "5. Set clarificationNeeded=true hanya jika implementasi aman tidak mungkin direncanakan tanpa jawaban user.",
     "6. Pertimbangkan standar arsitektur dan pola implementasi yang relevan dari Wiki jika sesuai.",
+    "7. Jika terdapat UI Mockup atau Asset terlampir, sertakan implementasi komponen UI yang mereferensikan desain/aset tersebut.",
     "",
     `Project: ${project.id} (${project.repository})`,
     `Package scripts: ${JSON.stringify(scripts)}`,
     `Project verification defaults: ${JSON.stringify(project.verificationDefaults ?? [])}`,
     `Existing tasks: ${JSON.stringify(compactActiveTaskSummary(tasks))}`,
+    "",
+    "=== ATTACHED UI MOCKUPS & ASSETS ===",
+    assetsContext,
     "",
     "=== RELEVANT WIKI ARCHITECTURE PATTERNS ===",
     knowledgeContext,
@@ -319,9 +335,36 @@ function yamlArray(values) {
   return `[${values.map((value) => JSON.stringify(value)).join(", ")}]`;
 }
 
-function taskDocument({ taskId, projectId, request, draft, requestedBy }) {
+function taskDocument({ taskId, projectId, request, draft, requestedBy, attachedAssets = [] }) {
   const today = new Date().toISOString().slice(0, 10);
   const bugTask = /\bbug\b|bug fix|fixing bug/i.test(`${draft.title}\n${request}`);
+  
+  const sources = attachedAssets
+    .filter((a) => a.type === "MOCKUP" && a.relativeVaultPath)
+    .map((a) => a.relativeVaultPath);
+
+  const mockupsSection = attachedAssets.filter((a) => a.type === "MOCKUP").length > 0
+    ? [
+        "## UI Mockup References",
+        "",
+        ...attachedAssets
+          .filter((a) => a.type === "MOCKUP")
+          .map((a) => `- ![[${a.relativeVaultPath || a.fileName}]]\n  - Path: \`${a.relativeVaultPath || a.fileName}\``),
+        "",
+      ]
+    : [];
+
+  const assetsSection = attachedAssets.filter((a) => a.type === "PROJECT_ASSET").length > 0
+    ? [
+        "## Project Production Assets",
+        "",
+        ...attachedAssets
+          .filter((a) => a.type === "PROJECT_ASSET")
+          .map((a) => `- File: \`${a.relativeProjectPath}\` (Import: \`${a.importPath || a.relativeProjectPath}\`)`),
+        "",
+      ]
+    : [];
+
   return [
     "---",
     `title: ${JSON.stringify(draft.title)}`,
@@ -337,7 +380,7 @@ function taskDocument({ taskId, projectId, request, draft, requestedBy }) {
     `allowed_paths: ${yamlArray(draft.allowedPaths)}`,
     `requires_changes: ${draft.requiresChanges}`,
     `risk: ${draft.risk}`,
-    "sources: []",
+    `sources: ${yamlArray(sources)}`,
     "---",
     "",
     `# ${draft.title}`,
@@ -346,6 +389,8 @@ function taskDocument({ taskId, projectId, request, draft, requestedBy }) {
     "",
     request,
     "",
+    ...mockupsSection,
+    ...assetsSection,
     "## Tujuan",
     "",
     draft.purpose,
@@ -378,23 +423,24 @@ function taskDocument({ taskId, projectId, request, draft, requestedBy }) {
     "",
     "## Error Log",
     "",
+    "Tidak ada error log saat pembuatan task.",
+    "",
     "## Log Perubahan",
     "",
-    "---",
-    "",
-    "## Orchestrator Intake Log",
-    `- [${new Date().toISOString()}] Task dibuat dari conversational intake oleh \`${requestedBy}\`; risk \`${draft.risk}\`.`,
+    "🚀 [VERIFIED_BY_LLM_WIKI_SCHEMA]",
+    `- [${today}] Task dibuat melalui orchestrator task intake oleh \`${requestedBy}\`.`,
     "",
   ].join("\n");
 }
 
-function updateIndex(vaultRoot, projectTitle, taskPath, taskId, title) {
+function updateIndex(vaultRoot, projectId, relativePath, title) {
   const indexPath = path.join(vaultRoot, "index.md");
+  if (!fs.existsSync(indexPath)) return;
   let content = fs.readFileSync(indexPath, "utf8");
-  const link = taskPath.replace(/\.md$/, "");
-  if (content.includes(`[[${link}|`)) return;
-  const entry = `- [[${link}|${taskId}]]: ${title}`;
-  const heading = `### ${projectTitle} Tasks`;
+  const target = relativePath.replace(/\.md$/, "");
+  if (content.includes(`[[${target}|`)) return;
+  const heading = "## Orchestrator-created Tasks";
+  const entry = `- [[${target}|${title}]] (${projectId})`;
   const headingIndex = content.indexOf(heading);
   if (headingIndex === -1) {
     content = `${content.trimEnd()}\n\n## Orchestrator-created Tasks\n\n${entry}\n`;
@@ -424,13 +470,14 @@ export async function requestTask({
   request,
   requestedBy = "user",
   autoStart = false,
+  attachedAssets = [],
   readMarkdown,
   validateTask = null,
   planner = planTaskWithAgy,
 }) {
   const text = String(request).trim();
   if (!text) throw new Error("Permintaan task tidak boleh kosong.");
-  const planned = await planner({ vaultRoot, runsRoot, project, request: text, readMarkdown });
+  const planned = await planner({ vaultRoot, runsRoot, project, request: text, attachedAssets, readMarkdown });
   const draft = normalizeDraft(planned.draft ?? planned, project);
   if (draft.clarificationNeeded) {
     return {
@@ -453,6 +500,7 @@ export async function requestTask({
     request: text,
     draft,
     requestedBy,
+    attachedAssets,
   });
   const temporaryPath = `${absolutePath}.intake-${randomUUID().slice(0, 8)}.tmp`;
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });

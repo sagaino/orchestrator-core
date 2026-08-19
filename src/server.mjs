@@ -22,6 +22,7 @@ import { collectRtkAnalytics } from "./rtk-analytics.mjs";
 import { onboardExistingProject, onboardNewProject } from "./project-onboarding.mjs";
 import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
 import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvester.mjs";
+import { saveUploadedAsset } from "./asset-manager.mjs";
 
 export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   const router = new Router();
@@ -131,7 +132,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   // --- 3. Tasks & Intake ---
   router.post("/api/tasks/request", async (req, res) => {
     const body = await parseJsonBody(req);
-    const { project: projectId, request, requestedBy = "user", autoStart = true } = body;
+    const { project: projectId, request, requestedBy = "user", autoStart = false, attachedAssets = [] } = body;
     if (!projectId || !request) {
       return sendError(res, 400, "Missing required fields: project and request");
     }
@@ -149,6 +150,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       request,
       requestedBy,
       autoStart,
+      attachedAssets,
       readMarkdown: services.readMarkdown,
       validateTask: (resolvedProjectId, taskPath) => validateTaskReadiness(
         buildContext(vaultRoot, resolvedProjectId, taskPath),
@@ -716,6 +718,71 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       const getHarvests = services?.listHarvestRuns ?? listHarvestRuns;
       const data = getHarvests({ vaultRoot });
       sendJson(res, 200, { success: true, data });
+    } catch (err) {
+      sendError(res, 500, err.message);
+    }
+  });
+
+  // --- 5B. Asset Upload & Serving ---
+  router.post("/api/assets/upload", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const { fileName, base64Data, type = "MOCKUP", projectId, targetSubDir } = body || {};
+
+      let projectRepo = null;
+      if (type === "PROJECT_ASSET") {
+        const registry = loadRegistry(vaultRoot);
+        const project = registry.projects.find((p) => p.id === projectId);
+        if (!project) return sendError(res, 404, `Project not found: ${projectId}`);
+        projectRepo = project.repository;
+      }
+
+      const result = await saveUploadedAsset({
+        vaultRoot,
+        projectRepository: projectRepo,
+        type,
+        fileName,
+        base64Data,
+        targetSubDir,
+      });
+
+      sendJson(res, 201, { success: true, data: result });
+    } catch (err) {
+      sendError(res, 400, err.message);
+    }
+  });
+
+  router.get("/api/assets/raw", async (req, res) => {
+    try {
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+      const relativePath = parsedUrl.searchParams.get("path");
+      if (!relativePath) return sendError(res, 400, "Missing required query param: path");
+
+      const normalized = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, "");
+      const fullPath = path.join(vaultRoot, normalized);
+
+      if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+        return sendError(res, 404, "Asset file not found");
+      }
+
+      const ext = path.extname(fullPath).toLowerCase();
+      const mimeTypes = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+        ".gif": "image/gif",
+      };
+      const contentType = mimeTypes[ext] || "application/octet-stream";
+
+      const fileBuffer = fs.readFileSync(fullPath);
+      res.writeHead(200, {
+        "Content-Type": contentType,
+        "Content-Length": fileBuffer.length,
+        "Cache-Control": "public, max-age=86400",
+      });
+      res.end(fileBuffer);
     } catch (err) {
       sendError(res, 500, err.message);
     }
