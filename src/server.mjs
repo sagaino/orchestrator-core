@@ -1,4 +1,5 @@
 import http from "node:http";
+import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_VAULT, listProjects, buildContext, buildPlan, readMarkdown, loadRegistry } from "./core.mjs";
@@ -415,6 +416,31 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     try {
       const diffData = await getRunDiff({ runsRoot, runId: params.id });
       sendJson(res, 200, { success: true, data: diffData });
+    } catch (err) {
+      sendError(res, 500, err.message);
+    }
+  });
+
+  router.get("/api/runs/:id/logs", async (req, res, { params }) => {
+    try {
+      const logFile = path.join(runsRoot, "events", `${params.id}.jsonl`);
+      if (!fs.existsSync(logFile)) {
+        return sendJson(res, 200, { success: true, data: { lines: [], exists: false } });
+      }
+
+      const content = fs.readFileSync(logFile, "utf8");
+      const lines = content
+        .split("\n")
+        .filter((l) => l.trim().length > 0)
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return { raw: line };
+          }
+        });
+
+      sendJson(res, 200, { success: true, data: { lines, exists: true } });
     } catch (err) {
       sendError(res, 500, err.message);
     }
