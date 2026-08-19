@@ -248,6 +248,21 @@ export function persistIntakeTelemetry({ runsRoot, intakeId, record, task = null
   return value;
 }
 
+export function listIntakeTelemetry(runsRoot) {
+  const root = intakeTelemetryRoot(runsRoot);
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(root, entry.name), "utf8"));
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
 function knowledgeTelemetryRoot(runsRoot) {
   return path.join(runsRoot, "telemetry", "knowledge");
 }
