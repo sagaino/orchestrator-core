@@ -644,12 +644,31 @@ export async function harvestRepositoryKnowledge({
       relatedKnowledge: Array.isArray(rawPattern.relatedKnowledge) ? rawPattern.relatedKnowledge.map(String) : [],
     };
 
-    const isPromoted = pattern.confidence >= 0.9;
-    const destination = isPromoted ? "WIKI" : "CANDIDATE";
     const slug = slugify(pattern.title);
 
+    // Check if this pattern or concept already exists in 01-Knowledge
+    let existingWikiRelative = null;
+    const possibleFolders = [
+      path.join("01-Knowledge", "patterns", normalizedDomain, `${slug}.md`),
+      path.join("01-Knowledge", "concepts", `${slug}.md`),
+      path.join("01-Knowledge", "snippets", `${slug}.md`),
+      path.join("01-Knowledge", "decisions", `${slug}.md`),
+      path.join("01-Knowledge", "debugging", `${slug}.md`),
+    ];
+    for (const testRel of possibleFolders) {
+      if (fs.existsSync(path.join(vaultRoot, testRel))) {
+        existingWikiRelative = testRel.split(path.sep).join("/");
+        break;
+      }
+    }
+
+    const isPromoted = existingWikiRelative || pattern.confidence >= 0.9;
+    const destination = isPromoted ? "WIKI" : "CANDIDATE";
+
     let relativePath = "";
-    if (destination === "CANDIDATE") {
+    if (existingWikiRelative) {
+      relativePath = existingWikiRelative;
+    } else if (destination === "CANDIDATE") {
       relativePath = path.join("05-Knowledge-Candidates", `${slug}.md`).split(path.sep).join("/");
     } else {
       relativePath = path.join("01-Knowledge", "patterns", normalizedDomain, `${slug}.md`).split(path.sep).join("/");
