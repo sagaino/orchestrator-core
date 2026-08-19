@@ -270,20 +270,38 @@ export async function harvestWithAgy({
   scanSummary,
   templateContent,
   domain,
+  mode = "normal",
   runsRoot = null,
   processRunner = runProcess,
 }) {
   const harvestId = `harvest-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const eventLogPath = runsRoot ? path.join(runsRoot, "events", `${harvestId}.jsonl`) : null;
+  const isPro = String(mode).toLowerCase() === "pro";
   const agentConfig = {
-    model: "gemini-3.7-flash",
-    effort: "low",
+    model: isPro ? "gemini-3.7-flash-high" : "gemini-3.7-flash",
+    effort: isPro ? "high" : "low",
   };
 
-  const prompt = [
-    "=== ATURAN CODEBASE KNOWLEDGE HARVESTER (ADAPTIVE QUALITY EXTRACTION) ===",
+  const proInstructions = [
+    "=== ATURAN CODEBASE KNOWLEDGE HARVESTER (MODE PRO: EXHAUSTIVE DEEP HARVEST) ===",
+    "1. Lakukan pemindaian multi-layer dan mendalam ke SELURUH folder, sub-fitur, services, repositories, handlers/notifiers, models, security guards, dan native bridges.",
+    "2. Ekstrak SEMUA pola arsitektur, clean coding conventions, dan reusable design pattern yang ada secara lengkap dan komprehensif (target 8 sampai 15+ pola arsitektur bernilai tinggi).",
+    "3. Cakup seluruh lapisan: (a) Core Foundation & State Management, (b) Networking, Auth, Token Refresh & Request Signing, (c) Navigation & Route Guards, (d) Storage, Caching, Offline Sync & DB, (e) Feature Module Slicing & Pagination, (f) Native Hardware/SDK Integration & Permissions, (g) Error Handling, Validation DTO & Logging, (h) Environment Flavors / CI-CD Bootstrap.",
+    "4. Setiap pola wajib menyertakan: Overview, Purpose, Directory Structure, Key Implementation Points, Code Snippets konkret dari repositori, Considerations, dan Related Knowledge.",
+    "5. Tentukan confidence score (0.0 - 1.0) untuk setiap pola: confidence >= 0.90 akan dipromosikan langsung ke Wiki, < 0.90 disimpan sebagai candidate untuk review.",
+    `Domain: ${domain}`,
+    "",
+    "=== TEMPLATE DOMAIN SEBAGAI PANDUAN ===",
+    templateContent || "Standard pattern structure: Overview, Implementation, Code Examples, Considerations, Related Knowledge.",
+    "",
+    "=== REPOSITORY SCAN & AST SUMMARY ===",
+    JSON.stringify(scanSummary, null, 2),
+  ].join("\n");
+
+  const normalInstructions = [
+    "=== ATURAN CODEBASE KNOWLEDGE HARVESTER (MODE NORMAL: ADAPTIVE QUALITY EXTRACTION) ===",
     "1. Ekstrak seluruh best practice, pola arsitektur, dan reusable design pattern yang signifikan dan bermutu tinggi dari repositori lokal ini tanpa batasan kaku jumlah.",
-    "2. Sesuaikan jumlah pola secara proporsional dengan skala dan kompleksitas repositori (proyek besar/kompleks dapat mengekstrak 5-10+ pola esensial, sedangkan proyek sederhana cukup 2-4 pola inti).",
+    "2. Sesuaikan jumlah pola secara proporsional dengan skala dan kompleksitas repositori (proyek besar/kompleks dapat mengekstrak 4-8 pola esensial, sedangkan proyek sederhana cukup 2-4 pola inti).",
     "3. Cakup berbagai domain arsitektur penting: Autentikasi & Keamanan, State Management & Data Flow, Storage/Database Persistence & Transaksi, Error Handling & Logging, Modularity & Struktur Folder, IPC/Bridge (Desktop), atau API Contracts.",
     "4. Hindari helper/utilitas sepele yang generik (misal format string sederhana). Fokus hanya pada pola yang memiliki nilai arsitektural dan dapat diterapkan kembali (reusable).",
     "5. Format dokumen harus mengikuti struktur standar terstruktur (Overview, Purpose, Key Implementation Points, Code Examples yang konkret, Considerations, Related Knowledge).",
@@ -296,6 +314,8 @@ export async function harvestWithAgy({
     "=== REPOSITORY SCAN & AST SUMMARY ===",
     JSON.stringify(scanSummary, null, 2),
   ].join("\n");
+
+  const prompt = isPro ? proInstructions : normalInstructions;
 
   const result = await processRunner({
     command: "agy",
@@ -536,6 +556,7 @@ export async function harvestRepositoryKnowledge({
   runsRoot = null,
   repositoryPath,
   domain = "backend",
+  mode = "normal",
   requestedBy = "user",
   processRunner = runProcess,
   harvester = null,
@@ -566,6 +587,8 @@ export async function harvestRepositoryKnowledge({
     throw error;
   }
 
+  const normalizedMode = String(mode || "normal").toLowerCase().trim() === "pro" ? "pro" : "normal";
+
   // 1. Scan repository architecture / AST
   const scanSummary = scanRepositoryArchitecture(resolvedRepoPath);
 
@@ -586,6 +609,7 @@ export async function harvestRepositoryKnowledge({
       scanSummary,
       templateContent,
       domain: normalizedDomain,
+      mode: normalizedMode,
       requestedBy,
       processRunner,
     });
@@ -594,6 +618,7 @@ export async function harvestRepositoryKnowledge({
       scanSummary,
       templateContent,
       domain: normalizedDomain,
+      mode: normalizedMode,
       runsRoot,
       processRunner,
     });
