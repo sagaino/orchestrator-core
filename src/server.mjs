@@ -1,5 +1,6 @@
 import http from "node:http";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { DEFAULT_VAULT, listProjects, buildContext, buildPlan, readMarkdown, loadRegistry } from "./core.mjs";
 import { validateTaskReadiness } from "./task-readiness.mjs";
 import { requestTask } from "./task-intake.mjs";
