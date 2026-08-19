@@ -823,6 +823,55 @@ export function listKnowledgeCandidates({ vaultRoot }) {
   return { schemaVersion: 1, mode: "read-only", count: candidates.length, candidates };
 }
 
+function extractCandidateProposal(candidate) {
+  if (candidate.source?.proposal) {
+    return normalizeProposal(candidate.source.proposal);
+  }
+
+  // Handle Codebase Harvest source (03-Sources/other/orchestrator-runs/harvest-*.json)
+  if (candidate.source?.type === "codebase-harvest" && Array.isArray(candidate.source.patterns)) {
+    const pattern = candidate.source.patterns.find((p) => p.title === candidate.title) || candidate.source.patterns[0];
+    if (pattern) {
+      return normalizeProposal({
+        title: pattern.title || candidate.title,
+        type: pattern.tags?.includes("pattern") ? "pattern" : "concept",
+        summary: pattern.summary || pattern.overview || "",
+        rationale: pattern.purpose || pattern.overview || "",
+        considerations: pattern.considerations || [],
+        relatedKnowledge: pattern.relatedKnowledge || [],
+        confidence: pattern.confidence || 0.9,
+      });
+    }
+  }
+
+  // Handle Raw Ingest source (03-Sources/other/orchestrator-runs/ingest-*.json)
+  if (candidate.source?.type === "raw-ingest" && candidate.source.synthesis) {
+    const syn = candidate.source.synthesis;
+    return normalizeProposal({
+      title: syn.title || candidate.title,
+      type: candidate.source.type || "concept",
+      summary: syn.summary || "",
+      rationale: syn.purpose || "",
+      considerations: syn.considerations || [],
+      relatedKnowledge: syn.relatedKnowledge || [],
+      confidence: 0.9,
+    });
+  }
+
+  // Fallback: Parse from candidate Markdown content directly
+  const title = candidate.title || frontmatterValue(candidate.content, "title") || candidate.slug;
+  const type = frontmatterValue(candidate.content, "type") || "concept";
+  return normalizeProposal({
+    title,
+    type: type === "candidate" ? "concept" : type,
+    summary: frontmatterValue(candidate.content, "summary") || "",
+    rationale: "",
+    considerations: [],
+    relatedKnowledge: [],
+    confidence: 0.85,
+  });
+}
+
 export function promoteKnowledgeCandidate({
   vaultRoot,
   selector,
@@ -830,10 +879,10 @@ export function promoteKnowledgeCandidate({
   targetPath = null,
 }) {
   const candidate = loadCandidate(vaultRoot, selector);
-  if (!candidate.source?.proposal || !candidate.runId || !candidate.sourcePath) {
+  if (!candidate.runId || !candidate.sourcePath || !candidate.source) {
     throw new Error("Candidate tidak memiliki immutable orchestrator source yang dapat diverifikasi.");
   }
-  const proposal = normalizeProposal(candidate.source.proposal);
+  const proposal = extractCandidateProposal(candidate);
   const requestedTarget = targetPath ?? proposal.targetPath ?? defaultWikiTarget(proposal);
   if (!validRelativeWikiTarget(requestedTarget)) {
     throw new Error(`Target promosi harus berada di 01-Knowledge dan berformat Markdown: ${requestedTarget}`);
