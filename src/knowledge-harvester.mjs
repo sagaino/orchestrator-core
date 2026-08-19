@@ -281,11 +281,13 @@ export async function harvestWithAgy({
   };
 
   const prompt = [
-    "=== ATURAN CODEBASE KNOWLEDGE HARVESTER ===",
-    "1. Ekstrak 2 sampai 4 best practice / pola arsitektur terbaik dari repositori lokal berikut.",
-    "2. Fokus pada pola arsitektur autentikasi, error handling, transaksi database, atau struktur folder & modularitas.",
-    "3. Format dokumen harus mengikuti pola template domain markdown terstruktur.",
-    "4. Tentukan confidence score (0.0 - 1.0) untuk setiap pola; confidence >= 0.9 akan dipromosikan langsung ke Wiki, < 0.9 menjadi candidate.",
+    "=== ATURAN CODEBASE KNOWLEDGE HARVESTER (ADAPTIVE QUALITY EXTRACTION) ===",
+    "1. Ekstrak seluruh best practice, pola arsitektur, dan reusable design pattern yang signifikan dan bermutu tinggi dari repositori lokal ini tanpa batasan kaku jumlah.",
+    "2. Sesuaikan jumlah pola secara proporsional dengan skala dan kompleksitas repositori (proyek besar/kompleks dapat mengekstrak 5-10+ pola esensial, sedangkan proyek sederhana cukup 2-4 pola inti).",
+    "3. Cakup berbagai domain arsitektur penting: Autentikasi & Keamanan, State Management & Data Flow, Storage/Database Persistence & Transaksi, Error Handling & Logging, Modularity & Struktur Folder, IPC/Bridge (Desktop), atau API Contracts.",
+    "4. Hindari helper/utilitas sepele yang generik (misal format string sederhana). Fokus hanya pada pola yang memiliki nilai arsitektural dan dapat diterapkan kembali (reusable).",
+    "5. Format dokumen harus mengikuti struktur standar terstruktur (Overview, Purpose, Key Implementation Points, Code Examples yang konkret, Considerations, Related Knowledge).",
+    "6. Tentukan confidence score (0.0 - 1.0) untuk setiap pola: confidence >= 0.90 akan dipromosikan langsung ke Wiki, < 0.90 disimpan sebagai candidate untuk review.",
     `Domain: ${domain}`,
     "",
     "=== TEMPLATE DOMAIN SEBAGAI PANDUAN ===",
