@@ -919,6 +919,7 @@ export function listHarvestRuns({ vaultRoot }) {
             tags: p.tags || [],
             keyPoints: p.keyImplementationPoints || [],
             codeStructure: p.codeStructure || "",
+            codeSnippets: Array.isArray(p.codeSnippets) ? p.codeSnippets : [],
           })),
           scanSummary: {
             packageName: data.scanSummary?.packageName,
