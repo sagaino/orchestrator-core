@@ -508,6 +508,7 @@ export function formatHarvestMarkdown({
   destination,
   sourcePath,
   harvestId,
+  vaultRoot,
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const docType = destination === "CANDIDATE" ? "candidate" : "pattern";
@@ -547,15 +548,23 @@ export function formatHarvestMarkdown({
   const relatedKnowledgeSection = (pattern.relatedKnowledge || []).length > 0
     ? pattern.relatedKnowledge.map((item) => {
         const raw = String(item).trim();
-        if (raw.startsWith("[[") && raw.endsWith("]]")) {
-          // If it is a full path inside 01-Knowledge or 03-Sources, keep wikilink
-          if (raw.includes("01-Knowledge/") || raw.includes("03-Sources/")) return `- ${raw}`;
-          return `- \`${raw.slice(2, -2)}\``;
+        const unbracketed = raw.startsWith("[[") && raw.endsWith("]]") ? raw.slice(2, -2).trim() : raw;
+        const targetPath = unbracketed.split("|")[0].trim();
+        const withMd = targetPath.endsWith(".md") ? targetPath : `${targetPath}.md`;
+
+        // Check if file exists in vaultRoot
+        if (vaultRoot && (fs.existsSync(path.join(vaultRoot, targetPath)) || fs.existsSync(path.join(vaultRoot, withMd)))) {
+          return `- [[${targetPath}]]`;
         }
-        if (raw.startsWith("01-Knowledge/") || raw.startsWith("03-Sources/")) return `- [[${raw}]]`;
-        return `- \`${raw}\``;
+
+        // Otherwise format as readable text/code badge to prevent broken wikilinks
+        const label = path.basename(targetPath, ".md")
+          .split("-")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+        return `- ${label}`;
       }).join("\n")
-    : "- `Architecture Conventions`";
+    : "- Architecture Conventions";
 
   let body = "";
   if (destination === "CANDIDATE") {
@@ -835,6 +844,7 @@ export async function harvestRepositoryKnowledge({
       destination,
       sourcePath: sourceRelativePath,
       harvestId,
+      vaultRoot,
     });
 
     const absoluteTarget = path.join(vaultRoot, relativePath);
