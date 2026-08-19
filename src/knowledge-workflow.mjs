@@ -833,6 +833,7 @@ function extractCandidateProposal(candidate) {
     const pattern = candidate.source.patterns.find((p) => p.title === candidate.title) || candidate.source.patterns[0];
     if (pattern) {
       return normalizeProposal({
+        classification: "NEW",
         title: pattern.title || candidate.title,
         type: pattern.tags?.includes("pattern") ? "pattern" : "concept",
         summary: pattern.summary || pattern.overview || "",
@@ -848,6 +849,7 @@ function extractCandidateProposal(candidate) {
   if (candidate.source?.type === "raw-ingest" && candidate.source.synthesis) {
     const syn = candidate.source.synthesis;
     return normalizeProposal({
+      classification: "NEW",
       title: syn.title || candidate.title,
       type: candidate.source.type || "concept",
       summary: syn.summary || "",
@@ -862,6 +864,7 @@ function extractCandidateProposal(candidate) {
   const title = candidate.title || frontmatterValue(candidate.content, "title") || candidate.slug;
   const type = frontmatterValue(candidate.content, "type") || "concept";
   return normalizeProposal({
+    classification: "NEW",
     title,
     type: type === "candidate" ? "concept" : type,
     summary: frontmatterValue(candidate.content, "summary") || "",
