@@ -5,6 +5,7 @@ import { agyConfigArgs, resolveAgyConfig } from "./agent-config.mjs";
 import { runProcess } from "./executor.mjs";
 import { enqueueTaskJob } from "./job-queue.mjs";
 import { createAgentTelemetryRecord, persistIntakeTelemetry } from "./telemetry.mjs";
+import { tryDeterministicTaskDraft } from "./fast-path-intake.mjs";
 
 function taskDraftSchema() {
   return JSON.stringify({
@@ -477,8 +478,20 @@ export async function requestTask({
 }) {
   const text = String(request).trim();
   if (!text) throw new Error("Permintaan task tidak boleh kosong.");
-  const planned = await planner({ vaultRoot, runsRoot, project, request: text, attachedAssets, readMarkdown });
-  const draft = normalizeDraft(planned.draft ?? planned, project);
+
+  // 1. Fast-Path Optimization: Try deterministic intake planning first (0 AI tokens)
+  const fastPathDraft = tryDeterministicTaskDraft({ project, request: text, attachedAssets });
+  let planned;
+  let draft;
+
+  if (fastPathDraft) {
+    draft = fastPathDraft;
+  } else {
+    // 2. Normal Path: Call AI Planner with Graphify & Knowledge Context
+    planned = await planner({ vaultRoot, runsRoot, project, request: text, attachedAssets, readMarkdown });
+    draft = normalizeDraft(planned.draft ?? planned, project);
+  }
+
   if (draft.clarificationNeeded) {
     return {
       schemaVersion: 1,
