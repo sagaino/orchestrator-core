@@ -91,6 +91,9 @@ export function createReadyTaskEvent(vaultRoot, filePath, services) {
         ? document.metadata.allowed_paths.map(String)
         : [],
       requiresChanges: document.metadata.requires_changes === true,
+      sources: Array.isArray(document.metadata.sources)
+        ? document.metadata.sources.map(String)
+        : [],
     },
     project: {
       id: context.project.id,
