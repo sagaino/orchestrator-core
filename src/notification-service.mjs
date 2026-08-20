@@ -39,7 +39,7 @@ function compactText(value, maximumLength) {
 }
 
 export function configuredNotificationDelivery(env = process.env) {
-  const mode = String(env.ORCHESTRATOR_NOTIFICATION_DELIVERY ?? "auto").trim().toLowerCase();
+  const mode = String(env.ORCHESTRATOR_NOTIFICATION_DELIVERY ?? "inbox").trim().toLowerCase();
   if (!DELIVERY_MODES.has(mode)) {
     throw new Error("ORCHESTRATOR_NOTIFICATION_DELIVERY harus auto, desktop, atau inbox.");
   }

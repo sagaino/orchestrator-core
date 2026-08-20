@@ -589,7 +589,8 @@ assert.deepEqual(resolveAgyConfig({
   ORCHESTRATOR_AGY_EFFORT: "medium",
 }), { model: "gemini-3.7-flash-medium", effort: "medium" });
 assert.throws(() => resolveAgyConfig({ ORCHESTRATOR_AGY_EFFORT: "maximum" }), /tidak valid/);
-assert.equal(configuredNotificationDelivery({}), "auto");
+assert.equal(configuredNotificationDelivery({}), "inbox");
+assert.equal(configuredNotificationDelivery({ ORCHESTRATOR_NOTIFICATION_DELIVERY: "auto" }), "auto");
 assert.equal(configuredNotificationDelivery({ ORCHESTRATOR_NOTIFICATION_DELIVERY: "inbox" }), "inbox");
 assert.throws(
   () => configuredNotificationDelivery({ ORCHESTRATOR_NOTIFICATION_DELIVERY: "email" }),
