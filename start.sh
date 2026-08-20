@@ -20,6 +20,7 @@ VAULT_PATH="${ORCHESTRATOR_VAULT_PATH:-$DEFAULT_VAULT_PATH}"
 BACKEND_PORT=3721
 FRONTEND_PORT=5173
 PID_FILE="$BACKEND_DIR/runs/.orchestrator.pids"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.sagaino.personal-ai-orchestrator.plist"
 
 # --- Text Formatting & Colors ---
 C_RESET='\033[0m'
@@ -63,7 +64,13 @@ log_error() {
 stop_services() {
   echo -e "\n${C_YELLOW}${C_BOLD}🛑 Stopping Personal AI Orchestrator...${C_RESET}"
   
-  # 1. Kill via saved PID file
+  # 1. Unload launchctl daemon service if active (macOS LaunchAgent auto-restart)
+  if [ -f "$LAUNCHD_PLIST" ]; then
+    launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+  fi
+  launchctl remove "com.sagaino.personal-ai-orchestrator" 2>/dev/null || true
+
+  # 2. Kill via saved PID file
   if [ -f "$PID_FILE" ]; then
     while IFS= read -r pid; do
       if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
@@ -73,25 +80,21 @@ stop_services() {
     rm -f "$PID_FILE"
   fi
 
-  # 2. Kill any daemon background worker process
+  # 3. Kill any background daemon worker or server processes
   pkill -9 -f "orchestrator.mjs (daemon-worker|daemon|server)" 2>/dev/null || true
 
-  # 3. Kill any lingering process holding the ports
+  # 4. Kill any lingering process holding the ports
   local backend_pids=$(lsof -ti :$BACKEND_PORT 2>/dev/null || true)
   if [ -n "$backend_pids" ]; then
     echo "$backend_pids" | xargs kill -9 2>/dev/null || true
-    log_success "Backend Daemon stopped (Port $BACKEND_PORT freed)"
-  else
-    log_success "Backend Daemon stopped (Port $BACKEND_PORT freed)"
   fi
+  log_success "Backend Daemon stopped (Port $BACKEND_PORT freed)"
 
   local frontend_pids=$(lsof -ti :$FRONTEND_PORT 2>/dev/null || true)
   if [ -n "$frontend_pids" ]; then
     echo "$frontend_pids" | xargs kill -9 2>/dev/null || true
-    log_success "Dashboard UI stopped (Port $FRONTEND_PORT freed)"
-  else
-    log_success "Dashboard UI stopped (Port $FRONTEND_PORT freed)"
   fi
+  log_success "Dashboard UI stopped (Port $FRONTEND_PORT freed)"
 
   log_success "✨ All services stopped cleanly.\n"
 }
@@ -263,6 +266,10 @@ fi
 
 # 5. Clean Previous Lingering Ports & Workers
 mkdir -p "$BACKEND_DIR/runs"
+if [ -f "$LAUNCHD_PLIST" ]; then
+  launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+fi
+launchctl remove "com.sagaino.personal-ai-orchestrator" 2>/dev/null || true
 pkill -9 -f "orchestrator.mjs (daemon-worker|daemon|server)" 2>/dev/null || true
 lsof -ti :$BACKEND_PORT | xargs kill -9 2>/dev/null || true
 lsof -ti :$FRONTEND_PORT | xargs kill -9 2>/dev/null || true
