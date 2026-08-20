@@ -225,7 +225,10 @@ export function buildAgyInvocation(
   const knowledge = manifest.retrieval.knowledge
     .map((item) => `- ${path.join(vaultRoot, item.path)}`)
     .join("\n");
-  const agentConfig = resolveAgyConfig(process.env, "implementation");
+  const agentConfig = resolveAgyConfig(process.env, "implementation", {
+    request: manifest.task?.title || "",
+    allowedPaths: manifest.task?.allowedPaths || [],
+  });
   const prompt = [
     "=== KONTRAK EKSEKUSI CODING AGENT ===",
     "1. Baca task, project metadata, dan hanya knowledge/source yang relevan.",
