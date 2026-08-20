@@ -51,7 +51,6 @@ import {
   notifyKnowledgeCandidateReady,
   notifyTaskOutcome,
 } from "../src/notification-service.mjs";
-import { macOsNotifierPaths, runMacOsNotifier } from "../src/macos-notifier.mjs";
 import {
   buildTelemetry,
   compactTelemetry,
@@ -616,32 +615,6 @@ assert.equal(desktopDelivery.app, "Personal AI Orchestrator");
 assert.equal(desktopInvocation[0].title, 'Task "quoted"');
 assert.equal(desktopInvocation[0].message, "Ready for review");
 assert.equal(desktopInvocation[1].runsRoot, "/tmp/orchestrator-runs");
-const notifierPaths = macOsNotifierPaths("/tmp/orchestrator-runs");
-assert.match(notifierPaths.appPath, /Personal AI Orchestrator\.app$/);
-const notifierCalls = [];
-const nativeResult = await runMacOsNotifier({
-  notificationId: "native-contract-test",
-  title: "Ready",
-  subtitle: "fixture-app",
-  message: "Review task",
-}, {
-  runsRoot: "/tmp/orchestrator-runs",
-  appBuilder: async () => ({
-    appPath: "/tmp/Personal AI Orchestrator.app",
-    executablePath: "/tmp/Personal AI Orchestrator.app/Contents/MacOS/notifier",
-    built: true,
-  }),
-  runner: async (command, args) => {
-    notifierCalls.push({ command, args });
-    return command === "open"
-      ? { stdout: "", stderr: "" }
-      : { stdout: '{"status":"ACCEPTED"}\n', stderr: "" };
-  },
-});
-assert.equal(nativeResult.status, "ACCEPTED");
-assert.equal(notifierCalls[0].command, "open");
-assert.ok(notifierCalls[0].args.includes("--register-only"));
-assert.match(notifierCalls[1].command, /notifier$/);
 assert.equal(configuredTokenWarningThreshold({}), 250_000);
 assert.equal(configuredTokenWarningThreshold({ ORCHESTRATOR_TOKEN_WARNING_THRESHOLD: "0" }), 0);
 assert.throws(

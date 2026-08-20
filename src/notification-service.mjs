@@ -1,9 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { runMacOsNotifier } from "./macos-notifier.mjs";
 
-const DELIVERY_MODES = new Set(["auto", "desktop", "inbox"]);
+const DELIVERY_MODES = new Set(["inbox", "auto", "desktop"]);
 
 function notificationsRoot(runsRoot) {
   return path.join(runsRoot, "notifications");
@@ -50,43 +49,35 @@ export async function deliverDesktopNotification(
   notification,
   {
     env = process.env,
-    platform = process.platform,
     runsRoot,
-    nativeNotifier = runMacOsNotifier,
+    nativeNotifier = null,
   } = {},
 ) {
-  const mode = configuredNotificationDelivery(env);
   const attemptedAt = new Date().toISOString();
-  if (mode === "inbox") {
-    return { channel: "inbox", status: "SKIPPED", attemptedAt, reason: "Desktop delivery disabled." };
+  if (typeof nativeNotifier === "function") {
+    try {
+      const result = await nativeNotifier({
+        ...notification,
+        title: compactText(notification.title, 80),
+        subtitle: compactText(notification.subtitle || notification.source?.projectId || "Personal AI Orchestrator", 80),
+        message: compactText(notification.message, 240),
+      }, { runsRoot });
+      return {
+        channel: "desktop",
+        status: result.status === "ACCEPTED" ? "ACCEPTED_BY_MACOS" : String(result.status),
+        attemptedAt,
+        app: "Personal AI Orchestrator",
+      };
+    } catch (error) {
+      return {
+        channel: "desktop",
+        status: "FAILED",
+        attemptedAt,
+        error: compactText(error.stderr || error.message, 1_000),
+      };
+    }
   }
-  if (platform !== "darwin") {
-    return { channel: "desktop", status: "SKIPPED", attemptedAt, reason: `Platform ${platform} belum didukung.` };
-  }
-
-  try {
-    const result = await nativeNotifier({
-      ...notification,
-      title: compactText(notification.title, 80),
-      subtitle: compactText(notification.subtitle || notification.source?.projectId || "Personal AI Orchestrator", 80),
-      message: compactText(notification.message, 240),
-    }, { runsRoot });
-    const delivery = {
-      channel: "desktop",
-      status: result.status === "ACCEPTED" ? "ACCEPTED_BY_MACOS" : String(result.status),
-      attemptedAt,
-      app: "Personal AI Orchestrator",
-    };
-    if (result.reason) delivery.reason = compactText(result.reason, 1_000);
-    return delivery;
-  } catch (error) {
-    return {
-      channel: "desktop",
-      status: "FAILED",
-      attemptedAt,
-      error: compactText(error.stderr || error.message, 1_000),
-    };
-  }
+  return { channel: "inbox", status: "DELIVERED", attemptedAt, reason: "In-dashboard inbox delivery active." };
 }
 
 export function listNotifications({ runsRoot, unreadOnly = false, limit = 50 }) {
