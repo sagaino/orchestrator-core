@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Approval-gated orchestrator for the Obsidian Wiki and external projects.",
   "scripts": {
+    "start": "./start.sh",
+    "dev": "./start.sh",
+    "stop": "./start.sh stop",
     "add-project": "node src/orchestrator.mjs add-project",
     "remove-project": "node src/orchestrator.mjs remove-project",
     "purge-project-archive": "node src/orchestrator.mjs purge-project-archive",
