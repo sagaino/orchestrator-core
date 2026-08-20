@@ -357,11 +357,9 @@ export function buildAgyRevisionInvocation(
   const conversationId = previousRevisions.at(-1)?.agent?.finalResult?.conversation_id
     ?? manifest.execution?.agent?.finalResult?.conversation_id
     ?? null;
-  const knowledge = manifest.retrieval.knowledge
+  const knowledge = (manifest.retrieval?.knowledge ?? [])
     .map((item) => `- ${path.join(vaultRoot, item.path)}`)
     .join("\n");
-  const agentConfig = resolveAgyConfig(process.env, "implementation");
-
   const effectiveInlineComments = inlineComments ?? revision.inlineComments ?? [];
   let feedbackText = revision.reason;
   if (
@@ -374,6 +372,12 @@ export function buildAgyRevisionInvocation(
       inlineComments: effectiveInlineComments,
     });
   }
+
+  // Dynamically resolve configuration based on revision feedback complexity
+  const agentConfig = resolveAgyConfig(process.env, "implementation", {
+    request: `${manifest.task.title} ${feedbackText}`,
+    allowedPaths: manifest.task.allowedPaths ?? [],
+  });
 
   const prompt = [
     `Lanjutkan revisi review iteration ${revision.iteration} untuk task: ${path.join(vaultRoot, manifest.task.path)}`,
