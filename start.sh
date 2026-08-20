@@ -63,26 +63,33 @@ log_error() {
 stop_services() {
   echo -e "\n${C_YELLOW}${C_BOLD}🛑 Stopping Personal AI Orchestrator...${C_RESET}"
   
-  # Kill via saved PID file
+  # 1. Kill via saved PID file
   if [ -f "$PID_FILE" ]; then
     while IFS= read -r pid; do
       if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null || true
       fi
     done < "$PID_FILE"
     rm -f "$PID_FILE"
   fi
 
-  # Kill any lingering process holding the ports
-  local backend_pid=$(lsof -ti :$BACKEND_PORT 2>/dev/null || true)
-  if [ -n "$backend_pid" ]; then
-    kill -9 $backend_pid 2>/dev/null || true
+  # 2. Kill any daemon background worker process
+  pkill -9 -f "orchestrator.mjs (daemon-worker|daemon|server)" 2>/dev/null || true
+
+  # 3. Kill any lingering process holding the ports
+  local backend_pids=$(lsof -ti :$BACKEND_PORT 2>/dev/null || true)
+  if [ -n "$backend_pids" ]; then
+    echo "$backend_pids" | xargs kill -9 2>/dev/null || true
+    log_success "Backend Daemon stopped (Port $BACKEND_PORT freed)"
+  else
     log_success "Backend Daemon stopped (Port $BACKEND_PORT freed)"
   fi
 
-  local frontend_pid=$(lsof -ti :$FRONTEND_PORT 2>/dev/null || true)
-  if [ -n "$frontend_pid" ]; then
-    kill -9 $frontend_pid 2>/dev/null || true
+  local frontend_pids=$(lsof -ti :$FRONTEND_PORT 2>/dev/null || true)
+  if [ -n "$frontend_pids" ]; then
+    echo "$frontend_pids" | xargs kill -9 2>/dev/null || true
+    log_success "Dashboard UI stopped (Port $FRONTEND_PORT freed)"
+  else
     log_success "Dashboard UI stopped (Port $FRONTEND_PORT freed)"
   fi
 
@@ -96,7 +103,9 @@ check_status() {
   local backend_running=false
   local frontend_running=false
 
-  if curl -s "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null 2>&1; then
+  if curl -s --connect-timeout 1 "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null 2>&1; then
+    backend_running=true
+  elif lsof -ti :$BACKEND_PORT >/dev/null 2>&1; then
     backend_running=true
   fi
 
@@ -252,8 +261,9 @@ if [ -n "$DASHBOARD_DIR" ] && [ ! -d "$DASHBOARD_DIR/node_modules" ]; then
   log_success "Dependensi Dashboard UI terinstall."
 fi
 
-# 5. Clean Previous Lingering Ports
+# 5. Clean Previous Lingering Ports & Workers
 mkdir -p "$BACKEND_DIR/runs"
+pkill -9 -f "orchestrator.mjs (daemon-worker|daemon|server)" 2>/dev/null || true
 lsof -ti :$BACKEND_PORT | xargs kill -9 2>/dev/null || true
 lsof -ti :$FRONTEND_PORT | xargs kill -9 2>/dev/null || true
 
@@ -270,7 +280,7 @@ echo "$BACKEND_PID" > "$PID_FILE"
 # Wait for backend to be ready
 echo -n "  Menunggu Backend API aktif"
 for i in {1..30}; do
-  if curl -s "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null 2>&1; then
+  if curl -s --connect-timeout 1 "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null 2>&1; then
     echo -e " ${C_GREEN}[READY]${C_RESET}"
     break
   fi
