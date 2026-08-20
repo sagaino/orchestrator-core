@@ -4,3 +4,9 @@ native/macos-notifier/build/
 *.log
 .DS_Store
 graphify-out
+docs/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
