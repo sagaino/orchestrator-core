@@ -11,12 +11,58 @@
 
 set -e
 
-# --- Configuration & Paths ---
+# --- Configuration & Dynamic Paths ---
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$DIR"
-DASHBOARD_DIR="${ORCHESTRATOR_DASHBOARD_PATH:-$(cd "$DIR/../ciniru/orchestrator-dashboard" 2>/dev/null && pwd || cd "$DIR/../orchestrator-dashboard" 2>/dev/null && pwd || echo "")}"
-DEFAULT_VAULT_PATH="$HOME/Documents/Obsidian Vault"
-VAULT_PATH="${ORCHESTRATOR_VAULT_PATH:-$DEFAULT_VAULT_PATH}"
+
+# Smart Dashboard Search (Mencari di ../orchestrator-dashboard, ../ciniru/orchestrator-dashboard, dll)
+resolve_dashboard_path() {
+  if [ -n "$ORCHESTRATOR_DASHBOARD_PATH" ] && [ -d "$ORCHESTRATOR_DASHBOARD_PATH" ]; then
+    echo "$ORCHESTRATOR_DASHBOARD_PATH"
+    return
+  fi
+  local candidates=(
+    "$DIR/../orchestrator-dashboard"
+    "$DIR/../ciniru/orchestrator-dashboard"
+    "$DIR/orchestrator-dashboard"
+    "$HOME/ciniru/orchestrator-dashboard"
+    "$HOME/Documents/orchestrator-dashboard"
+  )
+  for c in "${candidates[@]}"; do
+    if [ -d "$c" ] && [ -f "$c/package.json" ]; then
+      echo "$(cd "$c" && pwd)"
+      return
+    fi
+  done
+  echo ""
+}
+
+# Smart Vault Search (Mencari orchestrator-vault atau Obsidian Vault)
+resolve_vault_path() {
+  if [ -n "$ORCHESTRATOR_VAULT_PATH" ] && [ -d "$ORCHESTRATOR_VAULT_PATH" ]; then
+    echo "$ORCHESTRATOR_VAULT_PATH"
+    return
+  fi
+  local candidates=(
+    "$DIR/../orchestrator-vault"
+    "$HOME/Documents/orchestrator-vault"
+    "$HOME/Documents/Obsidian Vault"
+    "$DIR/../Obsidian Vault"
+    "$DIR/../ciniru/orchestrator-vault"
+    "$HOME/orchestrator-vault"
+  )
+  for v in "${candidates[@]}"; do
+    if [ -d "$v" ]; then
+      echo "$(cd "$v" && pwd)"
+      return
+    fi
+  done
+  # Default jika belum ada (akan dibuat otomatis)
+  echo "$HOME/Documents/orchestrator-vault"
+}
+
+DASHBOARD_DIR="$(resolve_dashboard_path)"
+VAULT_PATH="$(resolve_vault_path)"
 BACKEND_PORT=3721
 FRONTEND_PORT=5173
 PID_FILE="$BACKEND_DIR/runs/.orchestrator.pids"
@@ -172,7 +218,7 @@ fi
 
 # 2. Auto-Bootstrap Vault (If not present)
 if [ ! -d "$VAULT_PATH" ]; then
-  log_info "Obsidian Vault belum ditemukan di '$VAULT_PATH'."
+  log_info "Vault belum ditemukan di '$VAULT_PATH'."
   log_info "Membuat struktur Vault baru (Auto-Bootstrap)..."
   
   mkdir -p "$VAULT_PATH/01-Knowledge/concepts" \
@@ -231,9 +277,9 @@ tags: [index, wiki]
 (Belum ada project yang terdaftar)
 INDEX_EOF
 
-  log_success "Obsidian Vault berhasil dibuat & diinisialisasi!"
+  log_success "Vault berhasil dibuat & diinisialisasi di: $VAULT_PATH"
 else
-  log_success "Obsidian Vault terdeteksi di: $VAULT_PATH"
+  log_success "Vault terdeteksi di: $VAULT_PATH"
 fi
 
 # 3. Locate Dashboard UI
