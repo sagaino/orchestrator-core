@@ -32,11 +32,11 @@ export function tryDeterministicTaskDraft({ project, request, attachedAssets = [
   // Check for simple patterns:
   // 1. Styling / CSS / Layout adjustments
   // 2. Text / Copywriting / Label / Typo changes
-  // 3. Simple component tweaks (e.g. padding, margin, color, icon, placeholder)
-  const isSimpleStylingOrText = /^(ubah|ganti|perbaiki|tambahkan|update|fix|change|set|adjust|remove|hapus|tweak)\b/i.test(cleanRequest);
+  // 3. Simple component tweaks (e.g. padding, margin, color, icon, placeholder, disabled state)
+  const isSimpleStylingOrText = /^(ubah|ganti|perbaiki|tambahkan|update|fix|change|set|adjust|remove|hapus|tweak|rename|hide|show|tampilkan|sembunyikan|switch|toggle)\b/i.test(cleanRequest);
   
   // Complexity indicators that disqualify fast-path and MUST use full AI planning:
-  const complexityIndicators = /\b(arsitektur|refactor besar|database|migration|auth flow|oauth|full slicing|state management|redesign total|breaking change|multi-module)\b/i;
+  const complexityIndicators = /\b(arsitektur|architecture|refactor besar|major refactor|database|migration|migrasi|auth flow|oauth|full slicing|state management|redesign total|breaking change|multi-module|payment|webhook|websocket|concurrency|race condition)\b/i;
   if (complexityIndicators.test(cleanRequest)) {
     return null;
   }

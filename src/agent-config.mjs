@@ -15,27 +15,46 @@ export const STAGE_DEFAULT_EFFORTS = Object.freeze({
 export function detectTaskComplexity(request = "", options = {}) {
   const text = String(request).toLowerCase();
   
-  // Complexity 3: HIGH (Complex architecture, major refactor, multi-module coordination)
+  // Complexity 3: HIGH (Complex architecture, major refactor, multi-module coordination, security, data integrity)
   const highKeywords = [
-    "arsitektur", "architecture", "refactor besar", "migration", "database",
-    "oauth", "auth flow", "security audit", "race condition", "transaction",
-    "deadlock", "state sync", "breaking change", "concurrency",
+    // Arsitektur & Refactoring
+    "arsitektur", "architecture", "refactor besar", "major refactor", "redesign total", "overhaul",
+    "microservices", "monorepo", "restructure", "restrukturisasi",
+    // Database & Persistence
+    "migration", "migrasi", "database", "schema migration", "relational", "foreign key", "indexing",
+    // Keamanan, Auth & Transaksi
+    "oauth", "auth flow", "authentication", "authorization", "jwt", "session management",
+    "security audit", "vulnerability", "encryption", "enkripsi", "token refresh",
+    // Concurrency & State Rumit
+    "race condition", "transaction", "transaksi", "deadlock", "concurrency",
+    "state sync", "global store", "redux", "zustand sync", "cache invalidation",
+    "optimistic update", "idempotency", "breaking change", "multi-module",
+    // Integrasi Eksternal & Performance
+    "payment gateway", "webhook", "realtime sync", "websocket", "memory leak", "performance bottleneck",
   ];
   if (highKeywords.some((kw) => text.includes(kw))) {
     return "high";
   }
 
-  // Complexity 1: LOW (Simple styling, typos, text updates, single small file tweaks)
+  // Complexity 1: LOW (Simple styling, typos, text updates, single small file tweaks, minor UI fixes)
   const lowKeywords = [
-    "ganti teks", "ubah teks", "typo", "label", "wording", "placeholder",
+    // Teks, Copywriting & Typo
+    "ganti teks", "ubah teks", "edit text", "typo", "label", "wording", "placeholder",
+    "rename title", "ganti judul", "terjemahan", "i18n text", "tooltip",
+    // Styling, CSS & Layout Mikro
     "padding", "margin", "warna", "color", "icon", "perbaiki styling", "tweak css",
+    "font-size", "border", "opacity", "shadow", "rounded", "gap", "align", "alignment",
+    "z-index", "hover effect", "cursor", "hidden", "tampilkan", "sembunyikan",
+    // Tweak Komponen Sederhana
+    "disabled state", "readonly", "loading spinner", "ubah placeholder", "ganti icon",
+    "tambah class", "tailwind class", "ganti button text", "tambah atribut", "tweak layout",
   ];
   const allowedPathsCount = Array.isArray(options.allowedPaths) ? options.allowedPaths.length : 0;
   if (lowKeywords.some((kw) => text.includes(kw)) || (allowedPathsCount === 1 && text.length < 150)) {
     return "low";
   }
 
-  // Complexity 2: MEDIUM (Default for new features, standard slicing, API hooks)
+  // Complexity 2: MEDIUM (Default for new features, standard slicing, API hooks, CRUD)
   return "medium";
 }
 
