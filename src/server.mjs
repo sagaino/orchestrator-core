@@ -8,7 +8,7 @@ import { requestTask } from "./task-intake.mjs";
 import { startTaskRun, recoverTaskRun, requestChangesTaskRun, rejectTaskRun, retryTaskRun } from "./task-workflow.mjs";
 import { previewReviewWorkspace, formatReviewRevisionFeedback } from "./review-workflow.mjs";
 import { listRuns, getRun, RUN_STATES } from "./run-manager.mjs";
-import { listJobs, getJob, updateJobForRun, reconcileJobs, JOB_STATES } from "./job-queue.mjs";
+import { enqueueTaskJob, listJobs, getJob, updateJobForRun, reconcileJobs, JOB_STATES } from "./job-queue.mjs";
 import { listKnowledgeCandidates, promoteKnowledgeCandidate, rejectKnowledgeCandidate, acceptRun } from "./knowledge-workflow.mjs";
 import { knowledgeHealth } from "./knowledge-quality.mjs";
 import { listNotifications, acknowledgeNotifications, emitTestNotification } from "./notification-service.mjs";
@@ -415,6 +415,56 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     });
     eventHub.broadcast("TASK_SUPERSEDED", { projectId: params.projectId, taskId: result.task.id });
     sendJson(res, 200, { success: true, data: result });
+  });
+
+  router.post("/api/tasks/:projectId/:taskInput/queue", async (req, res, { params }) => {
+    const body = await parseJsonBody(req);
+    const approvedBy = String(body?.approvedBy ?? "user").trim() || "user";
+    const context = buildContext(vaultRoot, params.projectId, params.taskInput);
+    const taskStatus = String(context.task?.metadata?.status ?? "").toUpperCase();
+    if (!["BACKLOG", "READY"].includes(taskStatus)) {
+      return sendError(res, 409, `Task harus BACKLOG atau READY sebelum diantrekan; status saat ini ${taskStatus || "UNKNOWN"}.`);
+    }
+    const readiness = validateTaskReadiness(context, { readMarkdown: services.readMarkdown });
+    if (!readiness.ready) {
+      return sendError(
+        res,
+        409,
+        "Task tidak lolos readiness gate.",
+        { readiness },
+      );
+    }
+    const taskId = String(context.task.metadata.task_id ?? params.taskInput);
+    const queued = enqueueTaskJob({
+      runsRoot,
+      projectId: params.projectId,
+      taskId,
+      taskPath: context.task.path,
+      requestedBy: approvedBy,
+    });
+    eventHub.broadcast("TASK_QUEUED_AFTER_CONFIRMATION", {
+      projectId: params.projectId,
+      taskId,
+      jobId: queued.job.jobId,
+      approvedBy,
+    });
+    sendJson(res, queued.created ? 201 : 200, {
+      success: true,
+      data: {
+        schemaVersion: 1,
+        action: queued.created ? "TASK_CONFIRMED_AND_QUEUED" : "TASK_ALREADY_QUEUED",
+        approvedBy,
+        readiness: {
+          verdict: readiness.verdict,
+          ready: readiness.ready,
+          summary: readiness.summary,
+          checks: readiness.checks ?? [],
+          nextActions: readiness.nextActions ?? [],
+        },
+        job: queued.job,
+        nextAction: "Task sudah diantrekan dan akan dijalankan di isolated workspace.",
+      },
+    });
   });
 
   router.get("/api/tasks/:projectId/:taskInput/context", async (req, res, { params }) => {
