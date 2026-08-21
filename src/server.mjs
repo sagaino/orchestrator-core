@@ -19,7 +19,7 @@ import { createEventHub } from "./api/events.mjs";
 import { Router, sendJson, sendError, parseJsonBody } from "./api/router.mjs";
 import { getRunDiff, globalDevServerManager } from "./dev-server-manager.mjs";
 import { collectRtkAnalytics } from "./rtk-analytics.mjs";
-import { onboardExistingProject, onboardNewProject } from "./project-onboarding.mjs";
+import { onboardExistingProject, onboardNewProject, removeProject, purgeProjectArchive } from "./project-onboarding.mjs";
 import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
 import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvester.mjs";
 import { saveUploadedAsset, deleteUploadedAsset } from "./asset-manager.mjs";
@@ -127,6 +127,57 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       return sendError(res, 404, `Project not found: ${params.id}`);
     }
     sendJson(res, 200, { success: true, data: project });
+  });
+
+  router.delete("/api/projects/:id", async (req, res, { params }) => {
+    try {
+      const projectId = params.id;
+      if (!projectId) return sendError(res, 400, "Missing projectId");
+
+      let body = {};
+      try {
+        body = await parseJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const purge = Boolean(body?.purge || req.url?.includes("purge=true"));
+
+      const remover = services?.removeProject ?? removeProject;
+      const removeResult = await remover({
+        vaultRoot,
+        runsRoot,
+        projectId,
+        removedBy: body?.removedBy || "dashboard-user",
+      });
+
+      let purgeResult = null;
+      if (purge) {
+        const purger = services?.purgeProjectArchive ?? purgeProjectArchive;
+        purgeResult = await purger({
+          vaultRoot,
+          runsRoot,
+          projectId,
+          purgedBy: body?.removedBy || "dashboard-user",
+        });
+      }
+
+      eventHub.broadcast("PROJECT_REMOVED", {
+        projectId,
+        purged: purge,
+      });
+
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          projectId,
+          purged: purge,
+          removeResult,
+          purgeResult,
+        },
+      });
+    } catch (err) {
+      sendError(res, err.statusCode || 500, err.message, err.details);
+    }
   });
 
   // --- 3. Tasks & Intake ---
