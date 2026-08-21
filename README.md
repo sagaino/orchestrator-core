@@ -6,6 +6,8 @@ Orchestrator ini juga menjadi control plane untuk **Personal AI OS**, yaitu agen
 
 Implementasi durability, exactly-once invocation, dan restart reconciliation dijelaskan dalam [Phase 2 Runtime Durability Contract](./PHASE_2_DURABILITY.md).
 
+Kontrak integrasi dashboard, evidence, browser lifecycle testing, dan sertifikasi pilot dijelaskan dalam [Phase 3 AI OS Shell and Pilot Contract](./PHASE_3_SHELL_PILOT.md).
+
 ---
 
 ## ⚡ Quick Start (1-Command Launcher)
