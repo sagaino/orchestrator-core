@@ -1,6 +1,6 @@
 # Phase 3 — AI OS Shell and Pilot Readiness
 
-Status: **PHASE 3.1 IMPLEMENTED**
+Status: **PHASE 3 COMPLETE — REAL PILOT CERTIFIED**
 
 This phase closes the remaining AI OS MVP gap: one real registered project must
 complete the controlled software-engineering lifecycle through the dashboard,
@@ -172,6 +172,8 @@ Implementation notes:
 
 ### Phase 3.4 — Real Pilot Certification
 
+Status: **IMPLEMENTED — CERTIFIED 2026-08-22**
+
 - Execute a scoped task on `test-add-project` from the dashboard.
 - Review all evidence and accept it from the dashboard.
 - Restart the local services and confirm the completed audit remains available.
@@ -180,6 +182,25 @@ Implementation notes:
 
 Exit gate: the MVP success measure “one real registered project completes the
 full lifecycle through the AI OS shell” is satisfied and reproducible.
+
+Implementation notes:
+
+- A real dashboard-only pilot created, explicitly queued, reviewed, and accepted
+  `TASK-003` for the registered `test-add-project` repository.
+- The run changed only authorized `README.md`; scope audit passed and both the
+  pre-accept and post-apply `typecheck`, `build`, and `test:e2e` gates exited 0.
+- Human acceptance produced Git commit
+  `20760b9fca74a731fc2e59dd5029a43907d4b961`, synchronized the deterministic
+  `PROJECT_ONLY` knowledge result, archived the workspace, and ended in `DONE`.
+- Restart checks were performed once while awaiting acceptance and again after
+  completion. The shell preserved the authoritative lifecycle state, evidence,
+  commit, artifact, and one-file archived diff across both restarts.
+- Certification uncovered and corrected a diff-integrity regression: live diff
+  previously included the source repository's preceding commit via `HEAD~1`.
+  Diff is now anchored to the run's immutable base commit and audited paths,
+  persisted into the workspace artifact, and rendered after cleanup.
+- The reproducible evidence record is maintained in
+  `PHASE_3_REAL_PILOT_CERTIFICATE.md`.
 
 ## Non-Goals
 

@@ -85,12 +85,17 @@ export function parseGitDiff(rawDiff) {
 }
 
 export async function getRunDiff({ runsRoot, runId }) {
+  let run = null;
+  try {
+    run = getRun(runsRoot, runId);
+  } catch {}
+
   const workspacePath = findWorkspacePath(runsRoot, runId);
   if (!workspacePath) {
     // Try loading archived diff for DONE/CLEANED runs
     try {
-      const run = getRun(runsRoot, runId);
-      const artifactRelPath = run?.execution?.workspace?.cleanup?.artifactPath;
+      const artifactRelPath = run?.execution?.workspace?.artifactPath
+        ?? run?.execution?.workspace?.cleanup?.artifactPath;
       if (artifactRelPath) {
         const artifactDir = path.join(runsRoot, artifactRelPath);
         const diffFile = path.join(artifactDir, "changes.patch");
@@ -120,21 +125,22 @@ export async function getRunDiff({ runsRoot, runId }) {
   }
 
   try {
-    // Run git diff in workspace
-    const { stdout: diffStdout } = await execFileAsync("git", ["diff", "HEAD~1"], {
+    // Diff from the immutable workspace baseline, constrained to paths that the
+    // scope audit attributes to this run. Using HEAD~1 leaks the previous source
+    // commit into the review whenever the workspace itself has no new commit.
+    const baseCommit = run?.execution?.workspace?.baseCommit;
+    const changed = run?.execution?.scopeAudit?.changedPaths;
+    const pathspec = Array.isArray(changed) && changed.length > 0 ? ["--", ...changed] : [];
+    const primaryArgs = baseCommit
+      ? ["diff", baseCommit, ...pathspec]
+      : ["diff", "HEAD", ...pathspec];
+    const { stdout: diffStdout } = await execFileAsync("git", primaryArgs, {
       cwd: workspacePath,
       encoding: "utf8",
-    }).catch(async () => {
-      return await execFileAsync("git", ["diff", "HEAD"], {
-        cwd: workspacePath,
-        encoding: "utf8",
-      }).catch(async () => {
-        return await execFileAsync("git", ["diff"], {
-          cwd: workspacePath,
-          encoding: "utf8",
-        });
-      });
-    });
+    }).catch(async () => execFileAsync("git", ["diff", ...pathspec], {
+      cwd: workspacePath,
+      encoding: "utf8",
+    }));
 
     const files = parseGitDiff(diffStdout);
     return {
