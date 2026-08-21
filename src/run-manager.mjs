@@ -445,6 +445,26 @@ export function reconcileInterruptedRuns({ vaultRoot, runsRoot }) {
     }
 
     if (listed.state === RUN_STATES.CLAIMED) {
+      const manifest = getRun(runsRoot, listed.runId);
+      if (manifest.execution?.restartRecovery?.action !== "SAFE_TO_RESUME_BEFORE_AGENT") {
+        const at = new Date().toISOString();
+        manifest.updatedAt = at;
+        manifest.execution = {
+          ...manifest.execution,
+          restartRecovery: {
+            action: "SAFE_TO_RESUME_BEFORE_AGENT",
+            recoveredAt: at,
+            previousState: RUN_STATES.CLAIMED,
+          },
+        };
+        manifest.history.push({
+          at,
+          event: "RESTART_SAFE_TO_RESUME",
+          state: RUN_STATES.CLAIMED,
+          message: "Runtime restart terjadi sebelum agent dipanggil; run aman dilanjutkan.",
+        });
+        writeManifestAtomic(manifestPath(runsRoot, manifest.runId), manifest);
+      }
       reconciled.push({
         runId: listed.runId,
         fromState: listed.state,
