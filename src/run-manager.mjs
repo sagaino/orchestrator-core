@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createReadyTaskEvent } from "./adapters/vault-task-watcher.mjs";
 import { runtimeOwnerAlive, withDurableLease } from "./durable-runtime.mjs";
 import { redactSensitive } from "./redaction.mjs";
+import { injectFault } from "./fault-injection.mjs";
 
 export const RUN_STATES = Object.freeze({
   PENDING_APPROVAL: "PENDING_APPROVAL",
@@ -124,8 +125,15 @@ function writeManifestAtomic(filePath, manifest) {
       throw new Error(`Manifest schema invalid: ${validation.errors.join(", ")}`);
     }
     const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-    fs.writeFileSync(temporaryPath, `${JSON.stringify(redactSensitive(next), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    fs.renameSync(temporaryPath, filePath);
+    try {
+      injectFault("manifest.write.before-temp", { filePath, runId: next.runId, revision: next.revision });
+      fs.writeFileSync(temporaryPath, `${JSON.stringify(redactSensitive(next), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      injectFault("manifest.write.before-rename", { filePath, runId: next.runId, revision: next.revision });
+      fs.renameSync(temporaryPath, filePath);
+    } catch (error) {
+      try { fs.unlinkSync(temporaryPath); } catch {}
+      throw error;
+    }
     try { fs.chmodSync(filePath, 0o600); } catch {}
     manifest.revision = next.revision;
     return manifest;

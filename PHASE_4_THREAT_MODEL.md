@@ -1,6 +1,6 @@
 # Phase 4 Threat Model
 
-Status: **v1.1 — PHASE 4.2 CONTROLS APPLIED**
+Status: **v1.2 — PHASE 4.3 RELIABILITY CONTROLS APPLIED**
 Reviewed: **2026-08-22**
 Applies to: **Personal AI OS local-first single-user deployment**
 
@@ -59,11 +59,11 @@ The worktree is a Git boundary, not an OS security sandbox.
 | Host mutation outside project | Tampering | Child process writes outside worktree or launches another process | OS sandbox denies writes outside declared roots and private invocation temp; deadlines and output caps | LOW on supported macOS host; unsupported platforms fail closed |
 | Forged human identity | Spoofing | Token holder submits `approvedBy`, `rejectedBy`, or similar actor label | OS-derived operator session, one-time nonce, server-side actor overwrite | LOW for local single-user deployment |
 | Approval bypass | Elevation of privilege | Agent or API caller advances lifecycle without human action | `allow_self_accept: false`, state transition guards, explicit confirmation | LOW while token and dashboard session remain controlled |
-| Duplicate task/provider execution | Tampering/repudiation | Concurrent admission or crash creates separate jobs/invocations | leases, job dedupe, stable invocation IDs | HIGH after observed intermittent split job IDs |
+| Duplicate task/provider execution | Tampering/repudiation | Concurrent admission or crash creates separate jobs/invocations | partial leases fail closed; fsynced atomic lease; stable invocation ID; 25-round multiprocess stress proof | LOW; continue stress regression and investigate any future recurrence as release-blocking |
 | Evidence secret leakage | Information disclosure | Provider JSON, stdout/stderr, prompts, test logs, or copied files persist a secret | shared redaction before core durable writes; private runtime modes; bounded output | LOW for known secret values and token patterns; artifact-content scanning remains defense in depth |
 | Evidence rewriting | Tampering/repudiation | User-level process edits JSON/JSONL history or artifact | operator mutation SHA-256 chain with verification API/CLI | LOW for mutation history; Phase 4.5 must externally anchor the certification head |
 | API/SSE exhaustion | Denial of service | Token holder opens clients or sends repeated expensive requests | loopback binding, body cap, worker limit | MEDIUM: no rate/SSE/request concurrency limit |
-| Stuck child process | Denial of service | Test/build/tool never exits or ignores graceful shutdown | some tool-specific timeouts | MEDIUM: no universal deadline/kill escalation |
+| Stuck child process | Denial of service | Test/build/tool never exits or ignores graceful shutdown | capability deadlines, output ceilings, process-group TERM then KILL escalation | LOW for normal descendants; OS-level resource quotas remain Phase 4.4 |
 | Disk exhaustion | Denial of service/tampering | Unbounded events, artifacts, backups, screenshots, or provider output fill disk | output tails bounded in some ledgers | MEDIUM: no quota, retention, or low-disk admission guard |
 | Irrecoverable host/state loss | Denial of service | disk failure, deletion, corruption, or incompatible change removes Vault/runtime evidence | versioned quiescent backup, checksums, quarantine restore, fail-closed recovery mode | MEDIUM: independent-media scheduling and full operator promotion timing remain operational dependencies |
 | Malicious upload/path escape | Tampering | crafted path, symlink, MIME mismatch, or oversized asset | contained path resolution, realpath ancestor checks, signature and size checks | LOW |

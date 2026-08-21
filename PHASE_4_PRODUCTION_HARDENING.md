@@ -1,6 +1,6 @@
 # Phase 4 — Production Hardening and Controlled Operations
 
-Status: **PHASE 4.2 IMPLEMENTED — PRODUCTION CERTIFICATION BLOCKED**
+Status: **PHASE 4.3 IMPLEMENTED — PRODUCTION CERTIFICATION BLOCKED**
 Baseline date: **2026-08-22 (Asia/Jakarta)**
 Deployment model: **local-first, single-user macOS host**
 
@@ -87,9 +87,9 @@ These measurements are a development-host baseline, not a capacity claim.
 | P4-001 | CLOSED | macOS capability profiles now allowlist environment, deny host credential roots and out-of-root writes, apply network policy, deadlines, and output ceilings; unsupported hosts fail closed. | 4.2 |
 | P4-002 | CLOSED | Versioned quiescent backup now covers Vault, runtime state, evidence, and configuration metadata; verified quarantine restore preserves permissions and blocks execution. Independent-media scheduling remains an operational requirement. | 4.1 |
 | P4-003 | CLOSED | Shared structured/text redaction runs before core durable writes, and the real runtime permission migration applied private modes to 657 directories and 883 files. | 4.2 |
-| P4-004 | HIGH | Concurrent admission produced two job IDs in one baseline run, although 25 subsequent stress executions and the final suite passed. The exactly-once property therefore needs deterministic reproduction and fault proof. | 4.3 |
+| P4-004 | CLOSED | The partial-lease visibility race was identified and fixed fail-closed. Certification completed 25 rounds / 200 admission callers and 50 manifest writers with zero duplicates or lost updates. | 4.3 |
 | P4-005 | CLOSED for local single-user deployment | Mutations require an OS-derived local operator session and one-time action nonce; payload actor labels are overwritten. | 4.2 |
-| P4-006 | MEDIUM | No API rate limit, SSE client ceiling, runtime quota, artifact retention policy, low-disk guard, or universal child-process deadline exists. | 4.3/4.4 |
+| P4-006 | PARTIALLY CLOSED | Universal process-group deadlines, kill escalation, bounded output, and bounded recovery retries are enforced. API/SSE limits, disk guard, quota, and retention remain Phase 4.4. | 4.3/4.4 |
 | P4-007 | MEDIUM | Health is fragmented and does not provide one readiness decision covering daemon, Vault, repositories, disk, backups, queue age, provider reachability, and evidence integrity. | 4.4 |
 | P4-008 | CLOSED for operator mutations | Authorized mutations are recorded in a SHA-256 previous-hash chain with verification API/CLI; Phase 4.5 will anchor the final head in its certification bundle. | 4.2/4.5 |
 | P4-009 | CLOSED | Wildcard SSE CORS response header removed; the localhost origin guard remains authoritative. | 4.2 |
@@ -161,7 +161,7 @@ successfully inside their assigned profiles.
 
 ### Phase 4.3 — Reliability and Failure Injection
 
-Status: **BLOCKED BY P4-004/P4-006**
+Status: **IMPLEMENTED — RELIABILITY GATE PASSED 2026-08-22**
 
 - Reproduce and eliminate the concurrent admission split.
 - Add repeated race tests and deterministic fault injection around lease,
@@ -173,6 +173,14 @@ Status: **BLOCKED BY P4-004/P4-006**
 Exit gate: the reliability suite completes repeated stress runs with zero
 duplicate invocation, zero silent approval, zero out-of-scope mutation, and a
 documented safe terminal state for every injected fault.
+
+Implementation evidence and the safe terminal-state matrix are documented in
+[`PHASE_4_RELIABILITY_RUNBOOK.md`](./PHASE_4_RELIABILITY_RUNBOOK.md). The
+certification stress run completed 25 rounds with zero duplicate admission and
+zero lost manifest updates. Deterministic faults covered lease visibility,
+disk-full, permission loss, atomic rename, invocation ledger ambiguity, real
+process kill, process-tree timeout, output flood, apply rollback, commit hook,
+cleanup retry, Git conflict, corrupt restart state, and bounded recovery.
 
 ### Phase 4.4 — Operations Center and Resource Governance
 

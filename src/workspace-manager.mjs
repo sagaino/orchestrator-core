@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { isDeniedPath, validateSymlink } from "./security.mjs";
+import { injectFault } from "./fault-injection.mjs";
 
 const SNAPSHOT_EXCLUDES = new Set([
   ".git",
@@ -444,6 +445,7 @@ export async function applyIsolatedWorkspace({
     safeSegment(manifest.runId),
     `${Date.now()}-${randomUUID().slice(0, 8)}`,
   );
+  injectFault("apply.before-backup", { runId: manifest.runId, changed });
   const entries = backupChangedPaths({
     sourceRepository: workspace.sourceRepository,
     changed,
@@ -456,11 +458,13 @@ export async function applyIsolatedWorkspace({
   let gitCommit = null;
   let gitStaged = false;
   try {
+    injectFault("apply.before-copy", { runId: manifest.runId, changed, backupRoot });
     applyChangedPaths({
       workspacePath: workspace.path,
       sourceRepository: workspace.sourceRepository,
       changed,
     });
+    injectFault("apply.after-copy", { runId: manifest.runId, changed, backupRoot });
     if (changed.includes("package.json")) {
       const invocation = packageInstallInvocation(workspace.sourceRepository);
       const result = await requireSuccessfulProcess(processRunner, {
@@ -494,6 +498,7 @@ export async function applyIsolatedWorkspace({
       graphify = { skipped: false, exitCode: result.exitCode };
     }
     if (gitFinalization?.enabled) {
+      injectFault("apply.before-commit", { runId: manifest.runId, changed, backupRoot });
       gitStaged = true;
       gitCommit = await finalizeGitCommit({
         manifest,
@@ -618,7 +623,9 @@ export async function cleanupIsolatedWorkspace({
   }
   const workspaceRoot = path.join(runsRoot, "workspaces");
   ensureInside(workspaceRoot, workspace.path);
+  injectFault("cleanup.before-archive", { runId: manifest.runId, workspacePath: workspace.path });
   const artifactPath = archiveWorkspace({ manifest, runsRoot });
+  injectFault("cleanup.before-remove", { runId: manifest.runId, workspacePath: workspace.path, artifactPath });
   await requireSuccessfulProcess(processRunner, {
     command: "git",
     args: ["worktree", "remove", "--force", workspace.path],
