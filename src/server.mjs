@@ -181,6 +181,147 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     }
   });
 
+  router.get("/api/projects-archive", async (req, res) => {
+    try {
+      const archiveBase = path.join(vaultRoot, "03-Sources", "other", "removed-projects");
+      if (!fs.existsSync(archiveBase)) {
+        return sendJson(res, 200, { success: true, data: { archivedProjects: [] } });
+      }
+      const entries = fs.readdirSync(archiveBase, { withFileTypes: true });
+      const archivedProjects = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const projectId = entry.name;
+        const projectDir = path.join(archiveBase, projectId);
+        const versions = fs.readdirSync(projectDir, { withFileTypes: true })
+          .filter((v) => v.isDirectory())
+          .map((v) => v.name)
+          .sort()
+          .reverse();
+
+        let latestManifest = null;
+        const latestVersion = versions[0] || null;
+        if (latestVersion) {
+          const manifestPath = path.join(projectDir, latestVersion, "removal-manifest.json");
+          if (fs.existsSync(manifestPath)) {
+            try {
+              latestManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+            } catch {}
+          }
+        }
+        archivedProjects.push({
+          projectId,
+          title: latestManifest?.project?.title || projectId,
+          repository: latestManifest?.project?.repository || null,
+          removedAt: latestManifest?.removedAt || null,
+          removedBy: latestManifest?.removedBy || null,
+          versionCount: versions.length,
+          versions,
+        });
+      }
+      sendJson(res, 200, { success: true, data: { archivedProjects } });
+    } catch (err) {
+      sendError(res, 500, err.message);
+    }
+  });
+
+  router.delete("/api/projects-archive/:id", async (req, res, { params }) => {
+    try {
+      const projectId = params.id;
+      if (!projectId) return sendError(res, 400, "Missing projectId");
+
+      let body = {};
+      try {
+        body = await parseJsonBody(req);
+      } catch {
+        body = {};
+      }
+
+      const purger = services?.purgeProjectArchive ?? purgeProjectArchive;
+      const purgeResult = await purger({
+        vaultRoot,
+        runsRoot,
+        projectId,
+        confirmed: true,
+        purgedBy: body?.purgedBy || "dashboard-user",
+      });
+
+      eventHub.broadcast("PROJECT_ARCHIVE_PURGED", {
+        projectId,
+      });
+
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          projectId,
+          purgeResult,
+        },
+      });
+    } catch (err) {
+      sendError(res, err.statusCode || 500, err.message, err.details);
+    }
+  });
+
+  router.post("/api/projects-archive/:id/restore", async (req, res, { params }) => {
+    try {
+      const projectId = params.id;
+      if (!projectId) return sendError(res, 400, "Missing projectId");
+
+      const archiveBase = path.join(vaultRoot, "03-Sources", "other", "removed-projects", projectId);
+      if (!fs.existsSync(archiveBase)) {
+        return sendError(res, 404, `Archive project tidak ditemukan untuk ${projectId}`);
+      }
+
+      const versions = fs.readdirSync(archiveBase, { withFileTypes: true })
+        .filter((v) => v.isDirectory())
+        .map((v) => v.name)
+        .sort()
+        .reverse();
+
+      const latestVersion = versions[0];
+      if (!latestVersion) {
+        return sendError(res, 404, `Tidak ada snapshot arsip untuk project ${projectId}`);
+      }
+
+      const manifestPath = path.join(archiveBase, latestVersion, "removal-manifest.json");
+      let repository = null;
+      if (fs.existsSync(manifestPath)) {
+        try {
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          repository = manifest?.project?.repository;
+        } catch {}
+      }
+
+      if (!repository || !fs.existsSync(repository)) {
+        return sendError(res, 400, `Repository path (${repository || "tidak diketahui"}) tidak ditemukan di filesystem lokal.`);
+      }
+
+      // Re-onboard project as existing
+      const onboardExisting = services?.onboardExistingProject ?? onboardExistingProject;
+      const result = await onboardExisting({
+        vaultRoot,
+        runsRoot,
+        repositoryPath: repository,
+        projectId,
+      });
+
+      eventHub.broadcast("PROJECT_ONBOARDED", {
+        projectId,
+        mode: "restore",
+      });
+
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          projectId,
+          result,
+        },
+      });
+    } catch (err) {
+      sendError(res, err.statusCode || 500, err.message, err.details);
+    }
+  });
+
   // --- 3. Tasks & Intake ---
   router.post("/api/tasks/request", async (req, res) => {
     const body = await parseJsonBody(req);
