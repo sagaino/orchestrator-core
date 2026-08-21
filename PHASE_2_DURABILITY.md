@@ -79,3 +79,23 @@ Human acceptance now commits only the verified `appliedPaths` by default and rec
 - `cancel-task` and `supersede-task` close abandoned BACKLOG tasks only when no job or run exists.
 
 `test/git-finalization.test.mjs` covers clean repositories, unrelated staged work, dirty target rejection, denied secret paths, and commit-hook rollback. `test/task-lifecycle.test.mjs` covers BACKLOG cancellation and supersession guards.
+
+## Phase 2.3 — Browser Acceptance Gate
+
+The `test-add-project` pilot now exposes `npm run test:e2e` as a Playwright
+browser acceptance check. Its project registry entry includes `test:e2e` after
+`typecheck` and `build`, so an orchestrated run cannot reach review when the
+protected pilot status is absent or incorrect.
+
+- The test uses an E2E-only key and synthetic local token; it never reads a
+  developer or production `.env` file.
+- It verifies the protected route, visible `role=status`, `aria-live=polite`,
+  pilot label, and explanatory copy in Chromium.
+- A successful run writes `ai-os-pilot-ready.png` to Playwright's run artifact
+  directory.
+- Failures retain a screenshot and trace, and return a non-zero exit code to
+  the orchestrator verification gate.
+
+The pilot was validated with the normal expected label and with an intentional
+label mismatch through `AI_OS_E2E_EXPECTED_LABEL`; the mismatch was rejected as
+expected without changing application source.
