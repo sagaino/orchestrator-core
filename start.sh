@@ -4,7 +4,7 @@
 # ✨ Personal AI Orchestrator - All-in-One Smart Launcher & Lifecycle Manager
 # ==============================================================================
 # Usage:
-#   ./start.sh          # Start Backend & Frontend, open browser (Foreground)
+#   ./start.sh          # Start Full Daemon Worker & Frontend, open browser
 #   ./start.sh stop     # Stop all running services cleanly
 #   ./start.sh status   # Check status of Backend & Frontend
 # ==============================================================================
@@ -325,13 +325,13 @@ trap 'stop_services; exit 0' SIGINT SIGTERM EXIT
 
 # 7. Launch Services
 echo ""
-log_info "Menjalankan Backend Daemon & Server API..."
-(cd "$BACKEND_DIR" && node src/orchestrator.mjs server --vault "$VAULT_PATH" --port $BACKEND_PORT) &
+log_info "Menjalankan Backend Daemon (Worker Engine & API Server)..."
+(cd "$BACKEND_DIR" && node src/orchestrator.mjs daemon-worker --vault "$VAULT_PATH" --runs "$BACKEND_DIR/runs") &
 BACKEND_PID=$!
 echo "$BACKEND_PID" > "$PID_FILE"
 
 # Wait for backend to be ready
-echo -n "  Menunggu Backend API aktif"
+echo -n "  Menunggu Backend Daemon aktif"
 for i in {1..30}; do
   if curl -s --connect-timeout 1 "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null 2>&1; then
     echo -e " ${C_GREEN}[READY]${C_RESET}"
