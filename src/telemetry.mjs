@@ -407,6 +407,30 @@ function agentConfigForStage(run, processStage, index = null) {
   return null;
 }
 
+function inferredInvocationIdentity(runId, processStage) {
+  if (processStage === "coding-agent") {
+    return { stage: "IMPLEMENTATION", invocationId: `${runId}:implementation` };
+  }
+  if (processStage === "retrospective") {
+    return { stage: "RETROSPECTIVE", invocationId: `${runId}:retrospective` };
+  }
+  const automaticRecovery = processStage.match(/^automatic-recovery-agent:(\d+)$/);
+  if (automaticRecovery) {
+    return {
+      stage: "AUTOMATIC_RECOVERY",
+      invocationId: `${runId}:automatic-recovery:${automaticRecovery[1]}`,
+    };
+  }
+  const reviewRevision = processStage.match(/^review-revision-agent:(\d+)$/);
+  if (reviewRevision) {
+    return {
+      stage: "REVIEW_REVISION",
+      invocationId: `${runId}:review-revision:${reviewRevision[1]}`,
+    };
+  }
+  return null;
+}
+
 function recordsFromEventLog(runsRoot, run) {
   const eventPath = path.join(runsRoot, run.execution?.eventLog ?? path.join("events", `${run.runId}.jsonl`));
   if (!fs.existsSync(eventPath)) return [];
@@ -428,13 +452,13 @@ function recordsFromEventLog(runsRoot, run) {
     const payload = event.payload?.event === "result" ? event.payload.result : event.payload;
     if (!payload?.usage || !payload?.conversation_id) continue;
     const processStage = String(event.stage ?? "");
-    if (!["coding-agent", "retrospective"].includes(processStage)
-      && !processStage.startsWith("automatic-recovery-agent:")) continue;
+    const identity = inferredInvocationIdentity(run.runId, processStage);
+    if (!identity) continue;
     records.push(createAgentTelemetryRecord({
-      stage: processStage,
+      stage: identity.stage,
       result: { exitCode: payload.status === "SUCCESS" ? 0 : 1, finalResult: payload },
       agentConfig: agentConfigForStage(run, processStage) ?? configs.get(processStage) ?? null,
-      invocationId: `${run.runId}:${processStage}`,
+      invocationId: identity.invocationId,
       metadata: { runId: run.runId, taskId: run.task?.id ?? null, projectId: run.project?.id ?? null, inferred: true },
       recordedAt: event.at,
       source: "inferred",
