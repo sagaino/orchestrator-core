@@ -138,6 +138,105 @@ async function requireSuccessfulProcess(processRunner, invocation, errorPrefix) 
   return result;
 }
 
+function porcelainPaths(output) {
+  const value = String(output ?? "").replace(/^[\r\n]+/, "");
+  if (value.includes("\0")) {
+    const records = value.split("\0").filter(Boolean);
+    const paths = [];
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (record.length < 4) continue;
+      const status = record.slice(0, 2);
+      paths.push(record.slice(3));
+      if (/[RC]/.test(status)) index += 1;
+    }
+    return paths;
+  }
+  return value.split("\n").filter(Boolean).flatMap((line) => {
+    const raw = line.slice(3).trim();
+    if (!raw) return [];
+    const target = raw.includes(" -> ") ? raw.split(" -> ").at(-1) : raw;
+    return [target.replace(/^"|"$/g, "")];
+  });
+}
+
+function samePaths(left, right) {
+  const normalizedLeft = [...new Set(left)].sort();
+  const normalizedRight = [...new Set(right)].sort();
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((entry, index) => entry === normalizedRight[index]);
+}
+
+async function finalizeGitCommit({ manifest, workspace, changed, processRunner, eventLogPath, commitMessage }) {
+  const repository = workspace.sourceRepository;
+  if (!changed.length) {
+    return { committed: false, reason: "NO_APPLIED_PATHS", paths: [] };
+  }
+  const dirtyPaths = workspace.sourceStatusPaths;
+  if (!Array.isArray(dirtyPaths)) {
+    if (workspace.sourceDirty) {
+      throw new Error("Auto-commit ditolak karena workspace legacy tidak merekam path yang dirty sebelum run.");
+    }
+  } else {
+    const preexistingDirty = changed.filter((relative) => dirtyPaths.includes(relative));
+    if (preexistingDirty.length) {
+      throw new Error(`Auto-commit ditolak karena applied path sudah dirty sebelum run: ${preexistingDirty.join(", ")}.`);
+    }
+  }
+  const denied = changed.filter((relative) => isDeniedPath(relative).denied);
+  if (denied.length) throw new Error(`Auto-commit menolak path sensitif: ${denied.join(", ")}.`);
+
+  const parent = await requireSuccessfulProcess(processRunner, {
+    command: "git",
+    args: ["rev-parse", "HEAD"],
+    cwd: repository,
+    stage: "workspace-apply:git-parent",
+    eventLogPath,
+  }, "Git parent commit tidak dapat ditentukan");
+  await requireSuccessfulProcess(processRunner, {
+    command: "git",
+    args: ["add", "--", ...changed],
+    cwd: repository,
+    stage: "workspace-apply:git-add",
+    eventLogPath,
+  }, "Git staging applied paths gagal");
+  const staged = await requireSuccessfulProcess(processRunner, {
+    command: "git",
+    args: ["diff", "--cached", "--name-only", "--", ...changed],
+    cwd: repository,
+    stage: "workspace-apply:git-staged-paths",
+    eventLogPath,
+  }, "Git staged paths tidak dapat diperiksa");
+  const stagedPaths = staged.stdoutTail.split("\n").map((entry) => entry.trim()).filter(Boolean);
+  if (!samePaths(stagedPaths, changed)) {
+    throw new Error(`Git staged paths tidak sama dengan applied paths: ${stagedPaths.join(", ") || "EMPTY"}.`);
+  }
+
+  const subject = String(commitMessage ?? "").trim()
+    || `feat(${manifest.task?.id || "TASK"}): ${manifest.task?.title || "completed task"}`;
+  await requireSuccessfulProcess(processRunner, {
+    command: "git",
+    args: ["commit", "--only", "-m", subject, "-m", `AI-OS-Run: ${manifest.runId}`, "--", ...changed],
+    cwd: repository,
+    stage: "workspace-apply:git-commit",
+    eventLogPath,
+  }, "Git commit applied paths gagal");
+  const committed = await requireSuccessfulProcess(processRunner, {
+    command: "git",
+    args: ["rev-parse", "HEAD"],
+    cwd: repository,
+    stage: "workspace-apply:git-commit-hash",
+    eventLogPath,
+  }, "Git commit hash tidak dapat dibaca");
+  return {
+    committed: true,
+    commitHash: committed.stdoutTail.trim(),
+    parentCommit: parent.stdoutTail.trim(),
+    commitMessage: subject,
+    paths: [...changed],
+  };
+}
+
 export async function prepareIsolatedWorkspace({ manifest, runsRoot, eventLogPath, processRunner }) {
   const existing = manifest.execution?.workspace;
   if (existing?.path && fs.existsSync(existing.path) && ["PREPARING", "ACTIVE", "VERIFIED"].includes(existing.state)) {
@@ -165,11 +264,12 @@ export async function prepareIsolatedWorkspace({ manifest, runsRoot, eventLogPat
   }, "Base commit Git tidak dapat ditentukan");
   const statusResult = await requireSuccessfulProcess(processRunner, {
     command: "git",
-    args: ["status", "--porcelain=v1", "--untracked-files=all"],
+    args: ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
     cwd: repository,
     stage: "workspace:source-status",
     eventLogPath,
   }, "Status repository tidak dapat dibaca");
+  const sourceStatusPaths = porcelainPaths(statusResult.stdoutTail);
 
   const workspaceRoot = path.join(runsRoot, "workspaces");
   const workspacePath = ensureInside(
@@ -198,7 +298,8 @@ export async function prepareIsolatedWorkspace({ manifest, runsRoot, eventLogPat
       sourceRepository: repository,
       baseCommit: commitResult.stdoutTail.trim(),
       sourceDirty: Boolean(statusResult.stdoutTail.trim()),
-      sourceStatusEntryCount: statusResult.stdoutTail.split("\n").filter((line) => line.trim()).length,
+      sourceStatusEntryCount: sourceStatusPaths.length,
+      sourceStatusPaths,
       sourceBaseline: snapshotToObject(sourceBaseline),
       createdAt: new Date().toISOString(),
     };
@@ -308,6 +409,7 @@ export async function applyIsolatedWorkspace({
   runsRoot,
   eventLogPath,
   processRunner,
+  gitFinalization = null,
 }) {
   const workspace = manifest.execution?.workspace;
   if (!workspace?.path || !fs.existsSync(workspace.path)) {
@@ -346,6 +448,8 @@ export async function applyIsolatedWorkspace({
   const verification = [];
   let dependency = { skipped: true, reason: "package.json tidak berubah." };
   let graphify = { skipped: true, reason: "Graphify disabled for project." };
+  let gitCommit = null;
+  let gitStaged = false;
   try {
     applyChangedPaths({
       workspacePath: workspace.path,
@@ -384,7 +488,28 @@ export async function applyIsolatedWorkspace({
       }, "Graphify update setelah workspace apply gagal");
       graphify = { skipped: false, exitCode: result.exitCode };
     }
+    if (gitFinalization?.enabled) {
+      gitStaged = true;
+      gitCommit = await finalizeGitCommit({
+        manifest,
+        workspace,
+        changed,
+        processRunner,
+        eventLogPath,
+        commitMessage: gitFinalization.commitMessage,
+      });
+      gitStaged = false;
+    }
   } catch (error) {
+    if (gitStaged) {
+      await processRunner({
+        command: "git",
+        args: ["restore", "--staged", "--", ...changed],
+        cwd: workspace.sourceRepository,
+        stage: "workspace-apply:rollback-git-stage",
+        eventLogPath,
+      });
+    }
     restoreBackup({ sourceRepository: workspace.sourceRepository, backupRoot, entries });
     if (changed.includes("package.json")) {
       try {
@@ -423,6 +548,7 @@ export async function applyIsolatedWorkspace({
       postApplyVerification: verification,
       postApplyDependency: dependency,
       postApplyGraphify: graphify,
+      gitCommit,
     },
   };
 }

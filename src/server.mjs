@@ -384,6 +384,38 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     sendJson(res, 201, { success: true, data: result });
   });
 
+  router.post("/api/tasks/:projectId/:taskInput/cancel", async (req, res, { params }) => {
+    const body = await parseJsonBody(req);
+    const { closeBacklogTask } = await import("./task-lifecycle.mjs");
+    const result = closeBacklogTask({
+      vaultRoot,
+      runsRoot,
+      projectId: params.projectId,
+      taskInput: params.taskInput,
+      action: "CANCELLED",
+      reason: body?.reason,
+      requestedBy: body?.requestedBy ?? "user",
+    });
+    eventHub.broadcast("TASK_CANCELLED", { projectId: params.projectId, taskId: result.task.id });
+    sendJson(res, 200, { success: true, data: result });
+  });
+
+  router.post("/api/tasks/:projectId/:taskInput/supersede", async (req, res, { params }) => {
+    const body = await parseJsonBody(req);
+    const { closeBacklogTask } = await import("./task-lifecycle.mjs");
+    const result = closeBacklogTask({
+      vaultRoot,
+      runsRoot,
+      projectId: params.projectId,
+      taskInput: params.taskInput,
+      action: "SUPERSEDED",
+      reason: body?.reason,
+      requestedBy: body?.requestedBy ?? "user",
+    });
+    eventHub.broadcast("TASK_SUPERSEDED", { projectId: params.projectId, taskId: result.task.id });
+    sendJson(res, 200, { success: true, data: result });
+  });
+
   router.get("/api/tasks/:projectId/:taskInput/context", async (req, res, { params }) => {
     const { projectId, taskInput } = params;
     const context = buildContext(vaultRoot, projectId, taskInput);
@@ -533,7 +565,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       decision = null,
       destination = null,
       targetPath = null,
-      autoCommit = false,
+      autoCommit = true,
       commitMessage = null,
     } = body || {};
 

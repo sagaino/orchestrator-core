@@ -1109,7 +1109,13 @@ export function syncWikiRun({ vaultRoot, runsRoot, runId }) {
   });
 }
 
-async function applyWorkspaceForAcceptance({ vaultRoot, runsRoot, runId }) {
+async function applyWorkspaceForAcceptance({
+  vaultRoot,
+  runsRoot,
+  runId,
+  autoCommit = true,
+  commitMessage = null,
+}) {
   let manifest = getRun(runsRoot, runId);
   const workspace = manifest.execution?.workspace;
   if (!workspace || ["APPLIED", "CLEANED"].includes(workspace.state)) return manifest;
@@ -1120,6 +1126,7 @@ async function applyWorkspaceForAcceptance({ vaultRoot, runsRoot, runId }) {
       runsRoot,
       eventLogPath,
       processRunner: runProcess,
+      gitFinalization: { enabled: Boolean(autoCommit), commitMessage },
     });
     if (result.workspace) {
       manifest = updateRunExecution({
@@ -1235,7 +1242,7 @@ async function finalizeCompletionNotifications({ runsRoot, manifest }) {
   }
 }
 
-export async function completeRun({ vaultRoot, runsRoot, runId, completedBy = "user", autoCommit = false, commitMessage = null }) {
+export async function completeRun({ vaultRoot, runsRoot, runId, completedBy = "user", autoCommit = true, commitMessage = null }) {
   let manifest = getRun(runsRoot, runId);
   if (manifest.state === RUN_STATES.DONE) {
     manifest = await cleanupWorkspaceAfterCompletion({ runsRoot, manifest });
@@ -1244,50 +1251,15 @@ export async function completeRun({ vaultRoot, runsRoot, runId, completedBy = "u
   if (manifest.state !== RUN_STATES.WIKI_SYNCED) {
     throw new Error(`Run ${runId} harus WIKI_SYNCED sebelum DONE; state ${manifest.state}.`);
   }
-  manifest = await applyWorkspaceForAcceptance({ vaultRoot, runsRoot, runId });
-
-  // Optional Auto Git Commit
-  let gitCommitResult = null;
-  if (autoCommit && manifest.project?.repository) {
-    try {
-      const repoDir = manifest.project.repository;
-      const defaultMsg = `feat(${manifest.task?.id || "TASK"}): ${manifest.task?.title || "completed task"}`;
-      const finalMsg = (commitMessage && typeof commitMessage === "string" && commitMessage.trim())
-        ? commitMessage.trim()
-        : defaultMsg;
-
-      const eventLogPath = path.join(runsRoot, "events", `${runId}.jsonl`);
-      
-      // 1. git add
-      await runProcess({
-        command: "git",
-        args: ["add", "-A"],
-        cwd: repoDir,
-        stage: "workspace-apply:git-add",
-        eventLogPath,
-      });
-
-      // 2. git commit
-      const commitRes = await runProcess({
-        command: "git",
-        args: ["commit", "-m", finalMsg],
-        cwd: repoDir,
-        stage: "workspace-apply:git-commit",
-        eventLogPath,
-      });
-
-      gitCommitResult = {
-        committed: commitRes.exitCode === 0,
-        commitMessage: finalMsg,
-        exitCode: commitRes.exitCode,
-      };
-    } catch (gitErr) {
-      gitCommitResult = {
-        committed: false,
-        error: gitErr.message,
-      };
-    }
-  }
+  manifest = await applyWorkspaceForAcceptance({
+    vaultRoot,
+    runsRoot,
+    runId,
+    autoCommit,
+    commitMessage,
+  });
+  const gitCommitResult = manifest.execution?.workspace?.gitCommit
+    ?? (autoCommit ? null : { committed: false, reason: "AUTO_COMMIT_DISABLED" });
 
   const completed = transitionRun({
     vaultRoot,
@@ -1321,7 +1293,7 @@ export async function acceptRun({
   decision = null,
   destination = null,
   targetPath = null,
-  autoCommit = false,
+  autoCommit = true,
   commitMessage = null,
   proposalGenerator = generateProposalWithAgy,
 }) {
@@ -1334,7 +1306,13 @@ export async function acceptRun({
     manifest = await retrospectRun({ vaultRoot, runsRoot, runId, proposalGenerator });
   }
   if (manifest.state === RUN_STATES.RETROSPECTIVE) {
-    manifest = await applyWorkspaceForAcceptance({ vaultRoot, runsRoot, runId });
+    manifest = await applyWorkspaceForAcceptance({
+      vaultRoot,
+      runsRoot,
+      runId,
+      autoCommit,
+      commitMessage,
+    });
     manifest = approveKnowledgeRun({
       vaultRoot,
       runsRoot,

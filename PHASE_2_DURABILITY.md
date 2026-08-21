@@ -62,3 +62,20 @@ SQLite remains an option when multi-process query volume or runtime-state comple
 - uncertain invocations are blocked from automatic replay;
 - concurrent manifest patches are merged through revision retry;
 - restart reconciliation preserves or fails states according to the matrix above.
+
+## Phase 2.1 — Telemetry Identity
+
+Inferred event-log records are normalized to the same durable invocation IDs used by explicit telemetry. Status and review projections therefore count one provider invocation exactly once across implementation, retrospective, automatic recovery, and review revision stages.
+
+## Phase 2.2 — Transactional Git Finalization
+
+Human acceptance now commits only the verified `appliedPaths` by default and records the resulting commit hash in the run manifest.
+
+- Existing staged or unstaged changes outside `appliedPaths` remain untouched.
+- An applied path that was already dirty before execution is rejected from auto-commit.
+- Sensitive paths remain denied.
+- Verification, Graphify, staging, and commit failure restore the pre-apply files; failed staging is removed.
+- `accept --no-commit` is available when a human intentionally wants an uncommitted result.
+- `cancel-task` and `supersede-task` close abandoned BACKLOG tasks only when no job or run exists.
+
+`test/git-finalization.test.mjs` covers clean repositories, unrelated staged work, dirty target rejection, denied secret paths, and commit-hook rollback. `test/task-lifecycle.test.mjs` covers BACKLOG cancellation and supersession guards.

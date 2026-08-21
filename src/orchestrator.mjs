@@ -80,6 +80,8 @@ function parseArguments(args) {
     confirm: false,
     fixSafe: false,
     once: false,
+    autoCommit: true,
+    commitMessage: null,
     positional: [],
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -132,6 +134,11 @@ function parseArguments(args) {
       options.fixSafe = true;
     } else if (args[index] === "--once") {
       options.once = true;
+    } else if (args[index] === "--no-commit") {
+      options.autoCommit = false;
+    } else if (args[index] === "--commit-message") {
+      options.commitMessage = args[index + 1];
+      index += 1;
     } else {
       options.positional.push(args[index]);
     }
@@ -150,11 +157,13 @@ Project onboarding:
 
 Conversational flow:
   request-task <project-id> <request> [--start] [--by <name>]
+  cancel-task <project-id> <task-id-or-path> --reason <text> [--by <name>]
+  supersede-task <project-id> <task-id-or-path> --reason <text> [--by <name>]
   status [task-id] [--project <project-id>]
   review [task-id] [--project <project-id>]
   preview <task-id> [--project <project-id>]
   request-changes <task-id> --reason <text> [--by <name>]
-  accept [run-id-or-task-id] [--decision <value>] [--destination <value>] [--target <path>] [--by <name>]
+  accept [run-id-or-task-id] [--decision <value>] [--destination <value>] [--target <path>] [--no-commit] [--commit-message <text>] [--by <name>]
   reject [run-id-or-task-id] [--reason <text>] [--by <name>]
   notifications
   notification-read <notification-id|task-id|all> [--by <name>]
@@ -324,6 +333,20 @@ export async function main(argv = process.argv.slice(2)) {
           buildContext(options.vault, resolvedProjectId, taskPath),
           { readMarkdown },
         ),
+      });
+    } else if (command === "cancel-task" || command === "supersede-task") {
+      const [projectId, taskInput] = options.positional;
+      if (!projectId || !taskInput) fail(`Command ${command} membutuhkan <project-id> dan <task-id-or-path>`);
+      if (!String(options.reason ?? "").trim()) fail(`Command ${command} membutuhkan --reason <text>`);
+      const { closeBacklogTask } = await import("./task-lifecycle.mjs");
+      result = closeBacklogTask({
+        vaultRoot: options.vault,
+        runsRoot: options.runs,
+        projectId,
+        taskInput,
+        action: command === "cancel-task" ? "CANCELLED" : "SUPERSEDED",
+        reason: options.reason,
+        requestedBy: options.approvedBy,
       });
     } else if (command === "status" || command === "review") {
       const [selector] = options.positional;
@@ -556,6 +579,8 @@ export async function main(argv = process.argv.slice(2)) {
         runsRoot: options.runs,
         runId,
         completedBy: options.approvedBy,
+        autoCommit: options.autoCommit,
+        commitMessage: options.commitMessage,
       });
     } else if (command === "accept") {
       const [selector] = options.positional;
@@ -575,6 +600,8 @@ export async function main(argv = process.argv.slice(2)) {
         decision: options.decision,
         destination: options.destination,
         targetPath: options.targetPath,
+        autoCommit: options.autoCommit,
+        commitMessage: options.commitMessage,
       });
       const { JOB_STATES, updateJobForRun } = await import("./job-queue.mjs");
       updateJobForRun(options.runs, runId, { state: JOB_STATES.DONE, runState: result.state });
