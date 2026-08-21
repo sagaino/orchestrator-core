@@ -183,6 +183,17 @@ try {
   assert.equal(runDetailRes.data.data.runId, runId);
   assert.equal(runDetailRes.headers["access-control-allow-origin"], undefined);
 
+  const runEvidenceRes = await request({ path: `/api/runs/${runId}/evidence`, port, token });
+  assert.equal(runEvidenceRes.status, 200);
+  assert.equal(runEvidenceRes.data.data.schemaVersion, 1);
+  assert.equal(runEvidenceRes.data.data.mode, "run-evidence");
+  assert.equal(runEvidenceRes.data.data.runId, runId);
+  assert.equal(runEvidenceRes.data.data.scope.status, "UNKNOWN");
+  assert.equal(runEvidenceRes.data.data.verification.status, "UNKNOWN");
+
+  const missingEvidenceRes = await request({ path: "/api/runs/missing-run/evidence", port, token });
+  assert.equal(missingEvidenceRes.status, 404);
+
   // Encoded separators in URL identifiers cannot escape the runs/archive roots.
   const traversalLogRes = await request({
     path: "/api/runs/%2E%2E%2Foutside/logs",

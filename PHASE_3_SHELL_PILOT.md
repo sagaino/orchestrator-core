@@ -1,6 +1,6 @@
 # Phase 3 — AI OS Shell and Pilot Readiness
 
-Status: **SCOPE FROZEN — PHASE 3.0 COMPLETE**
+Status: **PHASE 3.1 IMPLEMENTED**
 
 This phase closes the remaining AI OS MVP gap: one real registered project must
 complete the controlled software-engineering lifecycle through the dashboard,
@@ -75,6 +75,8 @@ Contradictory evidence must render as an explicit data-integrity warning.
 
 ### Phase 3.1 — Evidence Contract and Inspector
 
+Status: **IMPLEMENTED**
+
 - Add and test the versioned run-evidence API projection.
 - Migrate the Runs inspector to the projection.
 - Correct scope and verification rendering for historical and new runs.
@@ -83,6 +85,24 @@ Contradictory evidence must render as an explicit data-integrity warning.
 Exit gate: a completed historical run and a new run both render truthful scope,
 verification, finalization, and audit evidence without reading raw manifests in
 the browser.
+
+Implementation notes:
+
+- `GET /api/runs/:id/evidence` publishes a versioned `run-evidence` projection
+  instead of exposing internal manifest shape to the inspector.
+- Scope, verification, post-apply verification, acceptance, applied paths, Git
+  finalization, workspace cleanup, artifacts, knowledge, telemetry, next action,
+  and integrity warnings are normalized by the control plane.
+- Safety evidence uses explicit `PASS`, `FAIL`, or `UNKNOWN`; absent evidence is
+  never treated as successful.
+- The dashboard Runs inspector consumes the projection and includes a dedicated
+  transactional finalization card.
+- Historical `TASK-001` was verified in the live shell with scope `PASS`, two of
+  two verification gates passing, finalization `APPLIED`, post-apply gates
+  `PASS`, workspace `CLEANED`, and its artifact path visible. Its pre-Phase-2.2
+  Git outcome is represented as `LEGACY_UNKNOWN` rather than inferred.
+- Backend fixtures cover current committed finalization, failed verification,
+  out-of-scope changes, and missing evidence.
 
 ### Phase 3.2 — Task Confirmation and Lifecycle UX
 

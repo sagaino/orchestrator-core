@@ -65,6 +65,166 @@ function nextAction(run) {
   return actions[run.state] ?? `State ${run.state}.`;
 }
 
+function normalizedVerification(results) {
+  if (!Array.isArray(results)) return [];
+  return results.map((result) => {
+    const exitCode = result?.exitCode === null || result?.exitCode === undefined
+      ? Number.NaN
+      : Number(result.exitCode);
+    const command = String(result?.command ?? result?.script ?? "").trim();
+    return {
+      command,
+      exitCode: Number.isFinite(exitCode) ? exitCode : null,
+      status: Number.isFinite(exitCode) ? (exitCode === 0 ? "PASS" : "FAIL") : "UNKNOWN",
+      stdoutTail: result?.stdoutTail ?? null,
+      stderrTail: result?.stderrTail ?? null,
+    };
+  });
+}
+
+function aggregateStatus(results) {
+  if (!results.length) return "UNKNOWN";
+  if (results.some((result) => result.status === "FAIL")) return "FAIL";
+  if (results.every((result) => result.status === "PASS")) return "PASS";
+  return "UNKNOWN";
+}
+
+function scopeEvidence(run) {
+  const audit = run.execution?.scopeAudit;
+  if (!audit) {
+    return {
+      status: "UNKNOWN",
+      changedPaths: [],
+      allowedPaths: run.task?.allowedPaths ?? [],
+      automaticAllowedPaths: [],
+      outOfScopePaths: [],
+      deniedPaths: [],
+    };
+  }
+  const outOfScopePaths = audit.outOfScopePaths ?? audit.outOfScopeFiles ?? [];
+  const deniedPaths = audit.deniedPaths ?? audit.deniedFilesBlocked ?? [];
+  const changedPaths = audit.changedPaths ?? audit.modifiedFiles;
+  const hasCompleteProjection = Array.isArray(changedPaths)
+    && (Array.isArray(audit.outOfScopePaths) || Array.isArray(audit.outOfScopeFiles))
+    && (Array.isArray(audit.deniedPaths) || Array.isArray(audit.deniedFilesBlocked));
+  const status = typeof audit.passed === "boolean"
+    ? (audit.passed ? "PASS" : "FAIL")
+    : hasCompleteProjection
+      ? (outOfScopePaths.length || deniedPaths.length ? "FAIL" : "PASS")
+      : "UNKNOWN";
+  return {
+    status,
+    changedPaths: changedPaths ?? [],
+    allowedPaths: audit.allowedPaths ?? run.task?.allowedPaths ?? [],
+    automaticAllowedPaths: audit.automaticAllowedPaths ?? [],
+    outOfScopePaths,
+    deniedPaths,
+  };
+}
+
+function finalizationEvidence(run) {
+  const workspace = run.execution?.workspace ?? null;
+  const gitCommit = run.execution?.result?.gitCommit ?? workspace?.gitCommit ?? null;
+  let gitStatus = "NOT_APPLICABLE";
+  if (gitCommit?.committed === true) gitStatus = "COMMITTED";
+  else if (gitCommit?.committed === false) gitStatus = "NO_COMMIT";
+  else if (workspace?.appliedAt) gitStatus = "LEGACY_UNKNOWN";
+
+  let status = "NOT_APPLIED";
+  if (workspace?.state === "APPLY_FAILED") status = "FAILED";
+  else if (workspace?.appliedAt) status = "APPLIED";
+
+  const postApplyResults = normalizedVerification(workspace?.postApplyVerification);
+  return {
+    status,
+    acceptedAt: run.completion?.completedAt ?? run.knowledge?.approval?.approvedAt ?? null,
+    acceptedBy: run.completion?.completedBy ?? run.knowledge?.approval?.approvedBy ?? null,
+    humanApproved: run.completion?.humanApproved ?? false,
+    appliedAt: workspace?.appliedAt ?? null,
+    appliedPaths: workspace?.appliedPaths ?? [],
+    postApplyVerification: {
+      status: aggregateStatus(postApplyResults),
+      results: postApplyResults,
+    },
+    graphify: workspace?.postApplyGraphify ?? null,
+    git: {
+      status: gitStatus,
+      commitHash: gitCommit?.commitHash ?? null,
+      parentCommit: gitCommit?.parentCommit ?? null,
+      commitMessage: gitCommit?.commitMessage ?? null,
+      reason: gitCommit?.reason ?? null,
+      paths: gitCommit?.paths ?? workspace?.appliedPaths ?? [],
+    },
+    artifactPath: workspace?.artifactPath ?? null,
+    workspaceState: workspace?.state ?? null,
+  };
+}
+
+export function buildRunEvidence(run, { runsRoot = null } = {}) {
+  const verificationResults = normalizedVerification(run.execution?.verification);
+  const scope = scopeEvidence(run);
+  const verificationStatus = aggregateStatus(verificationResults);
+  const finalization = finalizationEvidence(run);
+  const warnings = [];
+  if (run.state === RUN_STATES.DONE && scope.status !== "PASS") {
+    warnings.push("Completed run does not have a passing scope audit projection.");
+  }
+  if (run.state === RUN_STATES.DONE && verificationStatus !== "PASS") {
+    warnings.push("Completed run does not have a passing verification projection.");
+  }
+  if (run.state === RUN_STATES.DONE && finalization.status !== "APPLIED") {
+    warnings.push("Completed run does not have applied workspace evidence.");
+  }
+
+  return {
+    schemaVersion: 1,
+    mode: "run-evidence",
+    runId: run.runId,
+    state: run.state,
+    project: {
+      id: run.project?.id ?? null,
+      repository: run.project?.repository ?? null,
+    },
+    task: {
+      id: run.task?.id ?? null,
+      title: run.task?.title ?? null,
+      status: run.task?.status ?? null,
+      path: run.task?.path ?? null,
+    },
+    policy: {
+      allowedPaths: run.task?.allowedPaths ?? [],
+      verificationCommands: run.plan?.verificationCommands
+        ?? Object.keys(run.execution?.frozenVerificationScripts ?? {}),
+    },
+    approval: run.approval ?? null,
+    scope,
+    verification: {
+      status: verificationStatus,
+      results: verificationResults,
+    },
+    finalization,
+    knowledge: {
+      proposal: run.knowledge?.proposal ?? null,
+      approval: run.knowledge?.approval ?? null,
+      sync: run.knowledge?.sync ?? null,
+    },
+    telemetry: compactTelemetry(
+      runsRoot ? collectRunTelemetry({ runsRoot, run }) : run.execution?.telemetry ?? null,
+    ),
+    history: Array.isArray(run.history) ? run.history : [],
+    nextAction: nextAction(run),
+    integrity: {
+      status: warnings.length ? "WARNING" : "OK",
+      warnings,
+    },
+    audit: {
+      runId: run.runId,
+      createdAt: run.createdAt ?? null,
+      updatedAt: run.updatedAt ?? null,
+    },
+  };
+}
+
 export function reviewBundle(run, { runsRoot = null } = {}) {
   return {
     schemaVersion: 1,
