@@ -257,6 +257,14 @@ export async function main(argv = process.argv.slice(2)) {
         action: "API_TOKEN_ROTATED",
         ...rotateApiToken(options.runs),
       };
+    } else if (command === "harden-runtime") {
+      if (!options.confirm) fail("harden-runtime membutuhkan --confirm.");
+      const { hardenRuntimePermissions } = await import("./runtime-hardening.mjs");
+      result = hardenRuntimePermissions(options.runs, { apply: true });
+    } else if (command === "verify-audit-chain") {
+      const { verifyAuditChain } = await import("./audit-chain.mjs");
+      result = verifyAuditChain(options.runs);
+      if (!result.valid) process.exitCode = 1;
     } else if (command === "dr-backup") {
       const [backupRoot] = options.positional;
       if (!backupRoot || !path.isAbsolute(backupRoot)) fail("dr-backup membutuhkan absolute backup root.");

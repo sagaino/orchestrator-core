@@ -10,6 +10,7 @@ import {
   runtimeOwnerAlive,
   withDurableLease,
 } from "./durable-runtime.mjs";
+import { redactSensitive } from "./redaction.mjs";
 
 export const JOB_STATES = Object.freeze({
   QUEUED: "QUEUED",
@@ -41,7 +42,7 @@ function writeAtomic(filePath, value) {
   }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(redactSensitive(value), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   fs.renameSync(temporaryPath, filePath);
   try { fs.chmodSync(filePath, 0o600); } catch {}
 }

@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { getRun, listRuns, updateRunExecution } from "./run-manager.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
+import { redactSensitive } from "./redaction.mjs";
 
 const DEFAULT_TOKEN_WARNING_THRESHOLD = 250_000;
 const MAX_TOKEN_WARNING_THRESHOLD = 100_000_000;
@@ -24,10 +25,11 @@ function safeTelemetryId(value) {
 }
 
 function writeAtomic(filePath, value) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(redactSensitive(value), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   fs.renameSync(temporaryPath, filePath);
+  try { fs.chmodSync(filePath, 0o600); } catch {}
 }
 
 function intakeTelemetryRoot(runsRoot) {

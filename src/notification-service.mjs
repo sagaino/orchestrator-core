@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { redactSensitive, redactText } from "./redaction.mjs";
 
 const DELIVERY_MODES = new Set(["inbox", "auto", "desktop"]);
 
@@ -18,10 +19,11 @@ function notificationPath(runsRoot, id) {
 }
 
 function writeAtomic(filePath, value) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(redactSensitive(value), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   fs.renameSync(temporaryPath, filePath);
+  try { fs.chmodSync(filePath, 0o600); } catch {}
 }
 
 function readNotification(filePath) {
@@ -33,7 +35,7 @@ function readNotification(filePath) {
 }
 
 function compactText(value, maximumLength) {
-  const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+  const normalized = redactText(value).replace(/\s+/g, " ").trim();
   return normalized.length > maximumLength ? `${normalized.slice(0, maximumLength - 1)}…` : normalized;
 }
 
@@ -159,7 +161,7 @@ export async function emitNotification({
   };
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   try {
-    fs.writeFileSync(filePath, `${JSON.stringify(notification, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    fs.writeFileSync(filePath, `${JSON.stringify(redactSensitive(notification), null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   } catch (error) {
     if (error.code === "EEXIST") return { created: false, notification: readNotification(filePath) };
     throw error;

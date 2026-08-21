@@ -2,19 +2,33 @@ import fs from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getRun, RUN_STATES } from "./run-manager.mjs";
+import { prepareCapabilitySpawn } from "./capability-policy.mjs";
 
 const execFileAsync = promisify(execFile);
 
 async function openWithVsCode(workspacePath) {
+  const execute = async (command, args) => {
+    const prepared = prepareCapabilitySpawn({
+      command,
+      args,
+      cwd: workspacePath,
+      capabilityProfile: "preview",
+      writableRoots: [workspacePath],
+      readableRoots: [workspacePath],
+    });
+    try {
+      await execFileAsync(prepared.command, prepared.args, { encoding: "utf8", timeout: prepared.deadlineMs, env: prepared.env, cwd: workspacePath });
+    } finally {
+      try { fs.rmSync(prepared.temporaryRoot, { recursive: true, force: true }); } catch {}
+    }
+  };
   try {
-    await execFileAsync("code", [workspacePath], { encoding: "utf8", timeout: 30_000 });
+    await execute("code", [workspacePath]);
     return { command: "code", args: [workspacePath] };
   } catch (error) {
-    if (process.platform !== "darwin" || error.code !== "ENOENT") throw error;
-    await execFileAsync("open", ["-a", "Visual Studio Code", workspacePath], {
-      encoding: "utf8",
-      timeout: 30_000,
-    });
+    const missingCommand = error.code === "ENOENT" || error.code === 127 || /execvp|not found/i.test(String(error.stderr ?? ""));
+    if (process.platform !== "darwin" || !missingCommand) throw error;
+    await execute("open", ["-a", "Visual Studio Code", workspacePath]);
     return { command: "open", args: ["-a", "Visual Studio Code", workspacePath] };
   }
 }
@@ -101,4 +115,3 @@ export function formatReviewRevisionFeedback({ reason = "", feedback = "", inlin
   }
   return [text, "", commentsBlock, "", instruction].join("\n");
 }
-

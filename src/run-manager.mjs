@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createReadyTaskEvent } from "./adapters/vault-task-watcher.mjs";
 import { runtimeOwnerAlive, withDurableLease } from "./durable-runtime.mjs";
+import { redactSensitive } from "./redaction.mjs";
 
 export const RUN_STATES = Object.freeze({
   PENDING_APPROVAL: "PENDING_APPROVAL",
@@ -90,7 +91,7 @@ function writeNewManifest(filePath, manifest) {
   }
   const descriptor = fs.openSync(filePath, "wx", 0o600);
   try {
-    fs.writeFileSync(descriptor, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    fs.writeFileSync(descriptor, `${JSON.stringify(redactSensitive(manifest), null, 2)}\n`, "utf8");
   } finally {
     fs.closeSync(descriptor);
   }
@@ -123,7 +124,7 @@ function writeManifestAtomic(filePath, manifest) {
       throw new Error(`Manifest schema invalid: ${validation.errors.join(", ")}`);
     }
     const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-    fs.writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(redactSensitive(next), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     fs.renameSync(temporaryPath, filePath);
     try { fs.chmodSync(filePath, 0o600); } catch {}
     manifest.revision = next.revision;
