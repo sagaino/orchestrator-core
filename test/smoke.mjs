@@ -1474,6 +1474,11 @@ try {
   });
   assert.equal(intake.action, "TASK_CREATED_AND_QUEUED");
   assert.equal(intake.job.state, JOB_STATES.QUEUED);
+  assert.equal(intake.confirmation.status, "QUEUED_IMMEDIATELY");
+  assert.equal(intake.confirmation.approvalMode, "IMPLICIT_API_REQUEST");
+  assert.deepEqual(intake.confirmation.allowedPaths, ["README.md"]);
+  assert.deepEqual(intake.confirmation.verification, ["test"]);
+  assert.equal(intake.confirmation.readiness.ready, true);
   assert.equal(intake.job.intakeTelemetry.stage, "TASK_INTAKE");
   const simplifiedTaskPath = path.join(vault, intake.task.path);
   assert.equal(readMarkdown(simplifiedTaskPath, vault).metadata.status, "BACKLOG");

@@ -481,7 +481,7 @@ export async function requestTask({
 
   // 1. Fast-Path Optimization: Try deterministic intake planning first (0 AI tokens)
   const fastPathDraft = tryDeterministicTaskDraft({ project, request: text, attachedAssets });
-  let planned;
+  let planned = {};
   let draft;
 
   if (fastPathDraft) {
@@ -564,9 +564,37 @@ export async function requestTask({
   return {
     schemaVersion: 1,
     action: autoStart ? "TASK_CREATED_AND_QUEUED" : "TASK_CREATED",
+    project: project.id,
     task: { id: identity.taskId, title: draft.title, path: relativePath, status: "BACKLOG", risk: draft.risk },
     job: queued?.job ?? null,
-    readiness: readiness ? { verdict: readiness.verdict, summary: readiness.summary } : null,
+    readiness: readiness
+      ? {
+          verdict: readiness.verdict,
+          ready: readiness.ready,
+          summary: readiness.summary,
+          checks: readiness.checks ?? [],
+          nextActions: readiness.nextActions ?? [],
+        }
+      : null,
+    confirmation: {
+      schemaVersion: 1,
+      status: autoStart ? "QUEUED_IMMEDIATELY" : "AWAITING_HUMAN_CONFIRMATION",
+      approvalMode: autoStart ? "IMPLICIT_API_REQUEST" : "EXPLICIT_HUMAN",
+      allowedPaths: draft.allowedPaths,
+      verification: draft.verification,
+      acceptanceCriteria: draft.acceptanceCriteria,
+      risk: draft.risk,
+      requiresChanges: draft.requiresChanges,
+      readiness: readiness
+        ? {
+            verdict: readiness.verdict,
+            ready: readiness.ready,
+            summary: readiness.summary,
+            checks: readiness.checks ?? [],
+            nextActions: readiness.nextActions ?? [],
+          }
+        : null,
+    },
     planner: {
       agentConfig: planned.agentConfig ?? null,
       intakeId: planned.intakeId ?? null,
@@ -577,6 +605,8 @@ export async function requestTask({
           }
         : null,
     },
-    nextAction: autoStart ? "Gunakan status tanpa run-id untuk memantau hasil." : "Task menunggu instruksi execution.",
+    nextAction: autoStart
+      ? "Gunakan status tanpa run-id untuk memantau hasil."
+      : "Review canonical plan, lalu berikan human approval untuk memasukkan task ke antrean.",
   };
 }

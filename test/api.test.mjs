@@ -18,6 +18,12 @@ console.log("Running api.test.mjs...");
 
 const tempVault = fs.mkdtempSync(path.join(os.tmpdir(), "api-vault-"));
 const tempRuns = fs.mkdtempSync(path.join(os.tmpdir(), "api-runs-"));
+const tempRepository = fs.mkdtempSync(path.join(os.tmpdir(), "api-repository-"));
+fs.writeFileSync(path.join(tempRepository, "package.json"), JSON.stringify({
+  name: "api-fixture",
+  private: true,
+  scripts: { typecheck: "tsc --noEmit" },
+}, null, 2));
 
 // Helper for making HTTP requests
 function request({ method = "GET", path: reqPath, port, token, headers = {}, body = null }) {
@@ -61,7 +67,7 @@ try {
       "# Project Registry",
       "| project_id | project_page | repository | agent | graphify | graphify_output |",
       "|---|---|---|---|---|---|",
-      "| starter-app | [[02-Projects/starter-app/project.md]] | /tmp/starter-app | agy | false | /tmp/starter-app/graph.json |",
+      `| starter-app | [[02-Projects/starter-app/project.md]] | ${tempRepository} | agy | false | ${tempRepository}/graph.json |`,
     ].join("\n")
   );
 
@@ -1416,11 +1422,64 @@ try {
     /Domain tidak valid/
   );
 
+  // 21. Explicit task confirmation queues a ready canonical task exactly once.
+  fs.writeFileSync(
+    path.join(tasksDir, "task-confirm.md"),
+    [
+      "---",
+      "title: Confirmed Task",
+      "type: task",
+      "task_id: FE-099",
+      "project: starter-app",
+      "status: BACKLOG",
+      "dependencies: []",
+      "verification: [typecheck]",
+      "allowed_paths: [src/Confirmed.tsx]",
+      "requires_changes: true",
+      "---",
+      "# Confirmed Task",
+      "",
+      "## Tujuan",
+      "Create a confirmed component.",
+      "",
+      "## Hasil Yang Diharapkan",
+      "The component is created.",
+      "",
+      "## Acceptance Criteria",
+      "1. The component exists.",
+    ].join("\n"),
+  );
+  const confirmQueueRes = await request({
+    method: "POST",
+    path: "/api/tasks/starter-app/FE-099/queue",
+    port,
+    token,
+    body: { approvedBy: "phase-3-test" },
+  });
+  assert.equal(confirmQueueRes.status, 201, JSON.stringify(confirmQueueRes.data));
+  assert.equal(confirmQueueRes.data.data.action, "TASK_CONFIRMED_AND_QUEUED");
+  assert.equal(confirmQueueRes.data.data.approvedBy, "phase-3-test");
+  assert.equal(confirmQueueRes.data.data.readiness.ready, true);
+  assert.ok(confirmQueueRes.data.data.readiness.checks.length > 0);
+  assert.equal(confirmQueueRes.data.data.job.taskId, "FE-099");
+
+  const duplicateConfirmQueueRes = await request({
+    method: "POST",
+    path: "/api/tasks/starter-app/FE-099/queue",
+    port,
+    token,
+    body: { approvedBy: "phase-3-test" },
+  });
+  assert.equal(duplicateConfirmQueueRes.status, 200);
+  assert.equal(duplicateConfirmQueueRes.data.data.action, "TASK_ALREADY_QUEUED");
+  assert.equal(duplicateConfirmQueueRes.data.data.job.jobId, confirmQueueRes.data.data.job.jobId);
+
   // Cleanup
   await apiServer.stop();
 } finally {
   fs.rmSync(tempVault, { recursive: true, force: true });
   fs.rmSync(tempRuns, { recursive: true, force: true });
+  fs.rmSync(tempRepository, { recursive: true, force: true });
 }
 
 console.log("api.test.mjs: All tests passed!");

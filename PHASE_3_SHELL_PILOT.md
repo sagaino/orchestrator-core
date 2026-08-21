@@ -106,6 +106,8 @@ Implementation notes:
 
 ### Phase 3.2 — Task Confirmation and Lifecycle UX
 
+Status: **IMPLEMENTED**
+
 - Expose canonical task plan, allowed paths, verification, and policy before
   approval.
 - Make approval mode and auto-start consequences explicit.
@@ -114,6 +116,25 @@ Implementation notes:
 
 Exit gate: the operator can move a task from intake to review without using the
 CLI and can identify exactly what will run before approval.
+
+Implementation notes:
+
+- Dashboard intake and quick intake always create the canonical task in
+  `BACKLOG`; neither UI path can implicitly start execution.
+- The confirmation dialog exposes readiness, risk, allowed paths, verification
+  commands, acceptance criteria, and explicit-human approval mode before queue
+  admission.
+- `POST /api/tasks/:projectId/:taskInput/queue` validates readiness and performs
+  exactly-once queue admission after explicit approval; duplicate confirmation
+  returns the existing active job.
+- Closing confirmation preserves the canonical task in `BACKLOG`. Choosing
+  **Approve & Queue** records the approver and advances it through the existing
+  daemon lifecycle.
+- The Runs inspector renders the evidence contract's single authoritative next
+  action for the current lifecycle state. Accept and reject continue to use
+  their dedicated explicit confirmation dialogs.
+- Backend API, smoke, unit, dashboard typecheck, lint, and production build
+  gates pass for this phase.
 
 ### Phase 3.3 — Dashboard Browser and Restart Tests
 
