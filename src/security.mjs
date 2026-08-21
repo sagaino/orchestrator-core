@@ -49,6 +49,70 @@ export function filterDeniedPaths(paths) {
   return { allowed, denied };
 }
 
+function isInsideRoot(root, target) {
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+export function normalizeSafeRelativePath(value, { label = "Path" } = {}) {
+  const raw = String(value ?? "").trim().replaceAll("\\", "/");
+  if (!raw || raw.includes("\0") || path.posix.isAbsolute(raw) || path.win32.isAbsolute(raw)) {
+    throw new Error(`${label} harus berupa path relatif yang aman.`);
+  }
+
+  const normalized = path.posix.normalize(raw).replace(/^\.\//, "");
+  const segments = normalized.split("/");
+  if (normalized === "." || segments.includes("..") || segments.some((segment) => !segment)) {
+    throw new Error(`${label} tidak boleh keluar dari root yang diizinkan.`);
+  }
+  return normalized;
+}
+
+export function resolveContainedPath(root, relativePath, {
+  label = "Path",
+  mustExist = false,
+} = {}) {
+  if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+    throw new Error(`${label} root tidak ditemukan atau bukan direktori.`);
+  }
+
+  const normalized = normalizeSafeRelativePath(relativePath, { label });
+  const realRoot = fs.realpathSync(path.resolve(root));
+  const target = path.resolve(realRoot, ...normalized.split("/"));
+  if (!isInsideRoot(realRoot, target)) {
+    throw new Error(`${label} berada di luar root yang diizinkan.`);
+  }
+
+  let existingAncestor = target;
+  while (!fs.existsSync(existingAncestor)) {
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) break;
+    existingAncestor = parent;
+  }
+  if (!fs.existsSync(existingAncestor)) {
+    throw new Error(`${label} tidak memiliki ancestor yang dapat divalidasi.`);
+  }
+
+  const realAncestor = fs.realpathSync(existingAncestor);
+  if (!isInsideRoot(realRoot, realAncestor)) {
+    throw new Error(`${label} melewati symlink di luar root yang diizinkan.`);
+  }
+  const resolvedThroughAncestor = path.resolve(realAncestor, path.relative(existingAncestor, target));
+  if (!isInsideRoot(realRoot, resolvedThroughAncestor)) {
+    throw new Error(`${label} melewati symlink di luar root yang diizinkan.`);
+  }
+
+  if (mustExist) {
+    if (!fs.existsSync(target)) throw new Error(`${label} tidak ditemukan.`);
+    const realTarget = fs.realpathSync(target);
+    if (!isInsideRoot(realRoot, realTarget)) {
+      throw new Error(`${label} melewati symlink di luar root yang diizinkan.`);
+    }
+  }
+
+  return target;
+}
+
 export function validateSymlink(symlinkPath, repositoryRoot) {
   try {
     const target = fs.readlinkSync(symlinkPath);

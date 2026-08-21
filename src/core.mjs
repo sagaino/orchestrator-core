@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeSafeRelativePath, resolveContainedPath } from "./security.mjs";
 
 const ORCHESTRATOR_CLI = fileURLToPath(import.meta.url);
 export const ORCHESTRATOR_ROOT = path.resolve(path.dirname(ORCHESTRATOR_CLI), "..");
@@ -165,7 +166,10 @@ export function loadRegistry(vaultRoot) {
 export function projectPagePath(vaultRoot, projectPage) {
   const target = projectPage.match(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/)?.[1] ?? projectPage;
   const withoutExtension = target.endsWith(".md") ? target : `${target}.md`;
-  return path.join(vaultRoot, withoutExtension);
+  return resolveContainedPath(vaultRoot, withoutExtension, {
+    label: "Project page path",
+    mustExist: false,
+  });
 }
 
 export function walkMarkdown(directory) {
@@ -184,13 +188,28 @@ export function resolveTaskFile(vaultRoot, projectId, taskInput) {
   if (!exists(tasksDirectory)) fail("Direktori task project tidak ditemukan", { tasksDirectory });
 
   const normalizedInput = taskInput.trim();
-  const directCandidates = [
-    path.isAbsolute(normalizedInput) ? normalizedInput : path.join(vaultRoot, normalizedInput),
-    path.join(tasksDirectory, normalizedInput),
-    path.join(tasksDirectory, normalizedInput.endsWith(".md") ? normalizedInput : `${normalizedInput}.md`),
-  ];
-  for (const candidate of directCandidates) {
-    if (exists(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  const inputCandidates = [normalizedInput, normalizedInput.endsWith(".md") ? normalizedInput : `${normalizedInput}.md`];
+  for (const inputCandidate of inputCandidates) {
+    let relativeCandidate = inputCandidate;
+    if (path.isAbsolute(inputCandidate)) {
+      relativeCandidate = path.relative(tasksDirectory, inputCandidate).split(path.sep).join("/");
+    } else {
+      const vaultRelativePrefix = path.relative(vaultRoot, tasksDirectory).split(path.sep).join("/");
+      if (inputCandidate.replaceAll("\\", "/").startsWith(`${vaultRelativePrefix}/`)) {
+        relativeCandidate = inputCandidate.replaceAll("\\", "/").slice(vaultRelativePrefix.length + 1);
+      }
+    }
+
+    try {
+      const safeRelative = normalizeSafeRelativePath(relativeCandidate, { label: "Task path" });
+      const candidate = resolveContainedPath(tasksDirectory, safeRelative, {
+        label: "Task path",
+        mustExist: true,
+      });
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Continue with task-id matching, but never fall back to a path outside the task root.
+    }
   }
 
   const matchingTask = walkMarkdown(tasksDirectory).find((filePath) => {

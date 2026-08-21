@@ -159,6 +159,7 @@ Conversational flow:
   notifications
   notification-read <notification-id|task-id|all> [--by <name>]
   notification-test
+  rotate-api-token --confirm
   telemetry [run-id-or-task-id] [--project <project-id>]
   knowledge-health [--fix-safe] [--by <name>]
   knowledge-candidates
@@ -234,7 +235,15 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const options = parseArguments(rest);
     let result;
-    if (command === "purge-project-archive") {
+    if (command === "rotate-api-token") {
+      if (!options.confirm) fail("Rotasi API token membutuhkan --confirm dan restart service.");
+      const { rotateApiToken } = await import("./api/auth.mjs");
+      result = {
+        schemaVersion: 1,
+        action: "API_TOKEN_ROTATED",
+        ...rotateApiToken(options.runs),
+      };
+    } else if (command === "purge-project-archive") {
       const [projectId] = options.positional;
       if (!projectId) fail("Command purge-project-archive membutuhkan <project-id>");
       const { purgeProjectArchive } = await import("./project-onboarding.mjs");
@@ -629,7 +638,6 @@ export async function main(argv = process.argv.slice(2)) {
         event: "API_SERVER_STARTED",
         host: info.host,
         port: info.port,
-        token: info.token,
         apiUrl: `http://${info.host}:${info.port}`,
       }, null, 2));
 

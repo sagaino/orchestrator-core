@@ -8,8 +8,13 @@ import {
   filterDeniedPaths,
   validateSymlink,
   auditWorkspaceSecrets,
+  normalizeSafeRelativePath,
+  resolveContainedPath,
 } from "../src/security.mjs";
 import { assertVerificationScriptsUnmodified } from "../src/executor.mjs";
+import { saveUploadedAsset, deleteUploadedAsset } from "../src/asset-manager.mjs";
+import { apiTokenPath, ensureApiToken, rotateApiToken } from "../src/api/auth.mjs";
+import { resolveTaskFile } from "../src/core.mjs";
 
 console.log("Running security.test.mjs...");
 
@@ -125,6 +130,127 @@ try {
   );
 } finally {
   fs.rmSync(repoDir, { recursive: true, force: true });
+}
+
+// 6. Contained path checks
+const containmentRoot = fs.mkdtempSync(path.join(os.tmpdir(), "containment-test-"));
+const containmentOutside = fs.mkdtempSync(path.join(os.tmpdir(), "containment-outside-"));
+try {
+  fs.mkdirSync(path.join(containmentRoot, "safe"));
+  assert.equal(normalizeSafeRelativePath("safe/file.png"), "safe/file.png");
+  assert.throws(() => normalizeSafeRelativePath("../outside.png"), /root yang diizinkan/);
+  assert.throws(() => normalizeSafeRelativePath("/tmp/outside.png"), /path relatif/);
+  assert.throws(() => normalizeSafeRelativePath("C:\\outside.png"), /path relatif/);
+  assert.equal(resolveContainedPath(containmentRoot, "safe/file.png"), path.join(fs.realpathSync(containmentRoot), "safe", "file.png"));
+
+  fs.symlinkSync(containmentOutside, path.join(containmentRoot, "escape"));
+  assert.throws(
+    () => resolveContainedPath(containmentRoot, "escape/file.png"),
+    /symlink di luar root/,
+  );
+} finally {
+  fs.rmSync(containmentRoot, { recursive: true, force: true });
+  fs.rmSync(containmentOutside, { recursive: true, force: true });
+}
+
+// 7. Asset upload and deletion stay inside authorized roots
+const assetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "asset-security-test-"));
+try {
+  const vault = path.join(assetRoot, "vault");
+  const repository = path.join(assetRoot, "repository");
+  fs.mkdirSync(vault);
+  fs.mkdirSync(repository);
+  const pngData = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+  const uploaded = await saveUploadedAsset({
+    vaultRoot: vault,
+    projectRepository: repository,
+    type: "PROJECT_ASSET",
+    fileName: "pixel.png",
+    base64Data: pngData,
+  });
+  assert.equal(uploaded.relativeProjectPath.startsWith("src/assets/images/"), true);
+  assert.equal(fs.existsSync(uploaded.absolutePath), true);
+  assert.equal(path.relative(fs.realpathSync(repository), uploaded.absolutePath).startsWith(".."), false);
+
+  await assert.rejects(
+    saveUploadedAsset({
+      vaultRoot: vault,
+      projectRepository: repository,
+      type: "PROJECT_ASSET",
+      fileName: "escape.png",
+      base64Data: pngData,
+      targetSubDir: "../outside",
+    }),
+    /root yang diizinkan|path relatif/,
+  );
+  assert.equal(fs.existsSync(path.join(assetRoot, "outside", "escape.png")), false);
+
+  await assert.rejects(
+    saveUploadedAsset({
+      vaultRoot: vault,
+      projectRepository: repository,
+      type: "PROJECT_ASSET",
+      fileName: "payload.svg",
+      base64Data: Buffer.from("<svg/>").toString("base64"),
+    }),
+    /Format asset tidak didukung/,
+  );
+
+  const deletion = await deleteUploadedAsset({
+    vaultRoot: vault,
+    projectRepository: repository,
+    type: "PROJECT_ASSET",
+    relativeProjectPath: uploaded.relativeProjectPath,
+  });
+  assert.equal(deletion.deleted, true);
+  assert.equal(fs.existsSync(uploaded.absolutePath), false);
+} finally {
+  fs.rmSync(assetRoot, { recursive: true, force: true });
+}
+
+// 8. Runtime token rotation never exposes the token in its result
+const tokenRuns = fs.mkdtempSync(path.join(os.tmpdir(), "token-security-test-"));
+try {
+  const first = ensureApiToken(tokenRuns);
+  const rotation = rotateApiToken(tokenRuns);
+  const second = ensureApiToken(tokenRuns);
+  assert.notEqual(first, second);
+  assert.equal(Object.hasOwn(rotation, "token"), false);
+  assert.equal(rotation.restartRequired, true);
+  assert.equal((fs.statSync(apiTokenPath(tokenRuns)).mode & 0o777), 0o600);
+} finally {
+  fs.rmSync(tokenRuns, { recursive: true, force: true });
+}
+
+// 9. Task resolution cannot read an arbitrary file outside the project task root
+const taskVault = fs.mkdtempSync(path.join(os.tmpdir(), "task-path-test-"));
+const externalTaskRoot = fs.mkdtempSync(path.join(os.tmpdir(), "external-task-test-"));
+try {
+  const tasksRoot = path.join(taskVault, "02-Projects", "safe-project", "tasks");
+  fs.mkdirSync(tasksRoot, { recursive: true });
+  const validTask = path.join(tasksRoot, "task-001.md");
+  const externalTask = path.join(externalTaskRoot, "outside.md");
+  fs.writeFileSync(validTask, "---\ntask_id: SAFE-001\n---\n# Safe task\n");
+  fs.writeFileSync(externalTask, "---\ntask_id: OUTSIDE-001\n---\n# Outside task\n");
+
+  assert.equal(resolveTaskFile(taskVault, "safe-project", "task-001"), fs.realpathSync(validTask));
+  assert.equal(
+    resolveTaskFile(taskVault, "safe-project", "02-Projects/safe-project/tasks/task-001.md"),
+    fs.realpathSync(validTask),
+  );
+  assert.throws(
+    () => resolveTaskFile(taskVault, "safe-project", externalTask),
+    /Task tidak ditemukan/,
+  );
+  fs.symlinkSync(externalTask, path.join(tasksRoot, "linked-outside.md"));
+  assert.throws(
+    () => resolveTaskFile(taskVault, "safe-project", "linked-outside.md"),
+    /Task tidak ditemukan/,
+  );
+} finally {
+  fs.rmSync(taskVault, { recursive: true, force: true });
+  fs.rmSync(externalTaskRoot, { recursive: true, force: true });
 }
 
 console.log("security.test.mjs: All tests passed!");

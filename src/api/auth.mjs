@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
 export function apiTokenPath(runsRoot) {
   return path.join(runsRoot, "runtime", "api-token.json");
@@ -10,24 +10,14 @@ export function idempotencyPath(runsRoot) {
   return path.join(runsRoot, "runtime", "idempotency.json");
 }
 
-export function ensureApiToken(runsRoot) {
-  const filePath = apiTokenPath(runsRoot);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-
-  if (fs.existsSync(filePath)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
-      if (data?.token && typeof data.token === "string" && data.token.length >= 32) {
-        return data.token;
-      }
-    } catch {}
-  }
-
+function writeNewApiToken(filePath, previousRecord = null) {
   const token = randomBytes(32).toString("hex");
+  const createdAt = new Date().toISOString();
   const record = {
     schemaVersion: 1,
     token,
-    createdAt: new Date().toISOString(),
+    createdAt,
+    ...(previousRecord?.createdAt ? { rotatedAt: createdAt } : {}),
     description: "Personal AI Orchestrator Local API Token",
   };
 
@@ -44,6 +34,40 @@ export function ensureApiToken(runsRoot) {
   return token;
 }
 
+export function ensureApiToken(runsRoot) {
+  const filePath = apiTokenPath(runsRoot);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+  if (fs.existsSync(filePath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      if (data?.token && typeof data.token === "string" && data.token.length >= 32) {
+        try { fs.chmodSync(filePath, 0o600); } catch {}
+        return data.token;
+      }
+    } catch {}
+  }
+
+  return writeNewApiToken(filePath);
+}
+
+export function rotateApiToken(runsRoot) {
+  const filePath = apiTokenPath(runsRoot);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  let previousRecord = null;
+  try {
+    previousRecord = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {}
+  const token = writeNewApiToken(filePath, previousRecord);
+  return {
+    rotated: true,
+    filePath,
+    rotatedAt: new Date().toISOString(),
+    fingerprint: createHash("sha256").update(token).digest("hex").slice(0, 12),
+    restartRequired: true,
+  };
+}
+
 export function extractTokenFromRequest(req) {
   const authHeader = req.headers["authorization"];
   if (authHeader && typeof authHeader === "string") {
@@ -58,14 +82,6 @@ export function extractTokenFromRequest(req) {
     return customHeader.trim();
   }
 
-  try {
-    const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
-    const queryToken = parsedUrl.searchParams.get("token");
-    if (queryToken && typeof queryToken === "string") {
-      return queryToken.trim();
-    }
-  } catch {}
-
   return null;
 }
 
@@ -76,7 +92,7 @@ export function authenticateRequest(req, expectedToken) {
 
   const extracted = extractTokenFromRequest(req);
   if (!extracted) {
-    return { authenticated: false, reason: "Missing Authorization header, x-api-token, or token query param" };
+    return { authenticated: false, reason: "Missing Authorization header or x-api-token" };
   }
 
   try {
@@ -140,8 +156,9 @@ export class IdempotencyStore {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     const payload = Object.fromEntries(this.entries.entries());
     const temporaryPath = `${this.filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-    fs.writeFileSync(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     fs.renameSync(temporaryPath, this.filePath);
+    try { fs.chmodSync(this.filePath, 0o600); } catch {}
   }
 
   get(key) {
