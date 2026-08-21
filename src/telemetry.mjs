@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { getRun, listRuns, updateRunExecution } from "./run-manager.mjs";
+import { withDurableLease } from "./durable-runtime.mjs";
 
 const DEFAULT_TOKEN_WARNING_THRESHOLD = 250_000;
 const MAX_TOKEN_WARNING_THRESHOLD = 100_000_000;
@@ -207,21 +208,30 @@ export function buildTelemetry(records = [], { threshold = configuredTokenWarnin
 
 export function appendRunTelemetry({ runsRoot, runId, record, env = process.env }) {
   if (!record) return getRun(runsRoot, runId);
-  const manifest = getRun(runsRoot, runId);
-  const existing = manifest.telemetry?.records ?? manifest.execution?.telemetry?.records ?? [];
-  if (existing.some((r) => r.recordId === record.recordId)) {
-    return { deduplicated: true, existingRecordId: record.recordId };
-  }
-  const currentRecords = manifest.execution?.telemetry?.records ?? [];
-  const telemetry = buildTelemetry([...currentRecords, record], {
-    threshold: configuredTokenWarningThreshold(env),
-  });
-  return updateRunExecution({
+  return withDurableLease({
     runsRoot,
-    runId,
-    executionPatch: { telemetry },
-    event: "AI_TELEMETRY_RECORDED",
-    message: `${record.stage} mencatat ${record.usage?.totalTokens ?? "unknown"} token.`,
+    namespace: "telemetry-mutations",
+    key: runId,
+    purpose: `telemetry append ${runId}`,
+    ttlMs: 60_000,
+    waitTimeoutMs: 2_000,
+  }, () => {
+    const manifest = getRun(runsRoot, runId);
+    const existing = manifest.telemetry?.records ?? manifest.execution?.telemetry?.records ?? [];
+    if (existing.some((r) => r.recordId === record.recordId)) {
+      return { deduplicated: true, existingRecordId: record.recordId };
+    }
+    const currentRecords = manifest.execution?.telemetry?.records ?? [];
+    const telemetry = buildTelemetry([...currentRecords, record], {
+      threshold: configuredTokenWarningThreshold(env),
+    });
+    return updateRunExecution({
+      runsRoot,
+      runId,
+      executionPatch: { telemetry },
+      event: "AI_TELEMETRY_RECORDED",
+      message: `${record.stage} mencatat ${record.usage?.totalTokens ?? "unknown"} token.`,
+    });
   });
 }
 

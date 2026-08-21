@@ -202,6 +202,8 @@ try {
   const daemonRes = await request({ path: "/api/daemon/status", port, token });
   assert.equal(daemonRes.status, 200);
   assert.equal(typeof daemonRes.data.data.healthy, "boolean");
+  assert.equal(daemonRes.data.data.durability.guarantees.atomicJobAdmission, true);
+  assert.equal(daemonRes.data.data.durability.guarantees.uncertainInvocationNeverAutoReplayed, true);
 
   // Test 9: Idempotency Key Caching
   const idempotencyKey = "test-idem-key-12345";

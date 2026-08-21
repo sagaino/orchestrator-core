@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createReadyTaskEvent } from "./adapters/vault-task-watcher.mjs";
+import { runtimeOwnerAlive, withDurableLease } from "./durable-runtime.mjs";
 
 export const RUN_STATES = Object.freeze({
   PENDING_APPROVAL: "PENDING_APPROVAL",
@@ -40,6 +41,7 @@ const SUPERSEDEABLE_RUN_STATES = new Set([
 ]);
 
 const ALLOWED_TRANSITIONS = Object.freeze({
+  [RUN_STATES.CLAIMING]: [RUN_STATES.CLAIMED, RUN_STATES.FAILED],
   [RUN_STATES.CLAIMED]: [RUN_STATES.RUNNING, RUN_STATES.FAILED],
   [RUN_STATES.RUNNING]: [RUN_STATES.VERIFYING, RUN_STATES.FAILED],
   [RUN_STATES.VERIFYING]: [RUN_STATES.REVIEW, RUN_STATES.FAILED],
@@ -81,11 +83,12 @@ function createRunId(event, now) {
 import { validateManifest } from "./schema.mjs";
 
 function writeNewManifest(filePath, manifest) {
+  manifest.revision = Number(manifest.revision ?? 0);
   const validation = validateManifest(manifest);
   if (!validation.valid) {
     throw new Error(`Manifest schema invalid: ${validation.errors.join(", ")}`);
   }
-  const descriptor = fs.openSync(filePath, "wx");
+  const descriptor = fs.openSync(filePath, "wx", 0o600);
   try {
     fs.writeFileSync(descriptor, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   } finally {
@@ -94,13 +97,38 @@ function writeNewManifest(filePath, manifest) {
 }
 
 function writeManifestAtomic(filePath, manifest) {
-  const validation = validateManifest(manifest);
-  if (!validation.valid) {
-    throw new Error(`Manifest schema invalid: ${validation.errors.join(", ")}`);
-  }
-  const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  fs.renameSync(temporaryPath, filePath);
+  return withDurableLease({
+    runsRoot: path.dirname(filePath),
+    namespace: "manifest-mutations",
+    key: path.basename(filePath, ".json"),
+    purpose: `manifest mutation ${path.basename(filePath)}`,
+    ttlMs: 60_000,
+    waitTimeoutMs: 2_000,
+  }, () => {
+    const expectedRevision = Number(manifest.revision ?? 0);
+    let currentRevision = 0;
+    if (fs.existsSync(filePath)) {
+      try { currentRevision = Number(JSON.parse(fs.readFileSync(filePath, "utf8")).revision ?? 0); }
+      catch {}
+    }
+    if (currentRevision !== expectedRevision) {
+      const error = new Error(`Concurrent manifest update ditolak: expected revision ${expectedRevision}, current ${currentRevision}.`);
+      error.code = "CONCURRENT_STATE_WRITE";
+      throw error;
+    }
+
+    const next = { ...manifest, revision: expectedRevision + 1 };
+    const validation = validateManifest(next);
+    if (!validation.valid) {
+      throw new Error(`Manifest schema invalid: ${validation.errors.join(", ")}`);
+    }
+    const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    fs.renameSync(temporaryPath, filePath);
+    try { fs.chmodSync(filePath, 0o600); } catch {}
+    manifest.revision = next.revision;
+    return manifest;
+  });
 }
 
 export function captureVerificationScripts(repository, verificationCommands = []) {
@@ -375,6 +403,7 @@ export function getRun(runsRoot, runId) {
   const filePath = manifestPath(runsRoot, runId);
   if (!fs.existsSync(filePath)) throw new Error(`Run manifest tidak ditemukan: ${runId}`);
   const manifest = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  manifest.revision = Number(manifest.revision ?? 0);
   const validation = validateManifest(manifest);
   if (!validation.valid) {
     throw new Error(`Corrupted run manifest ${runId}: ${validation.errors.join(", ")}`);
@@ -395,6 +424,117 @@ export function listRuns(runsRoot) {
     } catch {}
   }
   return runs.sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+}
+
+export function reconcileInterruptedRuns({ vaultRoot, runsRoot }) {
+  const reconciled = [];
+  const interruptedStates = new Set([
+    RUN_STATES.CLAIMING,
+    RUN_STATES.CLAIMED,
+    RUN_STATES.RUNNING,
+    RUN_STATES.VERIFYING,
+    RUN_STATES.CHANGES_REQUESTED,
+  ]);
+
+  for (const listed of listRuns(runsRoot)) {
+    if (!interruptedStates.has(listed.state)) continue;
+    const owner = listed.execution?.runtimeOwner;
+    if (owner && runtimeOwnerAlive(owner)) {
+      reconciled.push({ runId: listed.runId, fromState: listed.state, toState: listed.state, action: "ACTIVE_OWNER_PRESERVED" });
+      continue;
+    }
+
+    if (listed.state === RUN_STATES.CLAIMED) {
+      reconciled.push({
+        runId: listed.runId,
+        fromState: listed.state,
+        toState: listed.state,
+        action: "SAFE_TO_RESUME_BEFORE_AGENT",
+      });
+      continue;
+    }
+
+    if (listed.state === RUN_STATES.CLAIMING) {
+      const manifest = getRun(runsRoot, listed.runId);
+      const taskPath = path.join(vaultRoot, manifest.task.path);
+      const content = fs.existsSync(taskPath) ? fs.readFileSync(taskPath, "utf8") : "";
+      const taskStatus = content.match(/^status:\s*([^\s#]+)/m)?.[1]?.toUpperCase() ?? null;
+      const at = new Date().toISOString();
+      const fromState = manifest.state;
+      if (taskStatus === "READY") {
+        manifest.state = RUN_STATES.APPROVED;
+        manifest.updatedAt = at;
+        manifest.execution = {
+          ...manifest.execution,
+          claimedAt: null,
+          restartRecovery: { action: "CLAIM_ROLLED_BACK", recoveredAt: at, previousState: fromState },
+        };
+        const lock = manifest.execution.lock;
+        delete manifest.execution.lock;
+        manifest.history.push({ at, event: "RESTART_CLAIM_ROLLED_BACK", state: RUN_STATES.APPROVED });
+        writeManifestAtomic(manifestPath(runsRoot, manifest.runId), manifest);
+        if (lock) releaseClaimLock(path.join(runsRoot, lock));
+        reconciled.push({ runId: manifest.runId, fromState, toState: manifest.state, action: "CLAIM_ROLLED_BACK" });
+        continue;
+      }
+      if (taskStatus === "IN_PROGRESS") {
+        manifest.state = RUN_STATES.CLAIMED;
+        manifest.task = { ...manifest.task, status: "IN_PROGRESS" };
+        manifest.updatedAt = at;
+        manifest.execution = {
+          ...manifest.execution,
+          restartRecovery: { action: "CLAIM_COMPLETED", recoveredAt: at, previousState: fromState },
+        };
+        manifest.history.push({ at, event: "RESTART_CLAIM_COMPLETED", state: RUN_STATES.CLAIMED });
+        writeManifestAtomic(manifestPath(runsRoot, manifest.runId), manifest);
+        reconciled.push({ runId: manifest.runId, fromState, toState: manifest.state, action: "CLAIM_COMPLETED" });
+        continue;
+      }
+    }
+
+    const fromState = listed.state;
+    const message = `Runtime restart terdeteksi saat ${fromState}; eksekusi tidak diulang otomatis karena hasil invocation belum pasti.`;
+    let failed;
+    try {
+      failed = transitionRun({
+        vaultRoot,
+        runsRoot,
+        runId: listed.runId,
+        toState: RUN_STATES.FAILED,
+        executionPatch: {
+          restartRecovery: {
+            action: "MANUAL_RECOVERY_REQUIRED",
+            recoveredAt: new Date().toISOString(),
+            previousState: fromState,
+          },
+          result: { status: "FAILED", error: message },
+        },
+        message,
+      });
+    } catch (error) {
+      const manifest = getRun(runsRoot, listed.runId);
+      const at = new Date().toISOString();
+      manifest.state = RUN_STATES.FAILED;
+      manifest.updatedAt = at;
+      manifest.execution = {
+        ...manifest.execution,
+        finishedAt: at,
+        restartRecovery: {
+          action: "MANUAL_RECOVERY_REQUIRED",
+          recoveredAt: at,
+          previousState: fromState,
+          taskSyncError: error.message,
+        },
+        result: { status: "FAILED", error: message },
+      };
+      manifest.history.push({ at, event: "RESTART_INTERRUPTION_FAILED_SAFE", state: RUN_STATES.FAILED, message });
+      writeManifestAtomic(manifestPath(runsRoot, manifest.runId), manifest);
+      if (manifest.execution.lock) releaseClaimLock(path.join(runsRoot, manifest.execution.lock));
+      failed = manifest;
+    }
+    reconciled.push({ runId: failed.runId, fromState, toState: failed.state, action: "MANUAL_RECOVERY_REQUIRED" });
+  }
+  return reconciled;
 }
 
 export function prepareRunFromEvent({ runsRoot, event, origin = "watcher-daemon" }) {
@@ -442,6 +582,7 @@ export function prepareRunFromEvent({ runsRoot, event, origin = "watcher-daemon"
   const runId = createRunId(event, now);
   const manifest = {
     schemaVersion: 1,
+    revision: 0,
     runId,
     state: RUN_STATES.PENDING_APPROVAL,
     createdAt: now.toISOString(),
@@ -809,21 +950,28 @@ export function updateRunExecution({
   message = null,
 }) {
   const filePath = manifestPath(runsRoot, runId);
-  const manifest = getRun(runsRoot, runId);
-  const at = new Date().toISOString();
-  manifest.updatedAt = at;
-  manifest.execution = { ...manifest.execution, ...executionPatch };
-  if (event) {
-    manifest.history = Array.isArray(manifest.history) ? manifest.history : [];
-    manifest.history.push({
-      at,
-      event,
-      state: manifest.state,
-      ...(message ? { message } : {}),
-    });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const manifest = getRun(runsRoot, runId);
+    const at = new Date().toISOString();
+    manifest.updatedAt = at;
+    manifest.execution = { ...manifest.execution, ...executionPatch };
+    if (event) {
+      manifest.history = Array.isArray(manifest.history) ? manifest.history : [];
+      manifest.history.push({
+        at,
+        event,
+        state: manifest.state,
+        ...(message ? { message } : {}),
+      });
+    }
+    try {
+      writeManifestAtomic(filePath, manifest);
+      return manifest;
+    } catch (error) {
+      if (error.code !== "CONCURRENT_STATE_WRITE" || attempt === 4) throw error;
+    }
   }
-  writeManifestAtomic(filePath, manifest);
-  return manifest;
+  throw new Error(`Manifest ${runId} tidak dapat diperbarui setelah retry concurrency.`);
 }
 
 export function transitionRun({
