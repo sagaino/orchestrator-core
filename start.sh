@@ -343,7 +343,7 @@ done
 
 if [ -n "$DASHBOARD_DIR" ]; then
   log_info "Menjalankan Web Dashboard..."
-  (cd "$DASHBOARD_DIR" && npm run dev -- --port $FRONTEND_PORT --host) &
+  (cd "$DASHBOARD_DIR" && ORCHESTRATOR_RUNS="$BACKEND_DIR/runs" npm run dev -- --port $FRONTEND_PORT --host 127.0.0.1) &
   FRONTEND_PID=$!
   echo "$FRONTEND_PID" >> "$PID_FILE"
 

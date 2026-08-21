@@ -1,7 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DEFAULT_VAULT, listProjects, buildContext, buildPlan, readMarkdown, loadRegistry } from "./core.mjs";
 import { validateTaskReadiness } from "./task-readiness.mjs";
 import { requestTask } from "./task-intake.mjs";
@@ -22,7 +22,31 @@ import { collectRtkAnalytics } from "./rtk-analytics.mjs";
 import { onboardExistingProject, onboardNewProject, removeProject, purgeProjectArchive } from "./project-onboarding.mjs";
 import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
 import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvester.mjs";
-import { saveUploadedAsset, deleteUploadedAsset } from "./asset-manager.mjs";
+import { saveUploadedAsset, deleteUploadedAsset, resolveMockupAssetPath } from "./asset-manager.mjs";
+
+const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
+
+function validateRouteIdentifiers(params) {
+  for (const name of ["id", "projectId"]) {
+    if (!Object.hasOwn(params, name)) continue;
+    const value = String(params[name] ?? "");
+    if (!value || !/^[A-Za-z0-9._-]+$/.test(value) || [".", ".."].includes(value)) {
+      const error = new Error(`${name} tidak valid.`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+}
+
+export function idempotencyScopeKey({ key, method, requestTarget, rawBody = "" }) {
+  const normalizedKey = String(key ?? "").trim();
+  if (!normalizedKey || normalizedKey.length > 200) {
+    throw new Error("Idempotency-Key harus berisi 1-200 karakter.");
+  }
+  return createHash("sha256")
+    .update(`${String(method).toUpperCase()}\n${requestTarget}\n${normalizedKey}\n${rawBody}`)
+    .digest("hex");
+}
 
 export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   const router = new Router();
@@ -221,7 +245,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       }
       sendJson(res, 200, { success: true, data: { archivedProjects } });
     } catch (err) {
-      sendError(res, 500, err.message);
+      sendError(res, err.statusCode || 500, err.message);
     }
   });
 
@@ -977,8 +1001,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
       const relativePath = parsedUrl.searchParams.get("path");
       if (!relativePath) return sendError(res, 400, "Missing required query param: path");
 
-      const normalized = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, "");
-      const fullPath = path.join(vaultRoot, normalized);
+      const fullPath = resolveMockupAssetPath(vaultRoot, relativePath, { mustExist: true });
 
       if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
         return sendError(res, 404, "Asset file not found");
@@ -990,20 +1013,22 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".webp": "image/webp",
-        ".svg": "image/svg+xml",
         ".gif": "image/gif",
       };
-      const contentType = mimeTypes[ext] || "application/octet-stream";
+      const contentType = mimeTypes[ext];
+      if (!contentType) return sendError(res, 415, "Asset format is not allowed");
 
       const fileBuffer = fs.readFileSync(fullPath);
       res.writeHead(200, {
         "Content-Type": contentType,
         "Content-Length": fileBuffer.length,
         "Cache-Control": "public, max-age=86400",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "X-Content-Type-Options": "nosniff",
       });
       res.end(fileBuffer);
     } catch (err) {
-      sendError(res, 500, err.message);
+      sendError(res, err.statusCode || 400, err.message);
     }
   });
 
@@ -1073,22 +1098,23 @@ export function createOrchestratorServer({
   const router = createRouter({ vaultRoot, runsRoot, eventHub: hub, services });
 
   const requestListener = async (req, res) => {
-    // 1. CORS Preflight
+    // 1. Origin validation applies to preflight and regular requests.
+    const originCheck = validateOrigin(req);
+    if (!originCheck.valid) {
+      sendError(res, 403, originCheck.reason);
+      return;
+    }
+
+    // 2. Local dashboard preflight. Normal dashboard traffic uses the same-origin proxy.
     if (req.method === "OPTIONS") {
+      const origin = typeof req.headers.origin === "string" ? req.headers.origin : null;
       res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
+        ...(origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {}),
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-token, Idempotency-Key",
         "Access-Control-Max-Age": "86400",
       });
       res.end();
-      return;
-    }
-
-    // 2. Origin Validation
-    const originCheck = validateOrigin(req);
-    if (!originCheck.valid) {
-      sendError(res, 403, originCheck.reason);
       return;
     }
 
@@ -1114,30 +1140,51 @@ export function createOrchestratorServer({
       sendError(res, 404, `Route not found: ${req.method} ${pathname}`);
       return;
     }
+    try {
+      validateRouteIdentifiers(match.params);
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message);
+      return;
+    }
 
-    // 6. Idempotency Check for Mutations
+    // 6. Idempotency check is scoped by method, target, user key, and request payload.
     const idempotencyKey = req.headers["idempotency-key"];
-    if (req.method === "POST" && idempotencyKey && typeof idempotencyKey === "string") {
-      const cached = idempotency.get(idempotencyKey.trim());
-      if (cached) {
-        sendJson(res, cached.statusCode, cached.body, { "X-Cache": "IDEMPOTENT_HIT" });
+    let scopedIdempotencyKey = null;
+    if (IDEMPOTENT_METHODS.has(req.method) && idempotencyKey && typeof idempotencyKey === "string") {
+      try {
+        await parseJsonBody(req);
+        scopedIdempotencyKey = idempotencyScopeKey({
+          key: idempotencyKey,
+          method: req.method,
+          requestTarget: `${parsedUrl.pathname}${parsedUrl.search}`,
+          rawBody: req.orchestratorRawJsonBody ?? "",
+        });
+        const cached = idempotency.get(scopedIdempotencyKey);
+        if (cached) {
+          sendJson(res, cached.statusCode, cached.body, { "X-Cache": "IDEMPOTENT_HIT" });
+          return;
+        }
+      } catch (error) {
+        sendError(res, error.statusCode || 400, error.message);
         return;
       }
     }
 
     // 7. Execute Handler with Error Handling & Idempotency Storage
     try {
-      if (req.method === "POST" && idempotencyKey) {
+      if (scopedIdempotencyKey) {
         // Intercept response to store in idempotency cache
-        const originalSendJson = sendJson;
-        let responseCaptured = null;
+        let capturedStatus = 200;
         const proxyRes = {
           ...res,
-          writeHead: (status, headers) => res.writeHead(status, headers),
+          writeHead: (status, headers) => {
+            capturedStatus = status;
+            return res.writeHead(status, headers);
+          },
           end: (payload) => {
             try {
-              responseCaptured = JSON.parse(payload);
-              idempotency.set(idempotencyKey.trim(), { statusCode: res.statusCode || 200, body: responseCaptured });
+              const responseCaptured = JSON.parse(payload);
+              idempotency.set(scopedIdempotencyKey, { statusCode: capturedStatus, body: responseCaptured });
             } catch {}
             res.end(payload);
           },
@@ -1147,7 +1194,7 @@ export function createOrchestratorServer({
         await match.handler(req, res, { params: match.params });
       }
     } catch (err) {
-      sendError(res, err.statusCode || 500, err.message, err.details ?? err.stack);
+      sendError(res, err.statusCode || 500, err.message, err.details ?? null);
     }
   };
 

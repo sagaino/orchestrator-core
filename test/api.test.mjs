@@ -140,6 +140,10 @@ try {
   const badTokenRes = await request({ path: "/api/projects", port, token: "wrong-token" });
   assert.equal(badTokenRes.status, 401);
 
+  // Tokens in URLs are rejected to avoid leakage through history, logs, and referrers.
+  const queryTokenRes = await request({ path: `/api/projects?token=${token}`, port });
+  assert.equal(queryTokenRes.status, 401);
+
   // Test 4: Foreign origin rejection (403)
   const foreignOriginRes = await request({
     path: "/api/health",
@@ -147,6 +151,15 @@ try {
     headers: { Origin: "http://malicious-site.com" },
   });
   assert.equal(foreignOriginRes.status, 403);
+
+  const localPreflightRes = await request({
+    method: "OPTIONS",
+    path: "/api/projects",
+    port,
+    headers: { Origin: "http://127.0.0.1:5173" },
+  });
+  assert.equal(localPreflightRes.status, 204);
+  assert.equal(localPreflightRes.headers["access-control-allow-origin"], "http://127.0.0.1:5173");
 
   // Test 5: GET /api/projects with valid auth
   const projectsRes = await request({ path: "/api/projects", port, token });
@@ -168,6 +181,22 @@ try {
   const runDetailRes = await request({ path: `/api/runs/${runId}`, port, token });
   assert.equal(runDetailRes.status, 200);
   assert.equal(runDetailRes.data.data.runId, runId);
+  assert.equal(runDetailRes.headers["access-control-allow-origin"], undefined);
+
+  // Encoded separators in URL identifiers cannot escape the runs/archive roots.
+  const traversalLogRes = await request({
+    path: "/api/runs/%2E%2E%2Foutside/logs",
+    port,
+    token,
+  });
+  assert.equal(traversalLogRes.status, 400);
+  const traversalArchiveRes = await request({
+    method: "POST",
+    path: "/api/projects-archive/%2E%2E%2Foutside/restore",
+    port,
+    token,
+  });
+  assert.equal(traversalArchiveRes.status, 400);
 
   // Test 8: GET /api/daemon/status
   const daemonRes = await request({ path: "/api/daemon/status", port, token });
@@ -197,14 +226,39 @@ try {
   assert.equal(notifRes2.status, 200);
   assert.equal(notifRes2.headers["x-cache"], "IDEMPOTENT_HIT");
 
+  // The same user key on another endpoint must not replay the previous response.
+  const crossEndpointIdempotency = await request({
+    method: "POST",
+    path: "/api/notifications/read",
+    port,
+    token,
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: { selector: "all" },
+  });
+  assert.equal(crossEndpointIdempotency.status, 200);
+  assert.equal(crossEndpointIdempotency.headers["x-cache"], undefined);
+  assert.notDeepEqual(crossEndpointIdempotency.data, notifRes1.data);
+
+  // The same endpoint and key with a different payload is also a distinct request.
+  const differentPayloadIdempotency = await request({
+    method: "POST",
+    path: "/api/notifications/read",
+    port,
+    token,
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: { selector: "all", readBy: "different-payload" },
+  });
+  assert.equal(differentPayloadIdempotency.status, 200);
+  assert.equal(differentPayloadIdempotency.headers["x-cache"], undefined);
+
   // Test 10: SSE /api/events connection
   const ssePromise = new Promise((resolve, reject) => {
     const req = http.request({
       hostname: "127.0.0.1",
       port,
-      path: `/api/events?token=${token}`,
+      path: "/api/events",
       method: "GET",
-      headers: { Accept: "text/event-stream" },
+      headers: { Accept: "text/event-stream", Authorization: `Bearer ${token}` },
     }, (res) => {
       assert.equal(res.statusCode, 200);
       assert.equal(res.headers["content-type"], "text/event-stream");
@@ -487,9 +541,9 @@ try {
       {
         hostname: "127.0.0.1",
         port,
-        path: `/api/events?token=${token}`,
+        path: "/api/events",
         method: "GET",
-        headers: { Accept: "text/event-stream" },
+        headers: { Accept: "text/event-stream", Authorization: `Bearer ${token}` },
       },
       (res) => {
         assert.equal(res.statusCode, 200);
@@ -745,9 +799,9 @@ try {
     {
       hostname: "127.0.0.1",
       port: mockPort,
-      path: `/api/events?token=${mockToken}`,
+      path: "/api/events",
       method: "GET",
-      headers: { Accept: "text/event-stream" },
+      headers: { Accept: "text/event-stream", Authorization: `Bearer ${mockToken}` },
     },
     (res) => {
       res.on("data", (chunk) => {
@@ -959,9 +1013,9 @@ try {
     {
       hostname: "127.0.0.1",
       port: mockIngestPort,
-      path: `/api/events?token=${mockIngestToken}`,
+      path: "/api/events",
       method: "GET",
-      headers: { Accept: "text/event-stream" },
+      headers: { Accept: "text/event-stream", Authorization: `Bearer ${mockIngestToken}` },
     },
     (res) => {
       res.on("data", (chunk) => {
@@ -1242,9 +1296,9 @@ try {
     {
       hostname: "127.0.0.1",
       port: mockHarvestPort,
-      path: `/api/events?token=${mockHarvestToken}`,
+      path: "/api/events",
       method: "GET",
-      headers: { Accept: "text/event-stream" },
+      headers: { Accept: "text/event-stream", Authorization: `Bearer ${mockHarvestToken}` },
     },
     (res) => {
       res.on("data", (chunk) => {

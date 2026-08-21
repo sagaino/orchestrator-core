@@ -2,6 +2,8 @@
 
 Sistem Autonomous AI Software Engineering & Knowledge Layer terintegrasi yang menghubungkan **AI Orchestrator (Backend Daemon)**, **Web Dashboard (React + Vite)**, dan **Obsidian Knowledge Wiki**.
 
+Orchestrator ini juga menjadi control plane untuk **Personal AI OS**, yaitu agentic operating layer local-first yang berjalan di atas macOS. Batas produk, non-goals, safety properties, dan quality gate MVP ditetapkan dalam [AI OS MVP Scope Contract](./AI_OS_MVP_SCOPE.md).
+
 ---
 
 ## ⚡ Quick Start (1-Command Launcher)
@@ -26,6 +28,8 @@ npm start
 5. **Auto-Open Browser**: Membuka browser ke `http://localhost:5173`.
 6. **Graceful Cleanup**: Menekan `Ctrl + C` otomatis mematikan kedua server secara bersih tanpa meninggalkan port nyangkut.
 
+Backend dan dashboard hanya bind ke `127.0.0.1`. Credential API disimpan di `runs/runtime/api-token.json` dengan permission owner-only dan hanya dibaca oleh proxy lokal dashboard; token tidak dikirim ke JavaScript browser, URL, atau `localStorage`.
+
 ---
 
 ## 🛑 Perintah Manajemen Layanan
@@ -35,6 +39,7 @@ npm start
 | **`./start.sh`** (atau `npm start`) | Menjalankan Backend + Dashboard UI + Auto-open browser |
 | **`./start.sh stop`** (atau `npm run stop`) | Menghentikan semua background server & membebaskan port |
 | **`./start.sh status`** | Memeriksa status kesehatan Backend Daemon & Dashboard UI |
+| **`npm run security:rotate-token`** | Merotasi credential API runtime; restart layanan setelah rotasi |
 | **`npm test`** | Menjalankan seluruh test suite (Unit Tests & Smoke Tests) |
 
 ---

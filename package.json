@@ -23,6 +23,7 @@
     "notifications": "node src/orchestrator.mjs notifications",
     "notification:read": "node src/orchestrator.mjs notification-read",
     "notification:test": "node src/orchestrator.mjs notification-test",
+    "security:rotate-token": "node src/orchestrator.mjs rotate-api-token --confirm",
     "telemetry": "node src/orchestrator.mjs telemetry",
     "knowledge-health": "node src/orchestrator.mjs knowledge-health",
     "knowledge-candidates": "node src/orchestrator.mjs knowledge-candidates",
