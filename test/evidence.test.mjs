@@ -127,4 +127,22 @@ const incompleteEvidence = buildRunEvidence({
 assert.equal(incompleteEvidence.scope.status, "UNKNOWN");
 assert.equal(incompleteEvidence.verification.status, "UNKNOWN");
 
+const restartEvidence = buildRunEvidence({
+  ...completedRun,
+  runId: "task-005-restart",
+  state: RUN_STATES.FAILED,
+  completion: undefined,
+  execution: {
+    restartRecovery: {
+      action: "MANUAL_RECOVERY_REQUIRED",
+      previousState: RUN_STATES.RUNNING,
+      recoveredAt: "2026-08-22T00:05:00.000Z",
+    },
+    result: { status: "FAILED", error: "uncertain invocation" },
+  },
+});
+assert.equal(restartEvidence.restart.status, "MANUAL_RECOVERY_REQUIRED");
+assert.equal(restartEvidence.restart.previousState, RUN_STATES.RUNNING);
+assert.match(restartEvidence.nextAction, /Restart reconciliation/);
+
 console.log("evidence.test.mjs: All tests passed!");

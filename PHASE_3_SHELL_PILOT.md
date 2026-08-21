@@ -138,6 +138,8 @@ Implementation notes:
 
 ### Phase 3.3 — Dashboard Browser and Restart Tests
 
+Status: **IMPLEMENTED**
+
 - Add deterministic browser fixtures for lifecycle states.
 - Cover intake, approval, review evidence, request changes, reject, and accept.
 - Cover verification failure and restart reconciliation projections.
@@ -145,6 +147,28 @@ Implementation notes:
 
 Exit gate: dashboard typecheck, lint, build, security tests, and browser
 lifecycle tests are mandatory verification defaults for the dashboard project.
+
+Implementation notes:
+
+- Playwright lifecycle fixtures intercept only `/api` calls in the isolated
+  browser test context; they never create Vault tasks, jobs, worktrees, or
+  repository changes.
+- Browser coverage includes canonical intake and explicit queue approval,
+  review evidence, request changes, rejection, acceptance, verification
+  failure, and restart-reconciliation evidence.
+- Failed browser gates retain screenshot, video, trace, and error context under
+  `test-results/browser`; the generated HTML report is stored under
+  `playwright-report` and both locations are ignored by Git.
+- Restart reconciliation is now part of the versioned run-evidence projection.
+  Safe pre-agent resumes and uncertain in-flight invocations expose distinct
+  statuses, audit events, previous state, reconciliation time, and an
+  authoritative next action.
+- The dashboard timeline consumes evidence history when it is available, so
+  restart audit events are not inferred from the list projection.
+- Dashboard project verification defaults now require `typecheck`, `lint`,
+  `build`, `test:security`, and `test:browser`.
+- A live local stack stop/start check restored API health, SSE connectivity,
+  durable worker status, historical Runs, and the evidence inspector.
 
 ### Phase 3.4 — Real Pilot Certification
 

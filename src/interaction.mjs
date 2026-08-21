@@ -42,6 +42,12 @@ export function resolveRunSelector({ runsRoot, selector = null, projectId = null
 }
 
 function nextAction(run) {
+  if (run.state === RUN_STATES.FAILED && run.execution?.restartRecovery?.action === "MANUAL_RECOVERY_REQUIRED") {
+    return "Restart reconciliation menghentikan invocation yang hasilnya tidak pasti; periksa evidence lalu gunakan recover atau retry secara eksplisit.";
+  }
+  if (run.state === RUN_STATES.CLAIMED && run.execution?.restartRecovery?.action === "SAFE_TO_RESUME_BEFORE_AGENT") {
+    return "Restart reconciliation memastikan agent belum dipanggil; daemon dapat melanjutkan run secara aman dari state CLAIMED.";
+  }
   if (run.state === RUN_STATES.VERIFYING && run.execution?.automaticRecovery?.status === "RUNNING") {
     return "Automatic recovery sedang mencoba deterministic retry atau bounded AI repair di isolated worktree.";
   }
@@ -166,6 +172,7 @@ export function buildRunEvidence(run, { runsRoot = null } = {}) {
   const verificationStatus = aggregateStatus(verificationResults);
   const finalization = finalizationEvidence(run);
   const warnings = [];
+  const restartRecovery = run.execution?.restartRecovery ?? null;
   if (run.state === RUN_STATES.DONE && scope.status !== "PASS") {
     warnings.push("Completed run does not have a passing scope audit projection.");
   }
@@ -211,6 +218,17 @@ export function buildRunEvidence(run, { runsRoot = null } = {}) {
     telemetry: compactTelemetry(
       runsRoot ? collectRunTelemetry({ runsRoot, run }) : run.execution?.telemetry ?? null,
     ),
+    restart: restartRecovery
+      ? {
+          status: restartRecovery.action === "MANUAL_RECOVERY_REQUIRED"
+            ? "MANUAL_RECOVERY_REQUIRED"
+            : "RECONCILED",
+          action: restartRecovery.action ?? "UNKNOWN",
+          previousState: restartRecovery.previousState ?? null,
+          reconciledAt: restartRecovery.recoveredAt ?? null,
+          taskSyncError: restartRecovery.taskSyncError ?? null,
+        }
+      : null,
     history: Array.isArray(run.history) ? run.history : [],
     nextAction: nextAction(run),
     integrity: {

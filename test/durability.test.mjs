@@ -17,6 +17,7 @@ import {
 import { beginInvocation, runDurableInvocation } from "../src/durable-runtime.mjs";
 import { processClaimedJob } from "../src/daemon.mjs";
 import { getRun, reconcileInterruptedRuns, RUN_STATES, updateRunExecution } from "../src/run-manager.mjs";
+import { buildRunEvidence } from "../src/interaction.mjs";
 
 const execFileAsync = promisify(execFile);
 const selfPath = fileURLToPath(import.meta.url);
@@ -319,6 +320,14 @@ async function testMain() {
     assert.equal(getRun(runsRoot, "running-run").state, RUN_STATES.FAILED);
     assert.equal(getRun(runsRoot, "verifying-run").state, RUN_STATES.FAILED);
     assert.equal(getRun(runsRoot, "review-run").state, RUN_STATES.REVIEW);
+    const claimedEvidence = buildRunEvidence(getRun(runsRoot, "claimed-run"));
+    assert.equal(claimedEvidence.restart.status, "RECONCILED");
+    assert.equal(claimedEvidence.restart.action, "SAFE_TO_RESUME_BEFORE_AGENT");
+    assert.match(claimedEvidence.nextAction, /aman/);
+    const interruptedEvidence = buildRunEvidence(getRun(runsRoot, "running-run"));
+    assert.equal(interruptedEvidence.restart.status, "MANUAL_RECOVERY_REQUIRED");
+    assert.equal(interruptedEvidence.restart.previousState, RUN_STATES.RUNNING);
+    assert.match(interruptedEvidence.nextAction, /recover atau retry/);
 
     reconcileJobs(runsRoot, [
       getRun(runsRoot, "claimed-run"),
