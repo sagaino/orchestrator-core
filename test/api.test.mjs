@@ -13,6 +13,7 @@ import { harvestRepositoryKnowledge, scanRepositoryArchitecture } from "../src/k
 import { formatInlineComments, formatReviewRevisionFeedback } from "../src/review-workflow.mjs";
 import { buildCompactedRevisionPrompt } from "../src/context-compactor.mjs";
 import { buildAgyRevisionInvocation } from "../src/executor.mjs";
+import { recoveryModePath } from "../src/recovery-mode.mjs";
 
 console.log("Running api.test.mjs...");
 
@@ -166,6 +167,27 @@ try {
   });
   assert.equal(localPreflightRes.status, 204);
   assert.equal(localPreflightRes.headers["access-control-allow-origin"], "http://127.0.0.1:5173");
+
+  // A quarantined restore remains readable, but every mutation fails closed.
+  const recoveryMarker = recoveryModePath(tempRuns);
+  fs.mkdirSync(path.dirname(recoveryMarker), { recursive: true });
+  fs.writeFileSync(recoveryMarker, JSON.stringify({
+    schemaVersion: 1,
+    mode: "RECOVERY_QUARANTINE",
+    executionBlocked: true,
+    backupId: "fixture-backup",
+  }));
+  const recoveryReadRes = await request({ path: "/api/runs", port, token });
+  assert.equal(recoveryReadRes.status, 200);
+  const recoveryMutationRes = await request({
+    method: "POST",
+    path: "/api/notifications/read",
+    port,
+    token,
+    body: { selector: "all" },
+  });
+  assert.equal(recoveryMutationRes.status, 423);
+  fs.unlinkSync(recoveryMarker);
 
   // Test 5: GET /api/projects with valid auth
   const projectsRes = await request({ path: "/api/projects", port, token });

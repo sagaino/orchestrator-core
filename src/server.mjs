@@ -14,7 +14,7 @@ import { knowledgeHealth } from "./knowledge-quality.mjs";
 import { listNotifications, acknowledgeNotifications, emitTestNotification } from "./notification-service.mjs";
 import { telemetryReport } from "./telemetry.mjs";
 import { daemonStatus } from "./daemon.mjs";
-import { ensureApiToken, authenticateRequest, validateOrigin, IdempotencyStore } from "./api/auth.mjs";
+import { ensureApiToken, readExistingApiToken, authenticateRequest, validateOrigin, IdempotencyStore } from "./api/auth.mjs";
 import { createEventHub } from "./api/events.mjs";
 import { Router, sendJson, sendError, parseJsonBody } from "./api/router.mjs";
 import { getRunDiff, globalDevServerManager } from "./dev-server-manager.mjs";
@@ -24,6 +24,7 @@ import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
 import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvester.mjs";
 import { saveUploadedAsset, deleteUploadedAsset, resolveMockupAssetPath } from "./asset-manager.mjs";
 import { buildRunEvidence } from "./interaction.mjs";
+import { readRecoveryMode } from "./recovery-mode.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 
@@ -1171,7 +1172,11 @@ export function createOrchestratorServer({
   apiToken = null,
   services: customServices = {},
 } = {}) {
-  const token = apiToken || ensureApiToken(runsRoot);
+  const recoveryAtStart = readRecoveryMode(runsRoot);
+  const token = apiToken || (recoveryAtStart ? readExistingApiToken(runsRoot) : ensureApiToken(runsRoot));
+  if (!token) {
+    throw new Error("Recovery quarantine tidak memiliki API token valid; inspection server ditolak tanpa memodifikasi backup.");
+  }
   const hub = eventHub || createEventHub();
   const idempotency = new IdempotencyStore(runsRoot);
 
@@ -1223,6 +1228,15 @@ export function createOrchestratorServer({
     const authResult = authenticateRequest(req, token);
     if (!authResult.authenticated) {
       sendError(res, 401, authResult.reason || "Unauthorized");
+      return;
+    }
+
+    // Restored datasets remain inspectable through authenticated GET routes,
+    // while every mutation stays fail-closed until explicit promotion removes
+    // the recovery marker through an offline runbook.
+    const recoveryMode = readRecoveryMode(runsRoot);
+    if (recoveryMode && IDEMPOTENT_METHODS.has(req.method)) {
+      sendError(res, 423, "Runtime berada dalam RECOVERY_QUARANTINE; mutasi diblokir.", { recoveryMode });
       return;
     }
 
