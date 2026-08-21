@@ -7,8 +7,10 @@ import { runProcess } from "../src/executor.mjs";
 import {
   activateWorkspace,
   applyIsolatedWorkspace,
+  cleanupIsolatedWorkspace,
   prepareIsolatedWorkspace,
 } from "../src/workspace-manager.mjs";
+import { clearFaultInjection, configureFaultInjection } from "../src/fault-injection.mjs";
 
 console.log("Running git-finalization.test.mjs...");
 
@@ -160,7 +162,57 @@ try {
     assert.equal(git(repository, ["status", "--short"]), "");
     await cleanup(repository, manifest.execution.workspace.path);
   }
+
+  // A fault after source copy rolls files back before commit and preserves the worktree for review.
+  {
+    const repository = createRepository(root, "apply-fault-repo");
+    const parent = git(repository, ["rev-parse", "HEAD"]);
+    const { manifest, runsRoot, eventLogPath } = await prepare({ root, repository, runId: "apply-fault-run" });
+    fs.writeFileSync(path.join(manifest.execution.workspace.path, "app.txt"), "faulted apply\n");
+    configureFaultInjection({ "apply.after-copy": { code: "EIO" } });
+    await assert.rejects(() => applyIsolatedWorkspace({
+      manifest,
+      runsRoot,
+      eventLogPath,
+      processRunner: runProcess,
+      gitFinalization: { enabled: true },
+    }), (error) => error.injected && error.faultPoint === "apply.after-copy");
+    clearFaultInjection();
+    assert.equal(fs.readFileSync(path.join(repository, "app.txt"), "utf8"), "baseline\n");
+    assert.equal(git(repository, ["rev-parse", "HEAD"]), parent);
+    assert.equal(git(repository, ["status", "--short"]), "");
+    assert.equal(fs.existsSync(manifest.execution.workspace.path), true);
+    await cleanup(repository, manifest.execution.workspace.path);
+  }
+
+  // Cleanup fault keeps the review worktree and archive recoverable; retry completes safely.
+  {
+    const repository = createRepository(root, "cleanup-fault-repo");
+    const { manifest, runsRoot, eventLogPath } = await prepare({ root, repository, runId: "cleanup-fault-run" });
+    fs.writeFileSync(path.join(manifest.execution.workspace.path, "app.txt"), "archive before cleanup\n");
+    configureFaultInjection({ "cleanup.before-remove": { code: "EIO" } });
+    await assert.rejects(() => cleanupIsolatedWorkspace({
+      manifest,
+      runsRoot,
+      eventLogPath,
+      processRunner: runProcess,
+      outcome: "DISCARDED",
+    }), (error) => error.injected && error.faultPoint === "cleanup.before-remove");
+    clearFaultInjection();
+    assert.equal(fs.existsSync(manifest.execution.workspace.path), true);
+    assert.equal(fs.existsSync(path.join(runsRoot, "workspace-artifacts", "cleanup-fault-run", "manifest.json")), true);
+    const cleaned = await cleanupIsolatedWorkspace({
+      manifest,
+      runsRoot,
+      eventLogPath,
+      processRunner: runProcess,
+      outcome: "DISCARDED",
+    });
+    assert.equal(cleaned.workspace.state, "DISCARDED");
+    assert.equal(fs.existsSync(manifest.execution.workspace.path), false);
+  }
 } finally {
+  clearFaultInjection();
   fs.rmSync(root, { recursive: true, force: true });
 }
 

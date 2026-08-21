@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { redactSensitive } from "./redaction.mjs";
+import { injectFault } from "./fault-injection.mjs";
 
 const PROCESS_INSTANCE_ID = randomUUID();
 
@@ -33,8 +34,15 @@ function readJson(filePath) {
 function writeJsonAtomic(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(redactSensitive(value), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  fs.renameSync(temporaryPath, filePath);
+  try {
+    injectFault("durable.write.before-temp", { filePath });
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(redactSensitive(value), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    injectFault("durable.write.before-rename", { filePath, temporaryPath });
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    try { fs.unlinkSync(temporaryPath); } catch {}
+    throw error;
+  }
   try { fs.chmodSync(filePath, 0o600); } catch {}
 }
 
@@ -108,7 +116,9 @@ export function acquireDurableLease({
     let descriptor;
     try {
       descriptor = fs.openSync(filePath, "wx", 0o600);
+      injectFault("lease.after-create", { filePath, namespace, key: String(key) });
       fs.writeFileSync(descriptor, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      fs.fsyncSync(descriptor);
       fs.closeSync(descriptor);
       return { filePath, record };
     } catch (error) {
@@ -118,6 +128,15 @@ export function acquireDurableLease({
       if (error.code !== "EEXIST") throw error;
 
       const current = readJson(filePath);
+      if (!current?.leaseId) {
+        if (Date.now() < waitUntil) {
+          Atomics.wait(waitSignal, 0, 0, Math.min(20, waitUntil - Date.now()));
+          continue;
+        }
+        const corrupt = new DurableLeaseError(`${purpose || namespace} memiliki lease yang belum lengkap atau korup; fail-closed.`, current);
+        corrupt.code = "DURABLE_LEASE_CORRUPT";
+        throw corrupt;
+      }
       const stale = typeof isStale === "function"
         ? Boolean(isStale(current, now))
         : reclaimDeadOwner && defaultLeaseIsStale(current, now);
@@ -130,7 +149,8 @@ export function acquireDurableLease({
       }
 
       const latest = readJson(filePath);
-      if (current?.leaseId && latest?.leaseId !== current.leaseId) continue;
+      if (latest?.leaseId !== current.leaseId) continue;
+      injectFault("lease.before-stale-reclaim", { filePath, namespace, key: String(key), leaseId: current.leaseId });
       try { fs.unlinkSync(filePath); } catch (unlinkError) {
         if (unlinkError.code !== "ENOENT") throw unlinkError;
       }
@@ -321,6 +341,9 @@ export function durableRuntimeStatus(runsRoot) {
       manifestRevisionGuard: true,
       stableInvocationIdentity: true,
       uncertainInvocationNeverAutoReplayed: true,
+      incompleteLeaseFailClosed: true,
+      processTreeDeadline: true,
+      deterministicFaultInjectionVerified: true,
     },
   };
 }

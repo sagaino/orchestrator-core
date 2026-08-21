@@ -149,6 +149,7 @@ export function runProcess({
       cwd,
       env: prepared.env,
       shell: false,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdoutBuffer = "";
@@ -159,20 +160,28 @@ export function runProcess({
     let outputBytes = 0;
     let terminatedReason = null;
     let forcedKillTimer = null;
-    const deadlineTimer = setTimeout(() => {
-      terminatedReason = "deadline";
-      child.kill("SIGTERM");
-      forcedKillTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
+    const terminateTree = (signal) => {
+      if (!child.pid) return false;
+      if (process.platform !== "win32") {
+        try { process.kill(-child.pid, signal); return true; } catch {}
+      }
+      try { return child.kill(signal); } catch { return false; }
+    };
+    const beginTermination = (reason) => {
+      if (terminatedReason) return;
+      terminatedReason = reason;
+      terminateTree("SIGTERM");
+      forcedKillTimer = setTimeout(() => terminateTree("SIGKILL"), 2_000);
       forcedKillTimer.unref?.();
+    };
+    const deadlineTimer = setTimeout(() => {
+      beginTermination("deadline");
     }, effectiveDeadlineMs);
     deadlineTimer.unref?.();
 
     const consume = (stream, chunk) => {
       outputBytes += chunk.length;
-      if (outputBytes > effectiveMaxOutputBytes && !terminatedReason) {
-        terminatedReason = "output_limit";
-        child.kill("SIGTERM");
-      }
+      if (outputBytes > effectiveMaxOutputBytes) beginTermination("output_limit");
       const current = stream === "stdout" ? stdoutBuffer : stderrBuffer;
       const lines = `${current}${chunk.toString()}`.split("\n");
       const remainder = lines.pop() ?? "";
