@@ -23,6 +23,7 @@ import { onboardExistingProject, onboardNewProject, removeProject, purgeProjectA
 import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
 import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvester.mjs";
 import { saveUploadedAsset, deleteUploadedAsset, resolveMockupAssetPath } from "./asset-manager.mjs";
+import { buildRunEvidence } from "./interaction.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 
@@ -439,6 +440,15 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
     try {
       const run = getRun(runsRoot, params.id);
       sendJson(res, 200, { success: true, data: run });
+    } catch (err) {
+      sendError(res, 404, err.message);
+    }
+  });
+
+  router.get("/api/runs/:id/evidence", async (req, res, { params }) => {
+    try {
+      const run = getRun(runsRoot, params.id);
+      sendJson(res, 200, { success: true, data: buildRunEvidence(run, { runsRoot }) });
     } catch (err) {
       sendError(res, 404, err.message);
     }
