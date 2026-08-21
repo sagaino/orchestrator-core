@@ -19,6 +19,7 @@ import {
 import { appendRunTelemetry, createAgentTelemetryRecord } from "./telemetry.mjs";
 import { isDeniedPath } from "./security.mjs";
 import { formatReviewRevisionFeedback, formatInlineComments } from "./review-workflow.mjs";
+import { runDurableInvocation, runtimeOwner } from "./durable-runtime.mjs";
 
 function appendEvent(eventLogPath, event) {
   if (!eventLogPath || typeof eventLogPath !== "string") return;
@@ -774,17 +775,25 @@ async function attemptAutomaticRecovery({
         failure: latestError.message,
         attempt,
       });
-      const agent = await processRunner({
-        ...invocation,
-        cwd: repository,
-        stage: `automatic-recovery-agent:${attempt}`,
-        eventLogPath,
+      const invocationId = `${runId}:automatic-recovery:${attempt}`;
+      const agent = await runDurableInvocation({
+        runsRoot,
+        invocationId,
+        runId,
+        stage: "AUTOMATIC_RECOVERY",
+        metadata: { attempt },
+        execute: () => processRunner({
+          ...invocation,
+          cwd: repository,
+          stage: `automatic-recovery-agent:${attempt}`,
+          eventLogPath,
+        }),
       });
       const recoveryTelemetry = createAgentTelemetryRecord({
         stage: "AUTOMATIC_RECOVERY",
         result: agent,
         agentConfig: invocation.agentConfig ?? null,
-        invocationId: `${runId}:automatic-recovery:${attempt}`,
+        invocationId,
         metadata: {
           runId,
           taskId: manifest.task?.id ?? null,
@@ -920,7 +929,10 @@ export async function executeRun({
     runsRoot,
     runId,
     toState: RUN_STATES.RUNNING,
-    executionPatch: { eventLog: relativeEventLog },
+    executionPatch: {
+      eventLog: relativeEventLog,
+      runtimeOwner: { ...runtimeOwner(), startedAt: new Date().toISOString() },
+    },
   });
 
   let repository = null;
@@ -1012,17 +1024,25 @@ export async function executeRun({
     }
 
     const invocation = agentInvocationBuilder(manifest, vaultRoot, { graphifyContext, repository });
-    const agent = await processRunner({
-      ...invocation,
-      cwd: repository,
-      stage: "coding-agent",
-      eventLogPath,
+    const invocationId = `${runId}:implementation`;
+    const agent = await runDurableInvocation({
+      runsRoot,
+      invocationId,
+      runId,
+      stage: "IMPLEMENTATION",
+      metadata: { taskId: manifest.task?.id ?? null, projectId: manifest.project?.id ?? null },
+      execute: () => processRunner({
+        ...invocation,
+        cwd: repository,
+        stage: "coding-agent",
+        eventLogPath,
+      }),
     });
     const implementationTelemetry = createAgentTelemetryRecord({
       stage: "IMPLEMENTATION",
       result: agent,
       agentConfig: invocation.agentConfig ?? null,
-      invocationId: `${runId}:implementation`,
+      invocationId,
       metadata: {
         runId,
         taskId: manifest.task?.id ?? null,
@@ -1205,6 +1225,7 @@ export async function reviseRun({
     executionPatch: {
       result: { status: "REVISING", iteration: reviewChange.iteration },
       workspace: { ...manifest.execution.workspace, state: "ACTIVE" },
+      runtimeOwner: { ...runtimeOwner(), startedAt: new Date().toISOString() },
     },
     message: `review revision iteration ${reviewChange.iteration} dimulai.`,
   });
@@ -1228,17 +1249,25 @@ export async function reviseRun({
     }
 
     const invocation = revisionInvocationBuilder(manifest, vaultRoot, { repository, graphifyContext });
-    const agent = await processRunner({
-      ...invocation,
-      cwd: repository,
-      stage: `review-revision-agent:${reviewChange.iteration}`,
-      eventLogPath,
+    const invocationId = `${runId}:review-revision:${reviewChange.iteration}`;
+    const agent = await runDurableInvocation({
+      runsRoot,
+      invocationId,
+      runId,
+      stage: "REVIEW_REVISION",
+      metadata: { iteration: reviewChange.iteration },
+      execute: () => processRunner({
+        ...invocation,
+        cwd: repository,
+        stage: `review-revision-agent:${reviewChange.iteration}`,
+        eventLogPath,
+      }),
     });
     const telemetry = createAgentTelemetryRecord({
       stage: "REVIEW_REVISION",
       result: agent,
       agentConfig: invocation.agentConfig ?? null,
-      invocationId: `${runId}:review-revision:${reviewChange.iteration}`,
+      invocationId,
       metadata: {
         runId,
         taskId: manifest.task?.id ?? null,

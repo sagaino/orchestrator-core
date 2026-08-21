@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { cleanupIsolatedWorkspace } from "./workspace-manager.mjs";
 import { appendRunTelemetry } from "./telemetry.mjs";
+import { acquireDurableLease, releaseDurableLease } from "./durable-runtime.mjs";
 
 export function cleanTerminalOutput(rawOutput) {
   if (!rawOutput || typeof rawOutput !== "string") return "";
@@ -70,7 +71,7 @@ export function cleanErrorTail(errorText, maxLength = 4000) {
   return cleaned.length > maxLength ? cleaned.slice(-maxLength) : cleaned;
 }
 
-export async function startTaskRun({
+async function startTaskRunInternal({
   vaultRoot,
   runsRoot,
   projectId,
@@ -125,7 +126,63 @@ export async function startTaskRun({
   return manifest;
 }
 
-export async function recoverTaskRun({
+export async function startTaskRun(options) {
+  const lease = acquireDurableLease({
+    runsRoot: options.runsRoot,
+    namespace: "task-workflows",
+    key: `${options.projectId}:${options.taskInput}`,
+    purpose: `task workflow ${options.projectId}/${options.taskInput}`,
+    metadata: { projectId: options.projectId, taskInput: options.taskInput },
+    ttlMs: null,
+  });
+  try {
+    return await startTaskRunInternal(options);
+  } finally {
+    releaseDurableLease(lease);
+  }
+}
+
+async function resumeClaimedTaskRunInternal({
+  vaultRoot,
+  runsRoot,
+  runId,
+  executor = executeRun,
+  retrospective = retrospectRun,
+  onProgress = () => {},
+}) {
+  let manifest = getRun(runsRoot, runId);
+  if (manifest.state !== RUN_STATES.CLAIMED) {
+    throw new Error(`Resume aman hanya menerima run CLAIMED; state ${manifest.state}.`);
+  }
+  manifest = await executor({ vaultRoot, runsRoot, runId });
+  await onProgress(manifest);
+  if (manifest.state === RUN_STATES.REVIEW) {
+    manifest = await retrospective({ vaultRoot, runsRoot, runId });
+    await onProgress(manifest);
+  }
+  if (![RUN_STATES.RETROSPECTIVE, RUN_STATES.FAILED].includes(manifest.state)) {
+    throw new Error(`resume claimed run berhenti pada state yang tidak didukung: ${manifest.state}.`);
+  }
+  return manifest;
+}
+
+export async function resumeClaimedTaskRun(options) {
+  const lease = acquireDurableLease({
+    runsRoot: options.runsRoot,
+    namespace: "run-workflows",
+    key: options.runId,
+    purpose: `resume claimed run ${options.runId}`,
+    metadata: { runId: options.runId, action: "RESUME_CLAIMED" },
+    ttlMs: null,
+  });
+  try {
+    return await resumeClaimedTaskRunInternal(options);
+  } finally {
+    releaseDurableLease(lease);
+  }
+}
+
+async function recoverTaskRunInternal({
   vaultRoot,
   runsRoot,
   runId,
@@ -163,7 +220,23 @@ export async function recoverTaskRun({
   return manifest;
 }
 
-export async function requestChangesTaskRun({
+export async function recoverTaskRun(options) {
+  const lease = acquireDurableLease({
+    runsRoot: options.runsRoot,
+    namespace: "run-workflows",
+    key: options.runId,
+    purpose: `run recovery ${options.runId}`,
+    metadata: { runId: options.runId, action: "RECOVER" },
+    ttlMs: null,
+  });
+  try {
+    return await recoverTaskRunInternal(options);
+  } finally {
+    releaseDurableLease(lease);
+  }
+}
+
+async function requestChangesTaskRunInternal({
   vaultRoot,
   runsRoot,
   runId,
@@ -219,6 +292,22 @@ export async function requestChangesTaskRun({
       error: failed.execution?.result?.error ?? error.message,
     });
     throw error;
+  }
+}
+
+export async function requestChangesTaskRun(options) {
+  const lease = acquireDurableLease({
+    runsRoot: options.runsRoot,
+    namespace: "run-workflows",
+    key: options.runId,
+    purpose: `review revision ${options.runId}`,
+    metadata: { runId: options.runId, action: "REQUEST_CHANGES" },
+    ttlMs: null,
+  });
+  try {
+    return await requestChangesTaskRunInternal(options);
+  } finally {
+    releaseDurableLease(lease);
   }
 }
 

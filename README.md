@@ -4,6 +4,8 @@ Sistem Autonomous AI Software Engineering & Knowledge Layer terintegrasi yang me
 
 Orchestrator ini juga menjadi control plane untuk **Personal AI OS**, yaitu agentic operating layer local-first yang berjalan di atas macOS. Batas produk, non-goals, safety properties, dan quality gate MVP ditetapkan dalam [AI OS MVP Scope Contract](./AI_OS_MVP_SCOPE.md).
 
+Implementasi durability, exactly-once invocation, dan restart reconciliation dijelaskan dalam [Phase 2 Runtime Durability Contract](./PHASE_2_DURABILITY.md).
+
 ---
 
 ## ⚡ Quick Start (1-Command Launcher)

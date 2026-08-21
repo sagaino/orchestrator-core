@@ -4,12 +4,13 @@ import os from "node:os";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { listRuns, prepareRunFromEvent, RUN_STATES } from "./run-manager.mjs";
+import { listRuns, prepareRunFromEvent, reconcileInterruptedRuns, RUN_STATES } from "./run-manager.mjs";
 import { scanReadyTasks, watchReadyTasks } from "./adapters/vault-task-watcher.mjs";
 import { claimNextJob, JOB_STATES, listJobs, reconcileJobs, updateJob } from "./job-queue.mjs";
-import { startTaskRun } from "./task-workflow.mjs";
+import { resumeClaimedTaskRun, startTaskRun } from "./task-workflow.mjs";
 import { notificationSummary, notifyTaskOutcome } from "./notification-service.mjs";
 import { createOrchestratorServer } from "./server.mjs";
+import { durableRuntimeStatus } from "./durable-runtime.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -359,21 +360,25 @@ export async function processClaimedJob({
   workflow = startTaskRun,
   onEvent = () => {},
   notifier = notifyTaskOutcome,
+  resumeWorkflow = resumeClaimedTaskRun,
 }) {
   onEvent({ event: "JOB_STARTED", jobId: job.jobId, taskId: job.taskId, project: job.projectId });
   try {
-    const manifest = await workflow({
-      vaultRoot,
-      runsRoot,
-      projectId: job.projectId,
-      taskInput: job.taskId,
-      approvedBy: job.requestedBy,
-      services,
-      initialTelemetry: job.intakeTelemetry ?? null,
-      onProgress: (current) => {
-        updateJob(runsRoot, job.jobId, { runId: current.runId, runState: current.state });
-      },
-    });
+    const onProgress = (current) => {
+      updateJob(runsRoot, job.jobId, { runId: current.runId, runState: current.state });
+    };
+    const manifest = job.resumeRunId
+      ? await resumeWorkflow({ vaultRoot, runsRoot, runId: job.resumeRunId, onProgress })
+      : await workflow({
+        vaultRoot,
+        runsRoot,
+        projectId: job.projectId,
+        taskInput: job.taskId,
+        approvedBy: job.requestedBy,
+        services,
+        initialTelemetry: job.intakeTelemetry ?? null,
+        onProgress,
+      });
     const state = manifest.state === RUN_STATES.RETROSPECTIVE ? JOB_STATES.REVIEW : JOB_STATES.FAILED;
     const updated = updateJob(runsRoot, job.jobId, {
       state,
@@ -551,6 +556,7 @@ export function daemonStatus({ runsRoot }) {
     },
     lastEvent: healthMatchesProcess ? health?.lastEvent ?? null : null,
     parallel: parallelQueueStatus(jobs, maxWorkers, runs),
+    durability: durableRuntimeStatus(runsRoot),
     notifications: notificationSummary(runsRoot),
     queue: {
       queuedJobCount: jobs.filter((job) => job.state === JOB_STATES.QUEUED).length,
@@ -759,6 +765,10 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
     errors: health.counters.errors + 1,
   });
 
+  const reconciledRuns = reconcileInterruptedRuns({ vaultRoot, runsRoot });
+  if (reconciledRuns.length) {
+    record({ event: "RUNS_RECONCILED", count: reconciledRuns.length, runs: reconciledRuns });
+  }
   const reconciledJobs = reconcileJobs(runsRoot, listRuns(runsRoot));
   if (reconciledJobs.length) {
     record({

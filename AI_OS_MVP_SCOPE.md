@@ -200,4 +200,8 @@ Phase 0 is complete when this document is tracked in the repository, linked from
 
 Subsequent implementation phases must reference this contract. A proposed feature that conflicts with the In Scope, Out of Scope, or Mandatory Safety Properties sections must be documented as a scope change before implementation.
 
-The next implementation phase is **Phase 1 — Security Hardening**.
+Implementation status:
+
+- **Phase 0 — MVP Scope Contract:** complete.
+- **Phase 1 — Security Hardening:** complete.
+- **Phase 2 — Runtime Durability and Exactly-Once Execution:** implemented; see [Phase 2 Runtime Durability Contract](./PHASE_2_DURABILITY.md).
