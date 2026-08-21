@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { isDeniedPath, validateSymlink } from "./security.mjs";
 
 const SNAPSHOT_EXCLUDES = new Set([
@@ -568,6 +569,23 @@ function archiveWorkspace({ manifest, runsRoot }) {
     entries.push({ path: relative, exists });
     if (exists) copyEntry(source, path.join(artifactRoot, "files", relative));
   }
+  let rawDiff = "";
+  if (changed.length > 0 && fs.existsSync(workspace.path)) {
+    const diffArgs = workspace.baseCommit
+      ? ["diff", workspace.baseCommit, "--", ...changed]
+      : ["diff", "--", ...changed];
+    try {
+      rawDiff = execFileSync("git", diffArgs, {
+        cwd: workspace.path,
+        encoding: "utf8",
+        maxBuffer: 20 * 1024 * 1024,
+      });
+    } catch {
+      // The copied files and archive manifest remain valid even if Git cannot
+      // render a patch. The diff endpoint will then report no archived patch.
+    }
+  }
+  fs.writeFileSync(path.join(artifactRoot, "changes.patch"), rawDiff, "utf8");
   fs.writeFileSync(path.join(artifactRoot, "manifest.json"), `${JSON.stringify({
     schemaVersion: 1,
     runId: manifest.runId,
