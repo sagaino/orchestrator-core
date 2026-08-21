@@ -205,3 +205,4 @@ Implementation status:
 - **Phase 0 — MVP Scope Contract:** complete.
 - **Phase 1 — Security Hardening:** complete.
 - **Phase 2 — Runtime Durability and Exactly-Once Execution:** implemented; see [Phase 2 Runtime Durability Contract](./PHASE_2_DURABILITY.md).
+- **Phase 3 — AI OS Shell and Pilot Readiness:** Phase 3.0 scope frozen; see [Phase 3 Shell and Pilot Contract](./PHASE_3_SHELL_PILOT.md).
