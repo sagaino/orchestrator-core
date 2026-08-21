@@ -1581,6 +1581,7 @@ try {
     runsRoot,
     runId: simplified.runId,
     approvedBy: "smoke-test",
+    autoCommit: false,
   });
   assert.equal(simplifiedAccepted.state, RUN_STATES.DONE);
   assert.equal(simplifiedAccepted.knowledge.approval.classification, "PROJECT_ONLY");
