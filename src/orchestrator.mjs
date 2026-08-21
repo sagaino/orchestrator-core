@@ -155,6 +155,11 @@ Project onboarding:
   remove-project <project-id> [--by <name>]
   purge-project-archive <project-id> --confirm [--by <name>]
 
+Disaster recovery:
+  dr-backup <absolute-backup-root>
+  dr-verify <absolute-backup-directory>
+  dr-restore <absolute-backup-directory> <absolute-new-target-root>
+
 Conversational flow:
   request-task <project-id> <request> [--start] [--by <name>]
   cancel-task <project-id> <task-id-or-path> --reason <text> [--by <name>]
@@ -252,6 +257,27 @@ export async function main(argv = process.argv.slice(2)) {
         action: "API_TOKEN_ROTATED",
         ...rotateApiToken(options.runs),
       };
+    } else if (command === "dr-backup") {
+      const [backupRoot] = options.positional;
+      if (!backupRoot || !path.isAbsolute(backupRoot)) fail("dr-backup membutuhkan absolute backup root.");
+      const { createDisasterRecoveryBackup } = await import("./disaster-recovery.mjs");
+      result = createDisasterRecoveryBackup({
+        vaultRoot: options.vault,
+        runsRoot: options.runs,
+        backupRoot,
+      });
+    } else if (command === "dr-verify") {
+      const [backupPath] = options.positional;
+      if (!backupPath || !path.isAbsolute(backupPath)) fail("dr-verify membutuhkan absolute backup directory.");
+      const { verifyDisasterRecoveryBackup } = await import("./disaster-recovery.mjs");
+      result = verifyDisasterRecoveryBackup({ backupPath });
+    } else if (command === "dr-restore") {
+      const [backupPath, targetRoot] = options.positional;
+      if (!backupPath || !targetRoot || !path.isAbsolute(backupPath) || !path.isAbsolute(targetRoot)) {
+        fail("dr-restore membutuhkan absolute backup directory dan absolute new target root.");
+      }
+      const { restoreDisasterRecoveryBackup } = await import("./disaster-recovery.mjs");
+      result = restoreDisasterRecoveryBackup({ backupPath, targetRoot });
     } else if (command === "purge-project-archive") {
       const [projectId] = options.positional;
       if (!projectId) fail("Command purge-project-archive membutuhkan <project-id>");

@@ -1,7 +1,7 @@
 # Phase 4 — Production Hardening and Controlled Operations
 
-Status: **PHASE 4.0 BASELINE COMPLETE — PRODUCTION CERTIFICATION BLOCKED**  
-Baseline date: **2026-08-22 (Asia/Jakarta)**  
+Status: **PHASE 4.1 IMPLEMENTED — PRODUCTION CERTIFICATION BLOCKED**
+Baseline date: **2026-08-22 (Asia/Jakarta)**
 Deployment model: **local-first, single-user macOS host**
 
 Phase 3 certified one real end-to-end pilot through the AI OS shell. Phase 4
@@ -56,7 +56,7 @@ Detailed threats and mitigations are maintained in
 | Human control | explicit queue approval and acceptance confirmation; no self-accept | PASS for single shared operator token |
 | Durable execution | atomic leases, revision guards, stable invocation IDs, restart reconciliation | DEGRADED; intermittent admission race observed |
 | Evidence durability | manifests, JSONL events, artifacts, archived diff, knowledge record | PASS for restart visibility |
-| Whole-system recovery | updater source rollback only; no coordinated Vault/runtime/config restore contract | FAIL |
+| Whole-system recovery | versioned Vault/runtime/config snapshot, SHA-256 verification, permission preservation, and quarantine restore | PASS for local recovery drill |
 | Secrets in evidence | child output and provider payloads are persisted without a general redaction layer | FAIL |
 | Resource governance | worker count exists; no request rate limit, SSE cap, artifact retention, disk quota, or universal process deadline | FAIL |
 | Operational health | API health, daemon heartbeat, counters, notifications, and telemetry | PARTIAL |
@@ -85,7 +85,7 @@ These measurements are a development-host baseline, not a capacity claim.
 | ID | Severity | Finding | Required phase |
 |---|---|---|---|
 | P4-001 | CRITICAL | Agent and repository-controlled child processes inherit the user's environment, filesystem authority, and network access. Worktree isolation cannot prevent host mutation or secret exfiltration. | 4.2 |
-| P4-002 | HIGH | No coordinated, versioned backup and restore contract covers Vault, runtime state, policy/configuration, evidence, and recovery validation with stated RPO/RTO. | 4.1 |
+| P4-002 | CLOSED | Versioned quiescent backup now covers Vault, runtime state, evidence, and configuration metadata; verified quarantine restore preserves permissions and blocks execution. Independent-media scheduling remains an operational requirement. | 4.1 |
 | P4-003 | HIGH | Run evidence and process output may contain sensitive material; many records are `0644` and no general structured redaction occurs before persistence. | 4.2 |
 | P4-004 | HIGH | Concurrent admission produced two job IDs in one baseline run, although 25 subsequent stress executions and the final suite passed. The exactly-once property therefore needs deterministic reproduction and fault proof. | 4.3 |
 | P4-005 | MEDIUM | Approval actor names come from authenticated request payloads under one shared token; evidence proves token possession, not an independently authenticated human identity. | 4.2 |
@@ -99,7 +99,7 @@ These measurements are a development-host baseline, not a capacity claim.
 
 ### Phase 4.1 — Backup, Restore, and Disaster Recovery
 
-Status: **PLANNED**
+Status: **IMPLEMENTED — RECOVERY DRILL PASSED 2026-08-22**
 
 - Define protected datasets and dependency order.
 - Produce versioned, checksummed, permission-preserving backups.
@@ -110,6 +110,30 @@ Status: **PLANNED**
 Exit gate: a clean host-state fixture can reconstruct registry, tasks, runtime
 state, evidence, knowledge, and configuration from a verified backup without
 silently starting or accepting work.
+
+Implementation notes:
+
+- `dr-backup` requires a stopped daemon and rejects active execution state.
+- Backup directories are atomically promoted from a partial staging directory
+  only after every copied file matches its recorded SHA-256 and size.
+- The versioned manifest records dataset inventory, source roots, platform and
+  runtime configuration metadata, file modes, checksums, RPO/RTO targets, and
+  the fail-closed recovery contract.
+- `dr-verify` rejects a missing completion marker, altered manifest, incompatible
+  schema, missing entry, permission drift, size mismatch, and checksum mismatch.
+- `dr-restore` accepts only a new target, verifies the backup first, preserves
+  permissions, rechecks copied content, and writes recovery markers at the
+  quarantine root and restored runtime.
+- A daemon pointed at restored runtime refuses to start. An inspection API may
+  serve authenticated reads, but all POST/PUT/DELETE requests return `423`
+  until an offline, explicit promotion removes recovery mode.
+- The first real snapshot contains 1,634 files / 85,630,228 bytes. Backup took
+  717 ms, verification 219 ms, and quarantine restore 327 ms on the audit host.
+- Target RPO is 24 hours and target RTO is 15 minutes. The copy engine is well
+  below the RTO target on the current dataset; operator validation and storage
+  replacement time remain part of the full recovery drill.
+- The operator runbook and exact retained evidence paths are documented in
+  `PHASE_4_DR_RUNBOOK.md`.
 
 ### Phase 4.2 — Policy, Identity, and Capability Enforcement
 
@@ -187,5 +211,6 @@ Phase 4 is complete only when:
 ## Phase 4.0 Decision
 
 Continue local supervised pilots, but do not expose the API beyond loopback or
-allow unattended execution. Execute **Phase 4.1** next to establish a recovery
-floor before changing permissions, state formats, or runtime behavior.
+allow unattended execution. The recovery floor is established. Execute
+**Phase 4.2** next to close host capability isolation, evidence secrecy,
+operator identity, audit integrity, and SSE-origin findings.

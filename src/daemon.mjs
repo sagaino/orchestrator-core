@@ -11,6 +11,7 @@ import { resumeClaimedTaskRun, startTaskRun } from "./task-workflow.mjs";
 import { notificationSummary, notifyTaskOutcome } from "./notification-service.mjs";
 import { createOrchestratorServer } from "./server.mjs";
 import { durableRuntimeStatus } from "./durable-runtime.mjs";
+import { assertExecutionAllowed } from "./recovery-mode.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -685,6 +686,7 @@ export async function uninstallDaemonService({ runsRoot }) {
 }
 
 export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
+  assertExecutionAllowed(runsRoot);
   const paths = ensureRuntime(runsRoot);
   const existing = readJson(paths.pid);
   if (existing?.pid !== process.pid && processAlive(existing?.pid)) {

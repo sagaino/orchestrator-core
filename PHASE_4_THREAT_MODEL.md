@@ -1,7 +1,7 @@
 # Phase 4 Threat Model
 
-Status: **BASELINE v1.0**  
-Reviewed: **2026-08-22**  
+Status: **BASELINE v1.0**
+Reviewed: **2026-08-22**
 Applies to: **Personal AI OS local-first single-user deployment**
 
 ## Security Objective
@@ -65,7 +65,7 @@ The worktree is a Git boundary, not an OS security sandbox.
 | API/SSE exhaustion | Denial of service | Token holder opens clients or sends repeated expensive requests | loopback binding, body cap, worker limit | MEDIUM: no rate/SSE/request concurrency limit |
 | Stuck child process | Denial of service | Test/build/tool never exits or ignores graceful shutdown | some tool-specific timeouts | MEDIUM: no universal deadline/kill escalation |
 | Disk exhaustion | Denial of service/tampering | Unbounded events, artifacts, backups, screenshots, or provider output fill disk | output tails bounded in some ledgers | MEDIUM: no quota, retention, or low-disk admission guard |
-| Irrecoverable host/state loss | Denial of service | disk failure, deletion, corruption, or incompatible change removes Vault/runtime evidence | Git for code; updater source backup | HIGH: no coordinated backup/restore proof |
+| Irrecoverable host/state loss | Denial of service | disk failure, deletion, corruption, or incompatible change removes Vault/runtime evidence | versioned quiescent backup, checksums, quarantine restore, fail-closed recovery mode | MEDIUM: independent-media scheduling and full operator promotion timing remain operational dependencies |
 | Malicious upload/path escape | Tampering | crafted path, symlink, MIME mismatch, or oversized asset | contained path resolution, realpath ancestor checks, signature and size checks | LOW |
 | Cross-origin API action | Spoofing/elevation | hostile page sends authenticated request | localhost Origin/Referer guard and bearer token | LOW; wildcard SSE response header should be removed |
 | Verification weakening | Tampering | agent edits package scripts or requested checks | frozen script definitions, dependency reconciliation, post-apply checks | LOW for detected repository changes; child-process authority remains critical |
@@ -119,4 +119,3 @@ The worktree is a Git boundary, not an OS security sandbox.
 
 The operator's current decision is to accept these risks only for supervised,
 loopback-only local pilots while Phase 4 controls are implemented.
-

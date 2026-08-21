@@ -38,17 +38,24 @@ export function ensureApiToken(runsRoot) {
   const filePath = apiTokenPath(runsRoot);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
-  if (fs.existsSync(filePath)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
-      if (data?.token && typeof data.token === "string" && data.token.length >= 32) {
-        try { fs.chmodSync(filePath, 0o600); } catch {}
-        return data.token;
-      }
-    } catch {}
+  const existing = readExistingApiToken(runsRoot);
+  if (existing) {
+    try { fs.chmodSync(filePath, 0o600); } catch {}
+    return existing;
   }
 
   return writeNewApiToken(filePath);
+}
+
+export function readExistingApiToken(runsRoot) {
+  const filePath = apiTokenPath(runsRoot);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return data?.token && typeof data.token === "string" && data.token.length >= 32 ? data.token : null;
+  } catch {
+    return null;
+  }
 }
 
 export function rotateApiToken(runsRoot) {
