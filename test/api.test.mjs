@@ -27,10 +27,17 @@ fs.writeFileSync(path.join(tempRepository, "package.json"), JSON.stringify({
 }, null, 2));
 
 // Helper for making HTTP requests
+let operatorSession = null;
+const operatorSessionsByPort = new Map();
 function request({ method = "GET", path: reqPath, port, token, headers = {}, body = null }) {
   return new Promise((resolve, reject) => {
     const reqHeaders = { ...headers };
+    const activeSession = operatorSessionsByPort.get(port);
     if (token) reqHeaders["Authorization"] = `Bearer ${token}`;
+    if (token && ["POST", "PUT", "DELETE"].includes(method) && activeSession) {
+      reqHeaders["X-Operator-Session"] = activeSession.sessionId;
+      reqHeaders["X-Action-Nonce"] = activeSession.actionNonce;
+    }
     if (body) reqHeaders["Content-Type"] = "application/json";
 
     const req = http.request(
@@ -45,6 +52,7 @@ function request({ method = "GET", path: reqPath, port, token, headers = {}, bod
         let raw = "";
         res.on("data", (chunk) => (raw += chunk));
         res.on("end", () => {
+          if (res.headers["x-action-nonce"] && activeSession) activeSession.actionNonce = res.headers["x-action-nonce"];
           let data = null;
           try {
             data = JSON.parse(raw);
@@ -57,6 +65,13 @@ function request({ method = "GET", path: reqPath, port, token, headers = {}, bod
     if (body) req.write(typeof body === "string" ? body : JSON.stringify(body));
     req.end();
   });
+}
+
+async function establishOperatorSession(port, token) {
+  const response = await request({ path: "/api/auth/session", port, token });
+  assert.equal(response.status, 200);
+  operatorSessionsByPort.set(port, response.data.data);
+  return response.data.data;
 }
 
 try {
@@ -132,6 +147,9 @@ try {
   const serverInfo = await apiServer.start();
   const port = apiServer.server.address().port;
   const token = serverInfo.token;
+
+  operatorSession = await establishOperatorSession(port, token);
+  assert.match(operatorSession.actor, /^local:/);
 
   // Test 1: GET /api/health (No auth required)
   const healthRes = await request({ path: "/api/health", port });
@@ -635,7 +653,7 @@ try {
   // Verify wiki-log.md updated
   const updatedWikiLog = fs.readFileSync(wikiLogFile, "utf8");
   assert.equal(updatedWikiLog.includes("lint | Knowledge Quality"), true);
-  assert.equal(updatedWikiLog.includes("unit-tester"), true);
+  assert.equal(updatedWikiLog.includes(operatorSession.actor), true);
 
   // Wait for SSE broadcast
   await sseHealthPromise;
@@ -833,6 +851,7 @@ try {
   const mockServerInfo = await mockOnboardServer.start();
   const mockPort = mockOnboardServer.server.address().port;
   const mockToken = mockServerInfo.token;
+  await establishOperatorSession(mockPort, mockToken);
 
   // SSE event collector for mock server
   let sseOnboardEvents = [];
@@ -1048,6 +1067,7 @@ try {
   const mockIngestServerInfo = await mockIngestServer.start();
   const mockIngestPort = mockIngestServer.server.address().port;
   const mockIngestToken = mockIngestServerInfo.token;
+  await establishOperatorSession(mockIngestPort, mockIngestToken);
 
   // SSE event stream listener for ingest events
   const sseIngestReq = http.request(
@@ -1331,6 +1351,7 @@ try {
   const mockHarvestServerInfo = await mockHarvestServer.start();
   const mockHarvestPort = mockHarvestServer.server.address().port;
   const mockHarvestToken = mockHarvestServerInfo.token;
+  await establishOperatorSession(mockHarvestPort, mockHarvestToken);
 
   // SSE event stream listener for harvest events
   const sseHarvestReq = http.request(
@@ -1480,7 +1501,7 @@ try {
   });
   assert.equal(confirmQueueRes.status, 201, JSON.stringify(confirmQueueRes.data));
   assert.equal(confirmQueueRes.data.data.action, "TASK_CONFIRMED_AND_QUEUED");
-  assert.equal(confirmQueueRes.data.data.approvedBy, "phase-3-test");
+  assert.equal(confirmQueueRes.data.data.approvedBy, operatorSession.actor);
   assert.equal(confirmQueueRes.data.data.readiness.ready, true);
   assert.ok(confirmQueueRes.data.data.readiness.checks.length > 0);
   assert.equal(confirmQueueRes.data.data.job.taskId, "FE-099");

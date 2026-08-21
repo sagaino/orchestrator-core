@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { runProcess } from "./executor.mjs";
 import { agyConfigArgs } from "./agent-config.mjs";
 import { createAgentTelemetryRecord, persistKnowledgeTelemetry } from "./telemetry.mjs";
+import { redactText } from "./redaction.mjs";
 
 export const VALID_DOMAINS = new Set([
   "frontend",
@@ -35,7 +36,7 @@ export const TYPE_FOLDERS = Object.freeze({
 export function writeAtomic(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  fs.writeFileSync(temporaryPath, content, "utf8");
+  fs.writeFileSync(temporaryPath, redactText(content), "utf8");
   fs.renameSync(temporaryPath, filePath);
 }
 

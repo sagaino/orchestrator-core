@@ -8,6 +8,7 @@ import { applyIsolatedWorkspace, cleanupIsolatedWorkspace } from "./workspace-ma
 import { notifyKnowledgeCandidateReady } from "./notification-service.mjs";
 import { appendRunTelemetry, createAgentTelemetryRecord } from "./telemetry.mjs";
 import { findSimilarKnowledge } from "./knowledge-quality.mjs";
+import { redactText } from "./redaction.mjs";
 
 const CLASSIFICATIONS = new Set(["NEW", "UPDATE", "PROJECT_ONLY", "IGNORE"]);
 const DESTINATIONS = new Set(["WIKI", "CANDIDATE", "PROJECT", "NONE"]);
@@ -33,7 +34,7 @@ function configuredAutoPromoteConfidence(env = process.env) {
 function writeAtomic(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  fs.writeFileSync(temporaryPath, content, "utf8");
+  fs.writeFileSync(temporaryPath, redactText(content), "utf8");
   fs.renameSync(temporaryPath, filePath);
 }
 

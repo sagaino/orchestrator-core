@@ -20,15 +20,19 @@ import { appendRunTelemetry, createAgentTelemetryRecord } from "./telemetry.mjs"
 import { isDeniedPath } from "./security.mjs";
 import { formatReviewRevisionFeedback, formatInlineComments } from "./review-workflow.mjs";
 import { runDurableInvocation, runtimeOwner } from "./durable-runtime.mjs";
+import { capabilityForStage, prepareCapabilitySpawn } from "./capability-policy.mjs";
+import { redactSensitive, redactText } from "./redaction.mjs";
 
 function appendEvent(eventLogPath, event) {
   if (!eventLogPath || typeof eventLogPath !== "string") return;
-  fs.mkdirSync(path.dirname(eventLogPath), { recursive: true });
-  fs.appendFileSync(eventLogPath, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`, "utf8");
+  fs.mkdirSync(path.dirname(eventLogPath), { recursive: true, mode: 0o700 });
+  fs.appendFileSync(eventLogPath, `${JSON.stringify(redactSensitive({ at: new Date().toISOString(), ...event }))}\n`, { encoding: "utf8", mode: 0o600 });
+  try { fs.chmodSync(eventLogPath, 0o600); } catch {}
 }
 
 function compactLine(line) {
-  return line.length > 50_000 ? `${line.slice(0, 50_000)}…[truncated]` : line;
+  const redacted = redactText(line);
+  return redacted.length > 50_000 ? `${redacted.slice(0, 50_000)}…[truncated]` : redacted;
 }
 
 function pathAllowed(filePath, allowedPaths) {
@@ -130,13 +134,20 @@ export async function reconcileProjectDependencies({
   };
 }
 
-export function runProcess({ command, args, cwd, stage, eventLogPath, env = process.env }) {
-  appendEvent(eventLogPath, { event: "PROCESS_STARTED", stage, command, args, cwd });
+export function runProcess({
+  command, args, cwd, stage, eventLogPath, env = process.env,
+  capabilityProfile = capabilityForStage(stage), writableRoots = [cwd], readableRoots = [cwd],
+  deadlineMs = null, maxOutputBytes = null, home = undefined, deniedReadRoots = [],
+}) {
+  const prepared = prepareCapabilitySpawn({ command, args, cwd, env, capabilityProfile, writableRoots, readableRoots, home, deniedReadRoots });
+  const effectiveDeadlineMs = deadlineMs ?? prepared.deadlineMs;
+  const effectiveMaxOutputBytes = maxOutputBytes ?? prepared.maxOutputBytes;
+  appendEvent(eventLogPath, { event: "PROCESS_STARTED", stage, command, args, cwd, capabilityProfile, deadlineMs: effectiveDeadlineMs, maxOutputBytes: effectiveMaxOutputBytes });
 
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(prepared.command, prepared.args, {
       cwd,
-      env,
+      env: prepared.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -145,8 +156,23 @@ export function runProcess({ command, args, cwd, stage, eventLogPath, env = proc
     let stdoutTail = "";
     let stderrTail = "";
     let finalResult = null;
+    let outputBytes = 0;
+    let terminatedReason = null;
+    let forcedKillTimer = null;
+    const deadlineTimer = setTimeout(() => {
+      terminatedReason = "deadline";
+      child.kill("SIGTERM");
+      forcedKillTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
+      forcedKillTimer.unref?.();
+    }, effectiveDeadlineMs);
+    deadlineTimer.unref?.();
 
     const consume = (stream, chunk) => {
+      outputBytes += chunk.length;
+      if (outputBytes > effectiveMaxOutputBytes && !terminatedReason) {
+        terminatedReason = "output_limit";
+        child.kill("SIGTERM");
+      }
       const current = stream === "stdout" ? stdoutBuffer : stderrBuffer;
       const lines = `${current}${chunk.toString()}`.split("\n");
       const remainder = lines.pop() ?? "";
@@ -157,7 +183,7 @@ export function runProcess({ command, args, cwd, stage, eventLogPath, env = proc
         if (!rawLine.trim()) continue;
         let payload = null;
         try {
-          payload = JSON.parse(rawLine);
+          payload = redactSensitive(JSON.parse(rawLine));
           if (payload.event === "result") finalResult = payload.result ?? payload;
           else if (payload.structured_output || payload.patterns || payload.response) finalResult = payload;
         } catch {
@@ -178,14 +204,20 @@ export function runProcess({ command, args, cwd, stage, eventLogPath, env = proc
     child.stdout.on("data", (chunk) => consume("stdout", chunk));
     child.stderr.on("data", (chunk) => consume("stderr", chunk));
     child.once("error", (error) => {
+      clearTimeout(deadlineTimer);
+      if (forcedKillTimer) clearTimeout(forcedKillTimer);
+      try { fs.rmSync(prepared.temporaryRoot, { recursive: true, force: true }); } catch {}
       appendEvent(eventLogPath, { event: "PROCESS_ERROR", stage, error: error.message });
       reject(error);
     });
     child.once("close", (exitCode, signal) => {
+      clearTimeout(deadlineTimer);
+      if (forcedKillTimer) clearTimeout(forcedKillTimer);
       if (stdoutBuffer.trim()) consume("stdout", "\n");
       if (stderrBuffer.trim()) consume("stderr", "\n");
-      const result = { exitCode, signal, stdoutTail, stderrTail, finalResult };
-      appendEvent(eventLogPath, { event: "PROCESS_FINISHED", stage, exitCode, signal });
+      const result = redactSensitive({ exitCode, signal, stdoutTail, stderrTail, finalResult, ...(terminatedReason ? { terminatedReason } : {}) });
+      appendEvent(eventLogPath, { event: "PROCESS_FINISHED", stage, exitCode, signal, terminatedReason });
+      try { fs.rmSync(prepared.temporaryRoot, { recursive: true, force: true }); } catch {}
       resolve(result);
     });
   });

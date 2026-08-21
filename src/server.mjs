@@ -25,6 +25,8 @@ import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvest
 import { saveUploadedAsset, deleteUploadedAsset, resolveMockupAssetPath } from "./asset-manager.mjs";
 import { buildRunEvidence } from "./interaction.mjs";
 import { readRecoveryMode } from "./recovery-mode.mjs";
+import { OperatorSessionStore } from "./api/operator-session.mjs";
+import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 
@@ -1179,6 +1181,7 @@ export function createOrchestratorServer({
   }
   const hub = eventHub || createEventHub();
   const idempotency = new IdempotencyStore(runsRoot);
+  const operatorSessions = new OperatorSessionStore();
 
   const services = {
     readMarkdown,
@@ -1208,7 +1211,7 @@ export function createOrchestratorServer({
       res.writeHead(204, {
         ...(origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {}),
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-token, Idempotency-Key",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-token, Idempotency-Key, X-Operator-Session, X-Action-Nonce",
         "Access-Control-Max-Age": "86400",
       });
       res.end();
@@ -1231,6 +1234,18 @@ export function createOrchestratorServer({
       return;
     }
 
+    if (pathname === "/api/auth/session" && req.method === "GET") {
+      const session = operatorSessions.issue(req.headers["x-operator-session"]);
+      sendJson(res, 200, { success: true, data: session });
+      return;
+    }
+
+    if (pathname === "/api/audit/verify" && req.method === "GET") {
+      const audit = verifyAuditChain(runsRoot);
+      sendJson(res, audit.valid ? 200 : 409, { success: audit.valid, data: audit });
+      return;
+    }
+
     // Restored datasets remain inspectable through authenticated GET routes,
     // while every mutation stays fail-closed until explicit promotion removes
     // the recovery marker through an offline runbook.
@@ -1238,6 +1253,32 @@ export function createOrchestratorServer({
     if (recoveryMode && IDEMPOTENT_METHODS.has(req.method)) {
       sendError(res, 423, "Runtime berada dalam RECOVERY_QUARANTINE; mutasi diblokir.", { recoveryMode });
       return;
+    }
+
+    if (IDEMPOTENT_METHODS.has(req.method)) {
+      const authorization = operatorSessions.authorize(req.headers["x-operator-session"], req.headers["x-action-nonce"]);
+      if (!authorization.authorized) {
+        sendError(res, 403, authorization.reason);
+        return;
+      }
+      req.operatorIdentity = authorization.actor;
+      req.operatorSessionId = authorization.sessionId;
+      res.setHeader("X-Action-Nonce", authorization.nextNonce);
+      try {
+        await parseJsonBody(req);
+        appendAuditEntry(runsRoot, {
+          event: "OPERATOR_MUTATION_AUTHORIZED",
+          actor: authorization.actor,
+          sessionId: authorization.sessionId,
+          nonceHash: authorization.usedNonceHash,
+          method: req.method,
+          path: `${parsedUrl.pathname}${parsedUrl.search}`,
+          requestHash: createHash("sha256").update(req.orchestratorRawJsonBody ?? "").digest("hex"),
+        });
+      } catch (error) {
+        sendError(res, error.statusCode || 400, error.message);
+        return;
+      }
     }
 
     // 5. Match Route
@@ -1325,6 +1366,7 @@ export function createOrchestratorServer({
     token,
     eventHub: hub,
     idempotencyStore: idempotency,
+    operatorSessions,
     start,
     stop,
   };

@@ -287,6 +287,8 @@ export async function prepareIsolatedWorkspace({ manifest, runsRoot, eventLogPat
     cwd: repository,
     stage: "workspace:create",
     eventLogPath,
+    writableRoots: [repository, workspaceRoot],
+    readableRoots: [repository, workspaceRoot],
   }, "Git worktree gagal dibuat");
 
   try {
@@ -311,6 +313,8 @@ export async function prepareIsolatedWorkspace({ manifest, runsRoot, eventLogPat
       cwd: repository,
       stage: "workspace:create-rollback",
       eventLogPath,
+      writableRoots: [repository, workspaceRoot],
+      readableRoots: [repository, workspaceRoot],
     });
     throw error;
   }
@@ -621,6 +625,8 @@ export async function cleanupIsolatedWorkspace({
     cwd: workspace.sourceRepository,
     stage: "workspace:cleanup",
     eventLogPath,
+    writableRoots: [workspace.sourceRepository, workspaceRoot],
+    readableRoots: [workspace.sourceRepository, workspaceRoot],
   }, "Git worktree gagal dibersihkan");
   await processRunner({
     command: "git",

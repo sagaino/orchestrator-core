@@ -12,6 +12,7 @@ import { notificationSummary, notifyTaskOutcome } from "./notification-service.m
 import { createOrchestratorServer } from "./server.mjs";
 import { durableRuntimeStatus } from "./durable-runtime.mjs";
 import { assertExecutionAllowed } from "./recovery-mode.mjs";
+import { redactSensitive, redactText } from "./redaction.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -222,21 +223,23 @@ function runtimePaths(runsRoot) {
 
 function ensureRuntime(runsRoot) {
   const paths = runtimePaths(runsRoot);
-  fs.mkdirSync(paths.root, { recursive: true });
+  fs.mkdirSync(paths.root, { recursive: true, mode: 0o700 });
   return paths;
 }
 
 function writeJsonAtomic(filePath, value) {
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(redactSensitive(value), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   fs.renameSync(temporaryPath, filePath);
+  try { fs.chmodSync(filePath, 0o600); } catch {}
 }
 
 function writeTextAtomic(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  fs.writeFileSync(temporaryPath, content, "utf8");
+  fs.writeFileSync(temporaryPath, redactText(content), { encoding: "utf8", mode: 0o600 });
   fs.renameSync(temporaryPath, filePath);
+  try { fs.chmodSync(filePath, 0o600); } catch {}
 }
 
 function readJson(filePath) {
@@ -249,7 +252,8 @@ function readJson(filePath) {
 }
 
 function appendLog(logPath, event) {
-  fs.appendFileSync(logPath, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`, "utf8");
+  fs.appendFileSync(logPath, `${JSON.stringify(redactSensitive({ at: new Date().toISOString(), ...event }))}\n`, { encoding: "utf8", mode: 0o600 });
+  try { fs.chmodSync(logPath, 0o600); } catch {}
 }
 
 function processAlive(pid) {

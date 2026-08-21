@@ -56,11 +56,13 @@ export function parseJsonBody(req, { maxSizeBytes = 8 * 1024 * 1024 } = {}) {
       req.orchestratorRawJsonBody = raw;
       if (!raw.trim()) {
         req.orchestratorJsonBody = {};
+        bindOperatorIdentity(req);
         resolve(req.orchestratorJsonBody);
         return;
       }
       try {
         req.orchestratorJsonBody = JSON.parse(raw);
+        bindOperatorIdentity(req);
         resolve(req.orchestratorJsonBody);
       } catch (err) {
         const error = new Error(`Invalid JSON body: ${err.message}`);
@@ -74,6 +76,17 @@ export function parseJsonBody(req, { maxSizeBytes = 8 * 1024 * 1024 } = {}) {
     });
   });
   return req.orchestratorJsonBodyPromise;
+}
+
+const ACTOR_FIELDS = [
+  "approvedBy", "acceptedBy", "requestedBy", "rejectedBy", "removedBy", "purgedBy",
+  "fixedBy", "readBy", "recoveredBy", "completedBy", "registeredBy",
+];
+
+function bindOperatorIdentity(req) {
+  if (!req.operatorIdentity || !req.orchestratorJsonBody || Array.isArray(req.orchestratorJsonBody)) return;
+  if (typeof req.orchestratorJsonBody !== "object") return;
+  for (const field of ACTOR_FIELDS) req.orchestratorJsonBody[field] = req.operatorIdentity;
 }
 
 function matchRoutePattern(pattern, pathname) {
