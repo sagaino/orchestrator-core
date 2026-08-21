@@ -157,6 +157,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
           vaultRoot,
           runsRoot,
           projectId,
+          confirmed: true,
           purgedBy: body?.removedBy || "dashboard-user",
         });
       }
