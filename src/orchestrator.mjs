@@ -279,6 +279,29 @@ export async function main(argv = process.argv.slice(2)) {
       if (!backupPath || !path.isAbsolute(backupPath)) fail("dr-verify membutuhkan absolute backup directory.");
       const { verifyDisasterRecoveryBackup } = await import("./disaster-recovery.mjs");
       result = verifyDisasterRecoveryBackup({ backupPath });
+    } else if (command === "dr-register-verified") {
+      const [backupPath] = options.positional;
+      if (!backupPath || !path.isAbsolute(backupPath)) fail("dr-register-verified membutuhkan absolute backup directory.");
+      const { registerVerifiedDisasterRecoveryBackup } = await import("./disaster-recovery.mjs");
+      result = registerVerifiedDisasterRecoveryBackup({ runsRoot: options.runs, backupPath });
+    } else if (command === "operations-readiness") {
+      const { operationsReadiness } = await import("./operations-governance.mjs");
+      result = operationsReadiness({ runsRoot: options.runs });
+      if (!result.admission.allowed) process.exitCode = 1;
+    } else if (command === "retention-preview") {
+      const [olderThanDays = "30"] = options.positional;
+      const { previewRetention } = await import("./operations-governance.mjs");
+      result = previewRetention({ runsRoot: options.runs, olderThanDays: Number(olderThanDays) });
+    } else if (command === "retention-purge") {
+      const [planId] = options.positional;
+      if (!planId) fail("retention-purge membutuhkan <plan-id>.");
+      const { applyRetentionPlan } = await import("./operations-governance.mjs");
+      result = applyRetentionPlan({ runsRoot: options.runs, planId, confirmed: options.confirm, confirmedBy: options.approvedBy });
+    } else if (command === "retention-restore") {
+      const [trashId] = options.positional;
+      if (!trashId) fail("retention-restore membutuhkan <trash-id>.");
+      const { restoreRetentionTrash } = await import("./operations-governance.mjs");
+      result = restoreRetentionTrash({ runsRoot: options.runs, trashId, confirmed: options.confirm, confirmedBy: options.approvedBy });
     } else if (command === "dr-restore") {
       const [backupPath, targetRoot] = options.positional;
       if (!backupPath || !targetRoot || !path.isAbsolute(backupPath) || !path.isAbsolute(targetRoot)) {

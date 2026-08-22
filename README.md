@@ -44,6 +44,10 @@ Backend dan dashboard hanya bind ke `127.0.0.1`. Credential API disimpan di `run
 | **`./start.sh stop`** (atau `npm run stop`) | Menghentikan semua background server & membebaskan port |
 | **`./start.sh status`** | Memeriksa status kesehatan Backend Daemon & Dashboard UI |
 | **`npm run security:rotate-token`** | Merotasi credential API runtime; restart layanan setelah rotasi |
+| **`npm run operations:readiness`** | Menampilkan satu keputusan readiness/admission dan alasan blocker operasional |
+| **`npm run retention:preview -- 30`** | Membuat preview artefak yang berusia minimal 30 hari; belum memindahkan apa pun |
+| **`npm run retention:purge -- <plan-id> --confirm`** | Memindahkan kandidat plan ke trash yang dapat dipulihkan (tidak menghapus permanen) |
+| **`npm run retention:restore -- <trash-id> --confirm`** | Memulihkan item dari retention trash jika target belum ada |
 | **`npm test`** | Menjalankan seluruh test suite (Unit Tests & Smoke Tests) |
 
 ---
@@ -92,7 +96,25 @@ PORT=3721
 
 # Default Model Antigravity (Default: gemini-3.7-flash-high)
 ORCHESTRATOR_AGY_MODEL=gemini-3.7-flash-high
+
+# Operations Center (nilai default sudah aman untuk host lokal)
+ORCHESTRATOR_MIN_FREE_DISK_MB=1024
+ORCHESTRATOR_MAX_SSE_CLIENTS=20
+ORCHESTRATOR_MAX_BACKUP_AGE_HOURS=24
 ```
+
+## 🛡️ Operations Center
+
+Halaman **Operations** di dashboard adalah sumber keputusan operasional tunggal:
+admission akan diblokir bila ruang disk rendah, backup DR belum/terlalu lama,
+ukuran runtime melewati kuota, atau audit/evidence tidak valid. Launcher
+produksi mengaktifkan guard ini otomatis. Sebelum pekerjaan baru diterima, buat
+backup DR yang terverifikasi (`npm run dr:backup -- <absolute-backup-root>`);
+backup yang dibuat oleh command tersebut langsung dicatat sebagai bukti freshness.
+
+Retention selalu dua tahap: buat preview, tinjau kandidat, lalu konfirmasi
+pemindahan ke trash. Artefak dapat dipulihkan; data Vault, source, audit, dan
+evidence tidak pernah menjadi target cleanup otomatis.
 
 ---
 

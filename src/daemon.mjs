@@ -13,6 +13,7 @@ import { createOrchestratorServer } from "./server.mjs";
 import { durableRuntimeStatus } from "./durable-runtime.mjs";
 import { assertExecutionAllowed } from "./recovery-mode.mjs";
 import { redactSensitive, redactText } from "./redaction.mjs";
+import { operationsReadiness } from "./operations-governance.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -436,6 +437,11 @@ export async function processClaimedJob({
 }
 
 export async function processNextQueuedJob(options) {
+  const readiness = operationsReadiness({ runsRoot: options.runsRoot });
+  if (process.env.ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD === "1" && !readiness.admission.allowed) {
+    options.onEvent?.({ event: "ADMISSION_BLOCKED", blockers: readiness.admission.blockers });
+    return { blocked: true, readiness };
+  }
   const job = claimNextJob(options.runsRoot, {
     blockedProjectIds: options.blockedProjectIds ?? [],
   });
@@ -451,6 +457,7 @@ export function createParallelJobPool({
   workflow = startTaskRun,
   onEvent = () => {},
   notifier = notifyTaskOutcome,
+  readinessCheck = () => operationsReadiness({ runsRoot }),
 }) {
   if (!Number.isInteger(maxWorkers) || maxWorkers < 1 || maxWorkers > MAX_PARALLEL_WORKERS) {
     throw new Error(`maxWorkers harus integer antara 1 dan ${MAX_PARALLEL_WORKERS}.`);
@@ -466,6 +473,11 @@ export function createParallelJobPool({
 
   const fill = () => {
     if (!acceptingJobs) return snapshot();
+    const readiness = readinessCheck();
+    if (process.env.ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD === "1" && !readiness.admission.allowed) {
+      onEvent({ event: "ADMISSION_BLOCKED", blockers: readiness.admission.blockers });
+      return { ...snapshot(), admission: readiness.admission };
+    }
     while (activeJobs.size < maxWorkers) {
       const job = claimNextJob(runsRoot);
       if (!job) break;

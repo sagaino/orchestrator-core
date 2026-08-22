@@ -81,6 +81,7 @@ export function parseJsonBody(req, { maxSizeBytes = 8 * 1024 * 1024 } = {}) {
 const ACTOR_FIELDS = [
   "approvedBy", "acceptedBy", "requestedBy", "rejectedBy", "removedBy", "purgedBy",
   "fixedBy", "readBy", "recoveredBy", "completedBy", "registeredBy",
+  "confirmedBy", "restoredBy",
 ];
 
 function bindOperatorIdentity(req) {

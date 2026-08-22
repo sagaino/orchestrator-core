@@ -27,6 +27,7 @@ import { buildRunEvidence } from "./interaction.mjs";
 import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
+import { RequestRateLimiter, operationsReadiness, previewRetention, applyRetentionPlan, listRetentionTrash, restoreRetentionTrash } from "./operations-governance.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 
@@ -75,6 +76,42 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
 
   router.get("/api/events", async (req, res) => {
     eventHub.addClient(req, res);
+  });
+
+  router.get("/api/operations/readiness", async (req, res) => {
+    const readiness = operationsReadiness({ runsRoot });
+    sendJson(res, 200, { success: readiness.admission.allowed, data: readiness });
+  });
+
+  router.post("/api/operations/retention/preview", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const plan = previewRetention({ runsRoot, olderThanDays: body?.olderThanDays ?? 30 });
+      eventHub.broadcast("RETENTION_PREVIEWED", { planId: plan.planId, candidateCount: plan.summary.candidateCount });
+      sendJson(res, 201, { success: true, data: plan });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
+  });
+
+  router.post("/api/operations/retention/purge", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const result = applyRetentionPlan({ runsRoot, planId: body?.planId, confirmed: body?.confirm === true, confirmedBy: body?.confirmedBy });
+      eventHub.broadcast("RETENTION_MOVED_TO_TRASH", { planId: result.planId, moved: result.moved.length });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
+  });
+
+  router.get("/api/operations/retention/trash", async (req, res) => {
+    sendJson(res, 200, { success: true, data: listRetentionTrash({ runsRoot }) });
+  });
+
+  router.post("/api/operations/retention/restore", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const result = restoreRetentionTrash({ runsRoot, trashId: body?.trashId, confirmed: body?.confirm === true, confirmedBy: body?.confirmedBy });
+      eventHub.broadcast("RETENTION_RESTORED", { planId: result.planId, restored: result.restored.length });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
   });
 
   // --- 2. Projects ---
@@ -519,6 +556,10 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   });
 
   router.post("/api/runs/:id/start", async (req, res, { params }) => {
+    const readiness = operationsReadiness({ runsRoot });
+    if (process.env.ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD === "1" && !readiness.admission.allowed) {
+      return sendError(res, 503, "Eksekusi diblokir oleh Operations Center.", readiness);
+    }
     const body = await parseJsonBody(req);
     const { approvedBy = "user" } = body;
 
@@ -1172,6 +1213,7 @@ export function createOrchestratorServer({
   host = "127.0.0.1",
   eventHub = null,
   apiToken = null,
+  rateLimiter = null,
   services: customServices = {},
 } = {}) {
   const recoveryAtStart = readRecoveryMode(runsRoot);
@@ -1182,6 +1224,7 @@ export function createOrchestratorServer({
   const hub = eventHub || createEventHub();
   const idempotency = new IdempotencyStore(runsRoot);
   const operatorSessions = new OperatorSessionStore();
+  const requestRateLimiter = rateLimiter || new RequestRateLimiter();
 
   const services = {
     readMarkdown,
@@ -1231,6 +1274,15 @@ export function createOrchestratorServer({
     const authResult = authenticateRequest(req, token);
     if (!authResult.authenticated) {
       sendError(res, 401, authResult.reason || "Unauthorized");
+      return;
+    }
+
+    const limiterResult = requestRateLimiter.check({
+      key: `${req.socket.remoteAddress || "unknown"}:${createHash("sha256").update(token).digest("hex").slice(0, 12)}`,
+      mutation: IDEMPOTENT_METHODS.has(req.method),
+    });
+    if (!limiterResult.allowed) {
+      sendError(res, 429, "Batas request operasi tercapai. Coba lagi nanti.", { limit: limiterResult.limit }, { "Retry-After": String(limiterResult.retryAfterSeconds) });
       return;
     }
 
@@ -1366,6 +1418,7 @@ export function createOrchestratorServer({
     token,
     eventHub: hub,
     idempotencyStore: idempotency,
+    rateLimiter: requestRateLimiter,
     operatorSessions,
     start,
     stop,

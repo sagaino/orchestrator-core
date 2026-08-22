@@ -1,5 +1,9 @@
-export function createEventHub({ heartbeatIntervalMs = 15000 } = {}) {
+export function createEventHub({ heartbeatIntervalMs = 15000, maxClients = Number(process.env.ORCHESTRATOR_MAX_SSE_CLIENTS || 20) } = {}) {
+  if (!Number.isInteger(maxClients) || maxClients < 1 || maxClients > 200) {
+    throw new Error("ORCHESTRATOR_MAX_SSE_CLIENTS harus integer antara 1 dan 200.");
+  }
   const clients = new Set();
+  let rejectedClientCount = 0;
   let heartbeatTimer = null;
 
   const startHeartbeat = () => {
@@ -24,6 +28,18 @@ export function createEventHub({ heartbeatIntervalMs = 15000 } = {}) {
   };
 
   const addClient = (req, res) => {
+    if (clients.size >= maxClients) {
+      rejectedClientCount += 1;
+      const body = JSON.stringify({ success: false, error: { message: "Batas koneksi event stream tercapai. Coba lagi nanti.", statusCode: 429 } });
+      res.writeHead(429, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": Buffer.byteLength(body),
+        "Cache-Control": "no-store",
+        "Retry-After": "15",
+      });
+      res.end(body);
+      return null;
+    }
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
@@ -79,5 +95,7 @@ export function createEventHub({ heartbeatIntervalMs = 15000 } = {}) {
     get clientCount() {
       return clients.size;
     },
+    get maxClients() { return maxClients; },
+    get rejectedClientCount() { return rejectedClientCount; },
   };
 }
