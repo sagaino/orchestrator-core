@@ -168,6 +168,10 @@ function similarity(left, right) {
   };
 }
 
+function documentScope(document) {
+  return document.path.startsWith("01-Knowledge/") ? "GLOBAL" : "CANDIDATE";
+}
+
 function stripCode(content) {
   return content
     .replace(/```[\s\S]*?```/g, "")
@@ -401,6 +405,68 @@ function duplicateFindings(documents) {
   return findings;
 }
 
+function duplicateCandidates(documents, threshold = NEAR_DUPLICATE_THRESHOLD) {
+  const knowledge = documents
+    .filter((document) => !document.template
+      && (document.path.startsWith("01-Knowledge/") || document.path.startsWith("05-Knowledge-Candidates/")))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const candidates = [];
+  for (let leftIndex = 0; leftIndex < knowledge.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < knowledge.length; rightIndex += 1) {
+      const left = knowledge[leftIndex];
+      const right = knowledge[rightIndex];
+      const exactTitle = normalizeTitle(left.title) === normalizeTitle(right.title);
+      const scores = exactTitle ? { score: 1, titleScore: 1, contentScore: 0 } : similarity(left, right);
+      if (!exactTitle && scores.score < threshold) continue;
+      candidates.push({
+        candidateId: `duplicate:${left.path}:${right.path}`,
+        kind: exactTitle ? "EXACT_TITLE" : "NEAR_DUPLICATE",
+        left: { path: left.path, title: left.title, scope: documentScope(left) },
+        right: { path: right.path, title: right.title, scope: documentScope(right) },
+        score: Number(scores.score.toFixed(3)),
+        titleScore: Number(scores.titleScore.toFixed(3)),
+        contentScore: Number(scores.contentScore.toFixed(3)),
+        contradictionCandidate: !exactTitle && oppositePolarity(left.body, right.body),
+      });
+    }
+  }
+  return candidates.sort((left, right) => right.score - left.score || left.candidateId.localeCompare(right.candidateId));
+}
+
+function staleQueue(documents, { now = new Date(), dueSoonDays = 30 } = {}) {
+  const today = new Date(now);
+  today.setUTCHours(0, 0, 0, 0);
+  const dueSoon = new Date(today);
+  dueSoon.setUTCDate(dueSoon.getUTCDate() + dueSoonDays);
+  return documents
+    .filter((document) => !document.template
+      && (document.path.startsWith("01-Knowledge/") || document.path.startsWith("05-Knowledge-Candidates/")))
+    .map((document) => {
+      const reviewBy = String(document.metadata.review_by ?? "").trim();
+      const reviewDate = /^\d{4}-\d{2}-\d{2}$/.test(reviewBy) ? new Date(`${reviewBy}T00:00:00.000Z`) : null;
+      const missingReview = !reviewDate || Number.isNaN(reviewDate.getTime());
+      const status = missingReview ? "LEGACY_REVIEW" : reviewDate < today ? "STALE" : reviewDate <= dueSoon ? "DUE_SOON" : "CURRENT";
+      if (status === "CURRENT") return null;
+      return {
+        queueId: `stale:${document.path}`,
+        status,
+        path: document.path,
+        title: document.title,
+        scope: documentScope(document),
+        reviewBy: missingReview ? null : reviewBy,
+        updated: document.metadata.updated ?? null,
+        owner: document.metadata.owner ?? null,
+        supersession: document.metadata.supersession ?? null,
+        reason: missingReview ? "review_by belum tersedia atau tidak valid; provenance review diperlukan." : `review_by ${reviewBy} sudah terlewati atau mendekati jatuh tempo.`,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      const rank = { STALE: 0, LEGACY_REVIEW: 1, DUE_SOON: 2 };
+      return rank[left.status] - rank[right.status] || String(left.reviewBy ?? "9999-99-99").localeCompare(String(right.reviewBy ?? "9999-99-99")) || left.path.localeCompare(right.path);
+    });
+}
+
 function cleanTableCell(value) {
   return String(value).trim().replace(/^`|`$/g, "").replace(/^<|>$/g, "");
 }
@@ -559,6 +625,21 @@ export function findSimilarKnowledge({ vaultRoot, title, body = "", excludePath 
     })
     .filter((match) => match.exactTitle || match.score >= NEAR_DUPLICATE_THRESHOLD)
     .sort((left, right) => Number(right.exactTitle) - Number(left.exactTitle) || right.score - left.score);
+}
+
+export function listKnowledgeDocuments({ vaultRoot }) {
+  return managedMarkdown(vaultRoot)
+    .map((absolute) => loadDocument(vaultRoot, absolute))
+    .filter((document) => !document.template
+      && (document.path.startsWith("01-Knowledge/") || document.path.startsWith("05-Knowledge-Candidates/")));
+}
+
+export function findKnowledgeDuplicates({ vaultRoot, threshold = NEAR_DUPLICATE_THRESHOLD } = {}) {
+  return duplicateCandidates(listKnowledgeDocuments({ vaultRoot }), threshold);
+}
+
+export function findKnowledgeStale({ vaultRoot, now = new Date(), dueSoonDays = 30 } = {}) {
+  return staleQueue(listKnowledgeDocuments({ vaultRoot }), { now, dueSoonDays });
 }
 
 function findCandidate(vaultRoot, selector) {

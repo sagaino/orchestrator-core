@@ -11,6 +11,7 @@ import { listRuns, getRun, RUN_STATES } from "./run-manager.mjs";
 import { enqueueTaskJob, listJobs, getJob, updateJobForRun, reconcileJobs, JOB_STATES } from "./job-queue.mjs";
 import { listKnowledgeCandidates, promoteKnowledgeCandidate, rejectKnowledgeCandidate, acceptRun } from "./knowledge-workflow.mjs";
 import { knowledgeHealth } from "./knowledge-quality.mjs";
+import { listKnowledgeMaintenance, previewKnowledgeMerge, applyKnowledgeMerge, revertKnowledgeMerge } from "./knowledge-maintenance.mjs";
 import { listNotifications, acknowledgeNotifications, emitTestNotification } from "./notification-service.mjs";
 import { telemetryReport } from "./telemetry.mjs";
 import { daemonStatus } from "./daemon.mjs";
@@ -1102,6 +1103,57 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
     const health = formatHealthResponse(rawReport);
     eventHub.broadcast("KNOWLEDGE_HEALTH_UPDATED", health);
     sendJson(res, 200, { success: true, data: health });
+  });
+
+  router.get("/api/knowledge/maintenance", async (req, res) => {
+    try {
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+      const dueSoonDays = Number(parsedUrl.searchParams.get("dueSoonDays") ?? 30);
+      const report = listKnowledgeMaintenance({ vaultRoot, dueSoonDays: Number.isFinite(dueSoonDays) ? dueSoonDays : 30 });
+      sendJson(res, 200, { success: true, data: report });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message); }
+  });
+
+  router.get("/api/knowledge/duplicates", async (req, res) => {
+    try {
+      const report = listKnowledgeMaintenance({ vaultRoot });
+      sendJson(res, 200, { success: true, data: { schemaVersion: report.schemaVersion, action: "KNOWLEDGE_DUPLICATES", generatedAt: report.generatedAt, duplicates: report.duplicates, summary: report.summary } });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message); }
+  });
+
+  router.get("/api/knowledge/stale", async (req, res) => {
+    try {
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+      const dueSoonDays = Number(parsedUrl.searchParams.get("dueSoonDays") ?? 30);
+      const report = listKnowledgeMaintenance({ vaultRoot, dueSoonDays: Number.isFinite(dueSoonDays) ? dueSoonDays : 30 });
+      sendJson(res, 200, { success: true, data: { schemaVersion: report.schemaVersion, action: "KNOWLEDGE_STALE_QUEUE", generatedAt: report.generatedAt, stale: report.stale, summary: report.summary } });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message); }
+  });
+
+  router.get("/api/knowledge/merge/preview", async (req, res) => {
+    try {
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+      const preview = previewKnowledgeMerge({ vaultRoot, sourcePath: parsedUrl.searchParams.get("source"), targetPath: parsedUrl.searchParams.get("target") });
+      sendJson(res, 200, { success: true, data: preview });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message); }
+  });
+
+  router.post("/api/knowledge/merge/apply", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const result = applyKnowledgeMerge({ vaultRoot, ...body, confirmed: body?.confirmed === true || body?.confirm === true });
+      eventHub.broadcast("KNOWLEDGE_MERGED", { planId: result.planId, source: result.source.path, target: result.target.path });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message); }
+  });
+
+  router.post("/api/knowledge/merge/revert", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const result = revertKnowledgeMerge({ vaultRoot, selector: body?.planId ?? body?.selector, revertedBy: body?.revertedBy ?? body?.approvedBy, confirmed: body?.confirmed === true || body?.confirm === true });
+      eventHub.broadcast("KNOWLEDGE_MERGE_REVERTED", { planId: result.planId });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message); }
   });
 
   router.post("/api/knowledge/ingest", async (req, res) => {
