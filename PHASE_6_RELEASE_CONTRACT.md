@@ -58,6 +58,13 @@ the machine-readable schema is
 and fixtures are under
 [`test/fixtures/release-compatibility`](./test/fixtures/release-compatibility).
 
+P6.1 adds [`src/release-candidate.mjs`](./src/release-candidate.mjs). It builds
+the candidate in an external directory, copies only the allowlisted runtime
+inputs, records the source commit, lockfile hash, regression result, and
+provenance, then writes a per-file `checksums.sha256` inventory. Verification
+rejects altered, incomplete, symlinked, or partial candidates before any later
+activation step.
+
 ## 4. Explicit non-goals for P6.0
 
 - no updater behavior is changed;
