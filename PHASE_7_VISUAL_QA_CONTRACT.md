@@ -1,6 +1,6 @@
 # Phase 7 — Visual QA Contract
 
-Status: **P7.4 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P7.4 IMPLEMENTED — HUMAN-ACCEPTED**
 Contract version: **p7.4-2026-08-22**
 Boundary: **bounded capture, deterministic comparison, layout diagnostics, accessibility evidence, and visual feedback revision linkage; no source rewrite**
 
