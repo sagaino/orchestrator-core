@@ -9,6 +9,7 @@ import { OperatorSessionStore } from "../src/api/operator-session.mjs";
 import { redactSensitive, redactText } from "../src/redaction.mjs";
 import { hardenRuntimePermissions } from "../src/runtime-hardening.mjs";
 import { changedPaths, repositorySnapshot, snapshotFromObject } from "../src/workspace-manager.mjs";
+import { isSafeInfrastructureFailure } from "../src/task-workflow.mjs";
 
 console.log("Running phase-4-2-security.test.mjs...");
 assert.deepEqual(Object.keys(CAPABILITY_PROFILES).sort(), ["agent", "graphify", "preview", "updater", "verification"]);
@@ -37,6 +38,24 @@ assert.equal(verificationRequiresLoopback("test", "vitest run"), false);
 assert.equal(aiRepairApplicable(new Error("listen EPERM: operation not permitted 127.0.0.1:4173")), false);
 assert.equal(aiRepairApplicable(new Error("Scope guard menolak automatic recovery di luar allowed_paths: test-results/playwright/.last-run.json")), false);
 assert.equal(aiRepairApplicable(new Error("Verification gagal: unit assertion mismatch")), true);
+assert.equal(isSafeInfrastructureFailure({
+  rawError: "Verification gagal: listen EPERM: operation not permitted 127.0.0.1:4173",
+  manifest: { execution: { frozenVerificationScripts: { "test:e2e": "playwright test" } } },
+}), true);
+assert.equal(isSafeInfrastructureFailure({
+  rawError: "Scope guard menolak automatic recovery di luar allowed_paths: test-results/playwright/.last-run.json",
+  manifest: { task: { allowedPaths: ["src/pages/Login/index.tsx"] }, execution: { scopeAudit: {
+    agentChangedPaths: ["src/pages/Login/index.tsx"],
+    allowedPaths: ["src/pages/Login/index.tsx"],
+    effectiveAllowedPaths: ["src/pages/Login/index.tsx"],
+    outOfScopePaths: ["test-results/playwright/.last-run.json"],
+    deniedPaths: [],
+  } } },
+}), true);
+assert.equal(isSafeInfrastructureFailure({
+  rawError: "Verification gagal: assertion mismatch",
+  manifest: { execution: { scopeAudit: { changedPaths: ["src/App.tsx"] } } },
+}), false);
 
 const preparedAgy = prepareCapabilitySpawn({ command: "agy", args: ["-p", "fixture"], cwd: "/tmp", env: { PATH: "/bin", HOME: "/Users/fixture" }, capabilityProfile: "agent" });
 try {

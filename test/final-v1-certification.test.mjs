@@ -12,8 +12,8 @@ try {
   await assert.rejects(() => runFinalV1Certification({ reportRoot: root, gateResults, executeGates: false, repoRoot: process.cwd(), dashboardRoot: "/Users/sagaino/ciniru/orchestrator-dashboard" }), /Injected gate evidence dilarang/);
   const report = await runFinalV1Certification({ reportRoot: root, gateResults, executeGates: false, allowInjectedTestEvidence: true, repoRoot: process.cwd(), dashboardRoot: "/Users/sagaino/ciniru/orchestrator-dashboard", now: new Date() });
   assert.equal(report.status, "CONDITIONAL");
-  assert.equal(report.releaseVersion, "1.0.2");
-  assert.equal(path.basename(report.reportPath), "v1.0.2-final-certificate.json");
+  assert.equal(report.releaseVersion, "1.0.3");
+  assert.equal(path.basename(report.reportPath), "v1.0.3-final-certificate.json");
   assert.equal(report.humanGate.required, true);
   assert.equal(report.humanGate.approved, false);
   assert.equal(report.gates.length, FINAL_GATE_IDS.length);
