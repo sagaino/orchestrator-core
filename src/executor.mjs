@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   beginFailedRunRecovery,
   getRun,
@@ -22,6 +23,7 @@ import { formatReviewRevisionFeedback, formatInlineComments } from "./review-wor
 import { runDurableInvocation, runtimeOwner } from "./durable-runtime.mjs";
 import { capabilityForStage, prepareCapabilitySpawn } from "./capability-policy.mjs";
 import { redactSensitive, redactText } from "./redaction.mjs";
+import { buildStageContext } from "./context-compactor.mjs";
 
 function appendEvent(eventLogPath, event) {
   if (!eventLogPath || typeof eventLogPath !== "string") return;
@@ -66,6 +68,17 @@ export function configuredAutomaticRecoveryAttempts(env = process.env) {
 function diagnosticTail(result, maximumLength = 6_000) {
   const value = String(result?.stderrTail || result?.stdoutTail || "").trim();
   return value ? value.slice(-maximumLength) : "";
+}
+
+export function captureWorkspaceDiff(repository, baseCommit = "", allowedPaths = [], maxCharacters = 12000) {
+  if (!repository || !fs.existsSync(path.join(repository, ".git"))) return "";
+  try {
+    const args = ["diff", "--no-ext-diff", baseCommit || "HEAD", "--", ...(allowedPaths.length ? allowedPaths : ["."])];
+    const diff = execFileSync("git", args, { cwd: repository, encoding: "utf8", maxBuffer: 256 * 1024 });
+    return diff.length > maxCharacters ? `${diff.slice(0, maxCharacters)}\n…[diff truncated]` : diff;
+  } catch {
+    return "";
+  }
 }
 
 export function effectiveAllowedPaths(allowedPaths = []) {
@@ -255,10 +268,37 @@ export function pruneGraphifyContext(rawContext, maxCharacters = 2500) {
   return result.length > maxCharacters ? `${result.slice(0, maxCharacters)}…` : result;
 }
 
+function taskAcceptanceCriteria(task = {}) {
+  return task.acceptanceCriteria
+    ?? task.acceptance_criteria
+    ?? task.metadata?.acceptanceCriteria
+    ?? task.metadata?.acceptance_criteria
+    ?? [];
+}
+
+function buildExecutionContext(manifest, stage, {
+  graphifyContext = "",
+  latestDiff = "",
+  latestFeedback = "",
+  revisionState = {},
+} = {}) {
+  return buildStageContext({
+    stage,
+    task: manifest.task,
+    acceptanceCriteria: taskAcceptanceCriteria(manifest.task),
+    latestFeedback,
+    latestDiff,
+    revisionState,
+    allowedPaths: manifest.task?.allowedPaths ?? [],
+    graphifyContext,
+    knowledge: manifest.retrieval?.knowledge ?? [],
+  });
+}
+
 export function buildAgyInvocation(
   manifest,
   vaultRoot,
-  { graphifyContext = "", repository = manifest.project.repository } = {},
+  { graphifyContext = "", latestDiff = "", repository = manifest.project.repository } = {},
 ) {
   if (manifest.project.agent !== "agy") {
     throw new Error(`Agent ${manifest.project.agent} belum memiliki executor adapter.`);
@@ -272,6 +312,11 @@ export function buildAgyInvocation(
     complexity: manifest.task?.complexity ?? "UNKNOWN",
     allowedPaths: manifest.task?.allowedPaths || [],
   });
+  const contextPack = buildExecutionContext(manifest, "implementation", {
+    graphifyContext,
+    latestDiff: latestDiff || manifest.execution?.latestDiff || "",
+    revisionState: manifest.execution?.revisionState ?? {},
+  });
   const prompt = [
     "=== KONTRAK EKSEKUSI CODING AGENT ===",
     "1. Baca task, project metadata, dan hanya knowledge/source yang relevan.",
@@ -283,11 +328,7 @@ export function buildAgyInvocation(
     "7. Jangan gunakan terminal/run_command, termasuk git, Graphify, test, lint, atau build; orchestrator menangani query, audit, dan verification.",
     "8. Jangan berhenti setelah inspeksi. Selesaikan edit yang diminta dan pastikan acceptance criteria task terpenuhi.",
     "",
-    "=== RETRIEVED KNOWLEDGE ===",
-    knowledge || "- Tidak ada knowledge match yang cukup relevan.",
-    "",
-    "=== GRAPHIFY TARGETED CONTEXT ===",
-    graphifyContext || "- Graphify tidak aktif atau tidak menemukan node yang relevan.",
+    contextPack.text,
     "",
     "=== TARGET EXECUTION METADATA ===",
     `Project repository: ${repository}`,
@@ -318,6 +359,7 @@ export function buildAgyRecoveryInvocation(
   {
     repository = manifest.execution?.workspace?.path ?? manifest.project.repository,
     graphifyContext = "",
+    latestDiff = "",
     failure,
     attempt,
   } = {},
@@ -337,6 +379,12 @@ export function buildAgyRecoveryInvocation(
   const failureDetail = typeof failure === "string"
     ? failure
     : (diagnosticTail(failure?.result) || String(failure ?? "Unknown failure"));
+  const contextPack = buildExecutionContext(manifest, "recovery", {
+    graphifyContext,
+    latestDiff: latestDiff || (manifest.execution?.latestDiff ?? ""),
+    latestFeedback: failureDetail,
+    revisionState: { stage: failure?.stage ?? "verification", attempt: attempt ?? 1 },
+  });
   const prompt = [
     "=== KONTRAK AUTOMATIC RECOVERY AGENT ===",
     "1. Cari root cause dari error dan perbaiki implementasi yang sudah ada; jangan mengulang task dari awal.",
@@ -349,11 +397,7 @@ export function buildAgyRecoveryInvocation(
     `Allowed paths: ${allowedPaths.length ? allowedPaths.join(", ") : "seluruh repository sesuai task"}`,
     `Current audited changes: ${changedPathsList.length ? changedPathsList.join(", ") : "none"}`,
     "",
-    "=== RETRIEVED KNOWLEDGE ===",
-    knowledge || "- Tidak ada knowledge match yang cukup relevan.",
-    "",
-    "=== GRAPHIFY TARGETED CONTEXT ===",
-    graphifyContext || "- Tidak tersedia.",
+    contextPack.text,
     "",
     "=== RECOVERY FAILURE DETAILS ===",
     `Kegagalan yang harus didiagnosis: ${failureDetail}`,
@@ -386,6 +430,7 @@ export function buildAgyRevisionInvocation(
   {
     repository = manifest.execution?.workspace?.path ?? manifest.project.repository,
     graphifyContext = "",
+    latestDiff = "",
     inlineComments = null,
   } = {},
 ) {
@@ -426,6 +471,16 @@ export function buildAgyRevisionInvocation(
     complexity: manifest.task?.complexity ?? "UNKNOWN",
     allowedPaths: manifest.task.allowedPaths ?? [],
   });
+  const contextPack = buildExecutionContext(manifest, "revision", {
+    graphifyContext,
+    latestFeedback: feedbackText,
+    latestDiff: latestDiff || (manifest.execution?.latestDiff ?? ""),
+    revisionState: {
+      iteration: revision.iteration,
+      changedPaths: (manifest.execution?.scopeAudit?.changedPaths ?? []).join(", "),
+      previousFeedback: previousRevisions.at(-1)?.feedback ?? "",
+    },
+  });
 
   const prompt = [
     `Lanjutkan revisi review iteration ${revision.iteration} untuk task: ${path.join(vaultRoot, manifest.task.path)}`,
@@ -438,11 +493,7 @@ export function buildAgyRevisionInvocation(
     `Current audited changes: ${(manifest.execution?.scopeAudit?.changedPaths ?? []).join(", ") || "none"}`,
     `Allowed paths: ${(manifest.task.allowedPaths ?? []).join(", ") || "sesuai task"}`,
     "",
-    "Knowledge relevan:",
-    knowledge || "- Tidak ada knowledge match yang cukup relevan.",
-    "",
-    "Konteks Graphify targeted:",
-    graphifyContext || "- Tidak tersedia.",
+    contextPack.text,
     "",
     "Kontrak revisi:",
     "1. Pertahankan implementasi yang sudah benar dan lakukan hanya perubahan yang diminta reviewer.",
@@ -819,6 +870,7 @@ async function attemptAutomaticRecovery({
       const invocation = recoveryInvocationBuilder(manifest, vaultRoot, {
         repository,
         graphifyContext,
+        latestDiff: captureWorkspaceDiff(repository, manifest.execution?.workspace?.baseCommit, manifest.task?.allowedPaths ?? []),
         failure: latestError.message,
         attempt,
       });
@@ -1070,7 +1122,11 @@ export async function executeRun({
       graphifyContext = pruneGraphifyContext(result.stdoutTail.trim());
     }
 
-    const invocation = agentInvocationBuilder(manifest, vaultRoot, { graphifyContext, repository });
+    const invocation = agentInvocationBuilder(manifest, vaultRoot, {
+      graphifyContext,
+      latestDiff: captureWorkspaceDiff(repository, workspace.baseCommit, manifest.task?.allowedPaths ?? []),
+      repository,
+    });
     const invocationId = `${runId}:implementation`;
     const agent = await runDurableInvocation({
       runsRoot,
@@ -1295,7 +1351,11 @@ export async function reviseRun({
       graphifyContext = pruneGraphifyContext(result.stdoutTail.trim());
     }
 
-    const invocation = revisionInvocationBuilder(manifest, vaultRoot, { repository, graphifyContext });
+    const invocation = revisionInvocationBuilder(manifest, vaultRoot, {
+      repository,
+      graphifyContext,
+      latestDiff: captureWorkspaceDiff(repository, manifest.execution?.workspace?.baseCommit, manifest.task?.allowedPaths ?? []),
+    });
     const invocationId = `${runId}:review-revision:${reviewChange.iteration}`;
     const agent = await runDurableInvocation({
       runsRoot,

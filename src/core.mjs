@@ -256,7 +256,9 @@ export function extractConciseKnowledgeSection(body, maxLength = 500) {
   return result.length > maxLength ? `${result.slice(0, maxLength)}…` : result;
 }
 
-export function findRelevantKnowledge(vaultRoot, taskDocument) {
+export function findRelevantKnowledge(vaultRoot, taskDocument, { limit = 3, maxSummaryLength = 500 } = {}) {
+  const boundedLimit = Number.isInteger(limit) && limit > 0 ? limit : 3;
+  const boundedSummaryLength = Number.isInteger(maxSummaryLength) && maxSummaryLength > 0 ? maxSummaryLength : 500;
   const terms = tokenize(`${taskDocument.title}\n${taskDocument.body}`);
   const knowledgeDirectory = path.join(vaultRoot, "01-Knowledge");
   const matches = [];
@@ -274,11 +276,11 @@ export function findRelevantKnowledge(vaultRoot, taskDocument) {
       type: document.metadata.type ?? null,
       score: matchedTerms.length + titleBonus,
       matchedTerms: matchedTerms.slice(0, 8),
-      summary: extractConciseKnowledgeSection(document.body),
+      summary: extractConciseKnowledgeSection(document.body, boundedSummaryLength),
     });
   }
 
-  return matches.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path)).slice(0, 3);
+  return matches.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path)).slice(0, boundedLimit);
 }
 
 export function readGraphSummary(graphPath) {
