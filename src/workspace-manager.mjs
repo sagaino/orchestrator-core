@@ -11,9 +11,16 @@ const SNAPSHOT_EXCLUDES = new Set([
   "dist",
   "build",
   "coverage",
+  "test-results",
+  "playwright-report",
+  "blob-report",
   "graphify-out",
   ".next",
 ]);
+
+function snapshotPathExcluded(relativePath) {
+  return String(relativePath).split(/[\\/]/).some((segment) => SNAPSHOT_EXCLUDES.has(segment));
+}
 
 function safeSegment(value) {
   const normalized = String(value ?? "")
@@ -81,7 +88,7 @@ export function snapshotToObject(snapshot) {
 }
 
 export function snapshotFromObject(snapshot = {}) {
-  return new Map(Object.entries(snapshot));
+  return new Map(Object.entries(snapshot).filter(([relativePath]) => !snapshotPathExcluded(relativePath)));
 }
 
 function copyEntry(source, target) {

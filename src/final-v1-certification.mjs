@@ -16,7 +16,7 @@ import { readBackupStatus } from "./operations-governance.mjs";
 export const FINAL_CERTIFICATION_SCHEMA_VERSION = 2;
 export const FINAL_CERTIFICATION_CONTRACT_VERSION = "p9.4-ga-remediation-2026-08-22";
 export const FINAL_CERTIFICATION_KIND = "personal-ai-os-v1-final-certification";
-export const FINAL_CERTIFICATION_VERSION = "1.0.1";
+export const FINAL_CERTIFICATION_VERSION = "1.0.2";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const DEFAULT_DASHBOARD_ROOT = path.resolve(REPO_ROOT, "../../ciniru/orchestrator-dashboard");

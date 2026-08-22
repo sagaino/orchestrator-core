@@ -150,9 +150,9 @@ export async function reconcileProjectDependencies({
 export function runProcess({
   command, args, cwd, stage, eventLogPath, env = process.env,
   capabilityProfile = capabilityForStage(stage), writableRoots = [cwd], readableRoots = [cwd],
-  deadlineMs = null, maxOutputBytes = null, home = undefined, deniedReadRoots = [],
+  deadlineMs = null, maxOutputBytes = null, home = undefined, deniedReadRoots = [], allowLoopback = false,
 }) {
-  const prepared = prepareCapabilitySpawn({ command, args, cwd, env, capabilityProfile, writableRoots, readableRoots, home, deniedReadRoots });
+  const prepared = prepareCapabilitySpawn({ command, args, cwd, env, capabilityProfile, writableRoots, readableRoots, home, deniedReadRoots, allowLoopback });
   const effectiveDeadlineMs = deadlineMs ?? prepared.deadlineMs;
   const effectiveMaxOutputBytes = maxOutputBytes ?? prepared.maxOutputBytes;
   appendEvent(eventLogPath, { event: "PROCESS_STARTED", stage, command, args, cwd, capabilityProfile, deadlineMs: effectiveDeadlineMs, maxOutputBytes: effectiveMaxOutputBytes });
@@ -526,7 +526,12 @@ export function buildAgyRevisionInvocation(
 function parseVerificationCommand(command) {
   const match = command.match(/^npm run ([A-Za-z0-9:_-]+)$/);
   if (!match) throw new Error(`Verification command tidak didukung: ${command}`);
-  return { command: "npm", args: ["run", match[1]] };
+  return { command: "npm", args: ["run", match[1]], scriptName: match[1] };
+}
+
+export function verificationRequiresLoopback(scriptName, scriptCommand = "") {
+  return /(?:^|[:_-])(?:e2e|browser)(?:$|[:_-])/i.test(String(scriptName))
+    || /playwright|cypress/i.test(String(scriptCommand));
 }
 
 function createScopeAudit({ beforeSnapshot, afterSnapshot, allowedPaths, requiresChanges, agentChangedPaths = null }) {
@@ -585,11 +590,13 @@ async function verifyAndRefresh({
   const verification = [];
   for (const verificationCommand of current.plan.verificationCommands) {
     const parsed = parseVerificationCommand(verificationCommand);
+    const { scriptName, ...invocation } = parsed;
     const result = await processRunner({
-      ...parsed,
+      ...invocation,
       cwd: repository,
       stage: `verification:${verificationCommand}`,
       eventLogPath,
+      allowLoopback: verificationRequiresLoopback(scriptName, current.execution?.frozenVerificationScripts?.[scriptName]),
     });
     const diagnostic = diagnosticTail(result);
     verification.push({
@@ -688,6 +695,11 @@ function canAutomaticallyRecover(manifest, error) {
     && Boolean(manifest.execution?.workspace?.path)
     && !manifest.execution?.scopeAudit?.outOfScopePaths?.length
     && /^(Dependency reconciliation gagal|Verification gagal|Graphify update gagal)/i.test(error.message);
+}
+
+export function aiRepairApplicable(error) {
+  const message = String(error?.message ?? error ?? "");
+  return !/listen EPERM: operation not permitted|CAPABILITY_SANDBOX_UNAVAILABLE|Scope guard menolak automatic recovery di luar allowed_paths: .*?(?:test-results|playwright-report|blob-report)/i.test(message);
 }
 
 async function rerunRecoveryChecks({
@@ -856,6 +868,22 @@ async function attemptAutomaticRecovery({
       event: "AUTOMATIC_RECOVERY_RETRY_FAILED",
       message: error.message,
     });
+  }
+
+  if (!aiRepairApplicable(latestError)) {
+    updateAutomaticRecovery({
+      runsRoot,
+      runId,
+      patch: {
+        status: "EXHAUSTED",
+        strategy: "ENVIRONMENT_FAILURE",
+        finishedAt: new Date().toISOString(),
+        finalError: latestError.message,
+      },
+      event: "AUTOMATIC_RECOVERY_SKIPPED_AI_REPAIR",
+      message: "AI repair dilewati karena kegagalan berasal dari sandbox atau artefak verification, bukan implementasi source.",
+    });
+    throw new Error(`${initialError.message}\nAutomatic recovery berhenti setelah deterministic retry; AI repair tidak relevan untuk kegagalan environment ini.`);
   }
 
   for (let attempt = 1; attempt <= maxAgentAttempts; attempt += 1) {
