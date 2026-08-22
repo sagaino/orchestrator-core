@@ -381,7 +381,7 @@ Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 ### P9.4 — Final Threat Model and v1.0 Certificate
 
-Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 - Model: `ECONOMY + STRONG REVIEW`; release is `HUMAN GATE`.
 - Scope: rerun adversarial, reliability, recovery, operations, browser,
@@ -396,7 +396,7 @@ Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
 
 ## 9. Final Definition of Done
 
-The roadmap is complete only when P9.4 is human-accepted and all statements
+The roadmap is complete now that P9.4 is human-accepted and all statements
 below are true:
 
 - normal task flow, review, visual QA, knowledge decision, and operations can be
