@@ -86,6 +86,8 @@ function parseArguments(args) {
     apiRequests: null,
     sseClients: null,
     restartEvery: null,
+    soakReport: null,
+    maxRtoMinutes: null,
     fixSafe: false,
     once: false,
     autoCommit: true,
@@ -161,6 +163,12 @@ function parseArguments(args) {
     } else if (args[index] === "--restart-every") {
       options.restartEvery = Number(args[index + 1]);
       index += 1;
+    } else if (args[index] === "--soak-report") {
+      options.soakReport = path.resolve(args[index + 1]);
+      index += 1;
+    } else if (args[index] === "--max-rto-minutes") {
+      options.maxRtoMinutes = Number(args[index + 1]);
+      index += 1;
     } else if (args[index] === "--fix-safe") {
       options.fixSafe = true;
     } else if (args[index] === "--once") {
@@ -196,6 +204,7 @@ Disaster recovery:
   backup-verify-registered
   recovery-drill-record --reason <evidence> [--decision PASS|FAIL] [--by <name>]
   soak-harness [<duration-hours>] [--soak-root <absolute-path>]
+  operations-certification [--soak-report <absolute-report-path>]
   certification-verify <absolute-bundle-path>
 
 Conversational flow:
@@ -270,6 +279,8 @@ Options:
   --api-requests <n>    Request API per langkah (1-20)
   --sse-clients <n>     Koneksi SSE bersamaan (1-20)
   --restart-every <n>   Restart deterministik setiap N langkah
+  --soak-report <path>  Report P8.4 yang dipakai untuk certification
+  --max-rto-minutes <n> Batas RTO recovery drill (default 15)
   --fix-safe            Perbaiki index saja dan catat lint; tidak mengubah isi knowledge
   --by <name>           Record requester atau approver identity
   --reason <text>       Record rejection atau request-changes feedback
@@ -371,6 +382,11 @@ export async function main(argv = process.argv.slice(2)) {
         restartEverySteps: options.restartEvery ?? 16,
       });
       if (result.status !== "PASS") process.exitCode = 1;
+    } else if (command === "operations-certification") {
+      const { createOperationsCertification } = await import("./operations-certification.mjs");
+      const soakReportPath = options.soakReport ?? path.join(options.runs, "runtime", "soak", "last-report.json");
+      result = createOperationsCertification({ runsRoot: options.runs, vaultRoot: options.vault, soakReportPath, maxRecoveryRtoMinutes: options.maxRtoMinutes ?? 15 });
+      if (result.status !== "CERTIFICATION_READY") process.exitCode = 1;
     } else if (command === "operations-readiness") {
       const { operationsReadiness } = await import("./operations-governance.mjs");
       result = operationsReadiness({ runsRoot: options.runs });

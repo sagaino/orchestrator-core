@@ -318,6 +318,8 @@ Implementation status: **IMPLEMENTED — HUMAN-ACCEPTED (2026-08-22)**
 
 ### P8.5 — Operations Certification
 
+Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+
 - Model: `ECONOMY + STRONG REVIEW`; result is `HUMAN GATE`.
 - Exit gate: 72-hour soak passes; backup is within RPO; a recovery drill is
   within RTO; all alerts have owner/action; knowledge health has no unresolved
