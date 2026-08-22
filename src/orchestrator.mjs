@@ -219,6 +219,8 @@ Disaster recovery:
   migration-matrix [--runs <absolute-runs-root>]
   pilot-cohort [--runs <absolute-runs-root>]
   recovery-rehearsal [--runs <absolute-runs-root>]
+  final-certification [--runs <absolute-runs-root>]
+  final-certification-verify <absolute-certificate-path>
 
 Conversational flow:
   request-task <project-id> <request> [--start] [--by <name>]
@@ -426,6 +428,16 @@ export async function main(argv = process.argv.slice(2)) {
       const { runOperatorRecoveryRehearsal } = await import("./operator-recovery-rehearsal.mjs");
       result = runOperatorRecoveryRehearsal({ reportRoot: options.runs });
       if (result.status !== "PASS") process.exitCode = 1;
+    } else if (command === "final-certification") {
+      const { runFinalV1Certification } = await import("./final-v1-certification.mjs");
+      result = await runFinalV1Certification({ reportRoot: options.runs });
+      if (result.status !== "CERTIFIED_HUMAN_GATE_REQUIRED") process.exitCode = 1;
+    } else if (command === "final-certification-verify") {
+      const [certificatePath] = options.positional;
+      if (!certificatePath || !path.isAbsolute(certificatePath)) fail("final-certification-verify membutuhkan absolute certificate path.");
+      const { verifyFinalV1Certificate } = await import("./final-v1-certification.mjs");
+      result = verifyFinalV1Certificate({ reportPath: certificatePath });
+      if (!result.valid) process.exitCode = 1;
     } else if (command === "operations-readiness") {
       const { operationsReadiness } = await import("./operations-governance.mjs");
       result = operationsReadiness({ runsRoot: options.runs });
