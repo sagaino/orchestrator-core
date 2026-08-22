@@ -1,8 +1,8 @@
 # Phase 7 — Visual QA Contract
 
-Status: **P7.3 IMPLEMENTED — HUMAN-ACCEPTED**
-Contract version: **p7.3-2026-08-22**
-Boundary: **bounded capture, deterministic comparison, layout diagnostics, and accessibility evidence; no source rewrite**
+Status: **P7.4 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Contract version: **p7.4-2026-08-22**
+Boundary: **bounded capture, deterministic comparison, layout diagnostics, accessibility evidence, and visual feedback revision linkage; no source rewrite**
 
 ## P7.0 Visual Evidence Contract
 
@@ -91,6 +91,29 @@ be re-audited through:
 The endpoint requires an explicit HTTP(S) `baseUrl` for the run-owned preview
 and fails closed when the target cannot be reached within the timeout.
 
+## P7.4 Visual Feedback Revision Loop
+
+`src/visual-revision.mjs` persists each request-changes iteration as a durable,
+checksum-backed revision record. Structured region annotations and inline file
+comments are normalized and stored with the review iteration. The record keeps
+the evidence IDs visible before the revision (`beforeEvidenceIds`) and is
+completed only when later capture evidence is linked as
+`afterEvidenceIds`; invalid or unknown evidence IDs are ignored.
+
+The request-changes workflow and the Runs inspector use the same revision
+record, so feedback remains inspectable after a restart and can be correlated
+with the run manifest lifecycle. The API surface is:
+
+- `GET /api/runs/:id/visual-revisions`
+- `GET /api/runs/:id/visual-revisions/:iteration`
+- `POST /api/runs/:id/visual-revisions/:iteration/complete`
+
+Viewport capture accepts the revision iteration and automatically links its
+evidence as the after-state when the revision exists. The explicit completion
+endpoint supports recovery when capture and revision persistence occur in a
+different order. This loop records evidence and feedback; it never rewrites
+source code or silently auto-accepts a run.
+
 ## Evidence
 
 - visual contract unit test covers captured and unavailable screenshots,
@@ -103,6 +126,9 @@ and fails closed when the target cannot be reached within the timeout.
   and the comparison API;
 - accessibility tests cover passing and failing deterministic snapshots,
   bounded finding limits, capture persistence, and the audit API;
+- visual revision tests cover annotation/comment normalization, before/after
+  evidence filtering, durable persistence, restart reads, and capture linking;
 - dashboard types and Run Inspector expose route, viewport, comparison,
-  accessibility status, revision, and artifact checksum;
+  accessibility status, revision, before/after evidence counts, and artifact
+  checksum;
 - dashboard typecheck, lint, build, and five browser tests pass.

@@ -26,6 +26,7 @@ import { saveUploadedAsset, deleteUploadedAsset, resolveMockupAssetPath } from "
 import { buildRunEvidence } from "./interaction.mjs";
 import { createVisualEvidence, getVisualEvidence, listVisualEvidence, persistVisualEvidence } from "./visual-evidence.mjs";
 import { auditVisualEvidence, captureVisualEvidence, comparePersistedVisualEvidence, listCaptureReports } from "./visual-qa.mjs";
+import { completeVisualRevision, getVisualRevision, listVisualRevisions } from "./visual-revision.mjs";
 import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
@@ -586,6 +587,36 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
     }
   });
 
+  router.get("/api/runs/:id/visual-revisions", async (req, res, { params }) => {
+    try {
+      getRun(runsRoot, params.id);
+      sendJson(res, 200, { success: true, data: listVisualRevisions({ runsRoot, runId: params.id }) });
+    } catch (err) {
+      sendError(res, 404, err.message);
+    }
+  });
+
+  router.get("/api/runs/:id/visual-revisions/:iteration", async (req, res, { params }) => {
+    try {
+      const revision = getVisualRevision({ runsRoot, runId: params.id, iteration: Number(params.iteration) });
+      sendJson(res, 200, { success: true, data: revision });
+    } catch (err) {
+      sendError(res, 404, err.message);
+    }
+  });
+
+  router.post("/api/runs/:id/visual-revisions/:iteration/complete", async (req, res, { params }) => {
+    try {
+      getRun(runsRoot, params.id);
+      const body = await parseJsonBody(req);
+      const completed = completeVisualRevision({ runsRoot, runId: params.id, iteration: Number(params.iteration), afterEvidenceIds: body?.afterEvidenceIds ?? [] });
+      eventHub.broadcast("VISUAL_REVISION_COMPLETED", { runId: params.id, iteration: completed.iteration, status: completed.status, afterEvidenceIds: completed.afterEvidenceIds });
+      sendJson(res, 200, { success: true, data: completed });
+    } catch (err) {
+      sendError(res, err.statusCode || 400, err.message, err.details);
+    }
+  });
+
   router.get("/api/runs/:id/visual-evidence/:evidenceId", async (req, res, { params }) => {
     try {
       const evidence = getVisualEvidence({ runsRoot, runId: params.id, evidenceId: params.evidenceId });
@@ -711,7 +742,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   router.post("/api/runs/:id/request-changes", async (req, res, { params }) => {
     const body = await parseJsonBody(req);
-    const { requestedBy = "user", reason, feedback, inlineComments } = body || {};
+    const { requestedBy = "user", reason, feedback, inlineComments, visualAnnotations } = body || {};
     const rawReason = (reason && typeof reason === "string" && reason.trim())
       ? reason
       : (feedback && typeof feedback === "string" && feedback.trim())
@@ -723,6 +754,9 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
     if (inlineComments !== undefined && inlineComments !== null && !Array.isArray(inlineComments)) {
       return sendError(res, 400, "Invalid field: inlineComments must be an array");
+    }
+    if (visualAnnotations !== undefined && visualAnnotations !== null && !Array.isArray(visualAnnotations)) {
+      return sendError(res, 400, "Invalid field: visualAnnotations must be an array");
     }
 
     let run = null;
@@ -739,6 +773,12 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       reason: rawReason.trim(),
       inlineComments: Array.isArray(inlineComments) ? inlineComments : [],
     });
+    const visualFeedback = {
+      iteration: (run.execution?.reviewChanges?.length ?? 0) + 1,
+      inlineComments: Array.isArray(inlineComments) ? inlineComments : [],
+      visualAnnotations: Array.isArray(visualAnnotations) ? visualAnnotations : [],
+      beforeEvidenceIds: listVisualEvidence({ runsRoot, runId: params.id }).map((evidence) => evidence.evidenceId),
+    };
 
     eventHub.broadcast("RUN_CHANGES_REQUESTED", { runId: params.id, state: RUN_STATES.CHANGES_REQUESTED });
     sendJson(res, 202, {
@@ -758,6 +798,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
           runId: params.id,
           requestedBy,
           reason: effectiveReason,
+          visualFeedback,
           onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
         });
 
