@@ -61,27 +61,22 @@ production migration or v1.0 activation remains a separate operational gate.
 
 ## P9.2 Final Pilot Cohort
 
-The final pilot harness creates three clean, registered project fixtures and
-executes ten bounded task manifests. The cohort includes code and UI changes,
-executor restart recovery, request-changes followed by acceptance, explicit
-rejection without mutation, rollback after failed apply, and CREATE/UPDATE
-knowledge decisions. Applied runs require explicit human approval, authorized
-scope, passing verification, applied-workspace evidence, and complete run
-evidence. Rejected and failed runs must remain unapplied or have verified
-rollback evidence.
+The final pilot selects ten persisted, human-approved runs from at least three
+real registered projects. Selection is balanced across projects and requires
+authorized scope, passing verification, applied-workspace evidence, integrity,
+and complete human approval. The complete run history must also contain real
+request-changes, recovery/reconciliation, and rejection-without-mutation paths.
 
-The harness also checks invocation uniqueness, scans the isolated fixture for
-private-key/API-key/secret/password patterns, and records the registered
-project roots and task evidence. It emits a checksummed report while leaving
-`humanGate.confirmed=false`; no provider invocation, production mutation, or
-automatic acceptance is performed.
+The harness copies the selected immutable run manifests into a checksummed
+evidence bundle. It never creates synthetic pilot projects, fake verification
+commands, or automatic human approval.
 
 CLI:
 
-- `pilot-cohort` runs the isolated cohort and writes
+- `pilot-cohort` selects the real persisted cohort and writes
   `runs/runtime/pilot-cohort/p9.2-report.json` plus its checksum;
 - `test:pilot-cohort` verifies task/project minimums, scope authorization,
-  evidence completeness, duplicate invocation, secret scanning, safe failure,
+  evidence completeness, exceptional lifecycle coverage, durable artifacts,
   and report tamper detection.
 
 P9.2 exit gate: ten tasks across three projects PASS all checks above. P9.2 is
@@ -128,12 +123,19 @@ CLI:
 - `final-certification` runs the gate matrix and writes
   `runs/runtime/certifications/v1.0-final-certificate.json` plus its checksum;
 - `final-certification-verify <absolute-certificate-path>` verifies the
-  certificate schema and checksum.
+  certificate checksum, all gates, human acceptance, expiry, and current
+  backend/dashboard provenance;
+- `final-certification-accept <absolute-certificate-path> --by <operator>`
+  records the distinct human release-certificate acceptance only after every
+  machine gate passes.
+- `release-artifact <version>` builds backend and dashboard tar archives from
+  their exact clean Git commits, records dependency-lock inventory and SHA-256
+  checksums, and writes a verifiable release-artifact manifest.
 
-The certificate reported `CERTIFIED_HUMAN_GATE_REQUIRED`, and the human owner
-has now accepted P9.4. The certificate still records `humanGate.approved=false`
-because phase acceptance is distinct from production activation and does not
-assign v1.0.0, promote a recovery target, or activate a production release.
+P9.4 phase acceptance remains distinct from accepting a newly generated release
+certificate. Injected gate evidence is rejected by the production runner, both
+repositories must be clean and version-aligned, and stale certificates fail
+verification. Production activation remains a separate explicit operation.
 The P9.4 exit evidence has no residual CRITICAL/HIGH risk, controlled MEDIUM
 risk, clean repositories, passing gate reruns, and valid documentation and
 bundle checksums.

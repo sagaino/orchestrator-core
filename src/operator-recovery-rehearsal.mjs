@@ -36,6 +36,27 @@ function writePrivateJson(filePath, value) {
   return { filePath, checksum: sha256(text) };
 }
 
+function persistEvidenceBundle({ reportRoot, backup, restored, backupVerification }) {
+  const bundleRoot = path.join(reportRoot, "runtime", "recovery-rehearsal", "evidence", backup.backupId);
+  fs.mkdirSync(bundleRoot, { recursive: true, mode: 0o700 });
+  const sources = [
+    { label: "backup-manifest", source: path.join(backup.backupPath, "manifest.json") },
+    { label: "backup-ready", source: path.join(backup.backupPath, "READY") },
+    { label: "restored-registry", source: path.join(restored.vaultRoot, "project-registry.md") },
+    { label: "restored-audit-head", source: path.join(restored.runsRoot, "runtime", "audit-head.json") },
+  ].filter((item) => fs.existsSync(item.source));
+  const artifacts = sources.map((item) => {
+    const extension = path.extname(item.source);
+    const destination = path.join(bundleRoot, `${item.label}${extension}`);
+    const content = fs.readFileSync(item.source);
+    fs.writeFileSync(destination, content, { mode: 0o600 });
+    return { label: item.label, relativePath: path.relative(reportRoot, destination), checksum: createHash("sha256").update(content).digest("hex") };
+  });
+  const manifest = { schemaVersion: 1, backupId: backup.backupId, verification: { status: backupVerification.status, fileCount: backupVerification.fileCount, totalBytes: backupVerification.totalBytes }, artifacts };
+  const persisted = writePrivateJson(path.join(bundleRoot, "evidence-manifest.json"), manifest);
+  return { root: path.relative(reportRoot, bundleRoot), manifest: path.relative(reportRoot, persisted.filePath), checksum: persisted.checksum, artifacts };
+}
+
 function runbookChecks(runbookText) {
   const missingSections = REQUIRED_SECTIONS.filter((section) => !runbookText.includes(`## ${section}`));
   const requiredSafetyTerms = ["human", "quarantine", "checksum", "executionBlocked", "secret"];
@@ -84,6 +105,7 @@ export function runOperatorRecoveryRehearsal({ reportRoot = null, runbookPath = 
       mutationBlocked: reconstruction.executionBlocked,
       promotionExplicit: restored.executionBlocked === true && !reconstruction.promoted,
     };
+    const evidenceBundle = reportRoot ? persistEvidenceBundle({ reportRoot, backup, restored, backupVerification }) : null;
     const report = {
       schemaVersion: RECOVERY_REHEARSAL_SCHEMA_VERSION,
       kind: RECOVERY_REHEARSAL_KIND,
@@ -92,8 +114,9 @@ export function runOperatorRecoveryRehearsal({ reportRoot = null, runbookPath = 
       status: Object.values(checks).every(Boolean) ? "PASS" : "FAIL",
       humanGate: { required: true, confirmed: false, instruction: "Review rehearsal evidence and explicitly promote only after compatibility and health checks." },
       runbook: { path: path.resolve(runbookPath), checksum: sha256(runbookText), requiredSections: REQUIRED_SECTIONS, documentation },
-      backup: { backupId: backup.backupId, backupPath: backup.backupPath, verification: { status: backupVerification.status, fileCount: backupVerification.fileCount, totalBytes: backupVerification.totalBytes } },
-      restore: { targetRoot: restored.targetRoot, status: restored.status, executionBlocked: restored.executionBlocked, reconstruction },
+      backup: { backupId: backup.backupId, temporarySourceRemoved: true, verification: { status: backupVerification.status, fileCount: backupVerification.fileCount, totalBytes: backupVerification.totalBytes } },
+      restore: { temporaryTargetRemoved: true, status: restored.status, executionBlocked: restored.executionBlocked, reconstruction },
+      evidenceBundle,
       checks,
       promotion: { performed: false, requiresHuman: true },
     };
@@ -115,5 +138,10 @@ export function verifyRecoveryRehearsalReport({ reportPath } = {}) {
   let report = null;
   try { report = JSON.parse(text); } catch { return { valid: false, status: null, checksum: sha256(text), report: null }; }
   const checksumText = fs.existsSync(`${reportPath}.sha256`) ? fs.readFileSync(`${reportPath}.sha256`, "utf8").trim() : "";
-  return { valid: report?.kind === RECOVERY_REHEARSAL_KIND && report?.schemaVersion === RECOVERY_REHEARSAL_SCHEMA_VERSION && checksumText.split(/\s+/)[0] === sha256(text), status: report?.status ?? null, checksum: sha256(text), report };
+  const reportRoot = path.resolve(path.dirname(reportPath), "../..");
+  const artifactsValid = Array.isArray(report?.evidenceBundle?.artifacts) && report.evidenceBundle.artifacts.length > 0 && report.evidenceBundle.artifacts.every((artifact) => {
+    const artifactPath = path.join(reportRoot, artifact.relativePath);
+    return fs.existsSync(artifactPath) && sha256(fs.readFileSync(artifactPath)) === artifact.checksum;
+  });
+  return { valid: report?.kind === RECOVERY_REHEARSAL_KIND && report?.schemaVersion === RECOVERY_REHEARSAL_SCHEMA_VERSION && report?.status === "PASS" && checksumText.split(/\s+/)[0] === sha256(text) && artifactsValid, status: report?.status ?? null, checksum: sha256(text), artifactsValid, report };
 }

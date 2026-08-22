@@ -214,6 +214,7 @@ Disaster recovery:
   soak-harness [<duration-hours>] [--soak-root <absolute-path>]
   operations-certification [--soak-report <absolute-report-path>]
   release-manifest [<version>] [--dashboard <absolute-path>]
+  release-artifact [<version>] [--dashboard <absolute-path>]
   release-manifest-verify <absolute-manifest-path>
   certification-verify <absolute-bundle-path>
   migration-matrix [--runs <absolute-runs-root>]
@@ -221,6 +222,7 @@ Disaster recovery:
   recovery-rehearsal [--runs <absolute-runs-root>]
   final-certification [--runs <absolute-runs-root>]
   final-certification-verify <absolute-certificate-path>
+  final-certification-accept <absolute-certificate-path> --by <operator>
 
 Conversational flow:
   request-task <project-id> <request> [--start] [--by <name>]
@@ -407,7 +409,7 @@ export async function main(argv = process.argv.slice(2)) {
     } else if (command === "release-manifest") {
       const [releaseVersion = "1.0.0"] = options.positional;
       const { writeReleaseManifest } = await import("./release-manifest.mjs");
-      const dashboardRoot = options.dashboardRoot ?? process.env.ORCHESTRATOR_DASHBOARD_PATH ?? path.resolve(process.cwd(), "../orchestrator-dashboard");
+      const dashboardRoot = options.dashboardRoot ?? process.env.ORCHESTRATOR_DASHBOARD_PATH ?? path.resolve(process.cwd(), "../../ciniru/orchestrator-dashboard");
       const backupRoot = path.resolve(process.env.ORCHESTRATOR_BACKUP_ROOT ?? path.join(path.dirname(options.runs), "external-backups"));
       result = writeReleaseManifest({ sourceRoot: process.cwd(), dashboardRoot, vaultRoot: options.vault, runsRoot: options.runs, backupRoot, releaseVersion: options.releaseVersion ?? releaseVersion });
     } else if (command === "release-manifest-verify") {
@@ -416,6 +418,11 @@ export async function main(argv = process.argv.slice(2)) {
       const { verifyReleaseManifestFile } = await import("./release-manifest.mjs");
       result = verifyReleaseManifestFile({ manifestPath });
       if (!result.valid) process.exitCode = 1;
+    } else if (command === "release-artifact") {
+      const [releaseVersion = "1.0.0"] = options.positional;
+      const { buildReleaseArtifact } = await import("./release-artifact.mjs");
+      const dashboardRoot = options.dashboardRoot ?? process.env.ORCHESTRATOR_DASHBOARD_PATH ?? path.resolve(process.cwd(), "../../ciniru/orchestrator-dashboard");
+      result = buildReleaseArtifact({ repoRoot: process.cwd(), dashboardRoot, outputRoot: path.join(options.runs, "runtime", "release-artifacts"), releaseVersion });
     } else if (command === "migration-matrix") {
       const { runMigrationMatrixCertification } = await import("./migration-upgrade.mjs");
       result = runMigrationMatrixCertification({ reportRoot: options.runs });
@@ -438,10 +445,15 @@ export async function main(argv = process.argv.slice(2)) {
       const { verifyFinalV1Certificate } = await import("./final-v1-certification.mjs");
       result = verifyFinalV1Certificate({ reportPath: certificatePath });
       if (!result.valid) process.exitCode = 1;
+    } else if (command === "final-certification-accept") {
+      const [certificatePath] = options.positional;
+      if (!certificatePath || !path.isAbsolute(certificatePath)) fail("final-certification-accept membutuhkan absolute certificate path.");
+      const { acceptFinalV1Certificate } = await import("./final-v1-certification.mjs");
+      result = acceptFinalV1Certificate({ reportPath: certificatePath, approvedBy: options.approvedBy });
     } else if (command === "operations-readiness") {
       const { operationsReadiness } = await import("./operations-governance.mjs");
       result = operationsReadiness({ runsRoot: options.runs });
-      if (!result.admission.allowed) process.exitCode = 1;
+      if (result.status !== "READY") process.exitCode = 1;
     } else if (command === "certification-verify") {
       const [bundleFilePath] = options.positional;
       if (!bundleFilePath || !path.isAbsolute(bundleFilePath)) fail("certification-verify membutuhkan absolute bundle path.");

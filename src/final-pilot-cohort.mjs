@@ -1,211 +1,118 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { buildRunEvidence } from "./interaction.mjs";
-import { RUN_STATES } from "./run-manager.mjs";
+import { listRuns, RUN_STATES } from "./run-manager.mjs";
 
-export const PILOT_COHORT_SCHEMA_VERSION = 1;
-export const PILOT_COHORT_CONTRACT_VERSION = "p9.2-2026-08-22";
+export const PILOT_COHORT_SCHEMA_VERSION = 2;
+export const PILOT_COHORT_CONTRACT_VERSION = "p9.2-real-runs-2026-08-22";
 export const PILOT_COHORT_KIND = "personal-ai-os-final-pilot-cohort";
 export const PILOT_COHORT_MIN_TASKS = 10;
 export const PILOT_COHORT_MIN_PROJECTS = 3;
 
-export const FINAL_PILOT_TASKS = Object.freeze([
-  { id: "PILOT-001", projectId: "pilot-web", category: "code", title: "Add settings validation", changedPath: "src/settings/validation.js", decision: "ACCEPTED" },
-  { id: "PILOT-002", projectId: "pilot-api", category: "code", title: "Add health response contract", changedPath: "src/health/contract.js", decision: "ACCEPTED" },
-  { id: "PILOT-003", projectId: "pilot-web", category: "ui", title: "Add empty-state panel", changedPath: "src/ui/EmptyState.jsx", decision: "ACCEPTED" },
-  { id: "PILOT-004", projectId: "pilot-mobile", category: "ui", title: "Add accessible navigation label", changedPath: "src/ui/Navigation.jsx", decision: "ACCEPTED" },
-  { id: "PILOT-005", projectId: "pilot-api", category: "failure-recovery", title: "Recover after executor restart", changedPath: "src/recovery/reconcile.js", decision: "ACCEPTED_AFTER_RECOVERY", recovery: true },
-  { id: "PILOT-006", projectId: "pilot-web", category: "request-changes", title: "Revise dashboard copy after review", changedPath: "src/ui/Copy.jsx", decision: "ACCEPTED_AFTER_REVISION", requestChanges: true },
-  { id: "PILOT-007", projectId: "pilot-mobile", category: "rejection", title: "Reject out-of-scope analytics change", changedPath: null, decision: "REJECTED", rejected: true },
-  { id: "PILOT-008", projectId: "pilot-api", category: "knowledge-create", title: "Record API error handling pattern", changedPath: "docs/error-handling.md", decision: "ACCEPTED_KNOWLEDGE_CREATE", knowledge: "CREATE" },
-  { id: "PILOT-009", projectId: "pilot-web", category: "knowledge-update", title: "Update UI testing guidance", changedPath: "docs/ui-testing.md", decision: "ACCEPTED_KNOWLEDGE_UPDATE", knowledge: "UPDATE" },
-  { id: "PILOT-010", projectId: "pilot-mobile", category: "rollback", title: "Rollback failed dependency change", changedPath: "package.json", decision: "ROLLED_BACK", rollback: true },
-]);
-
-function sha256(text) { return createHash("sha256").update(text).digest("hex"); }
-
+function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
 function writePrivateJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const text = `${JSON.stringify(value, null, 2)}\n`;
   const temporary = `${filePath}.${randomUUID()}.partial`;
   fs.writeFileSync(temporary, text, { encoding: "utf8", mode: 0o600 });
   fs.renameSync(temporary, filePath);
-  return { filePath, text, checksum: sha256(text) };
+  const checksum = sha256(text);
+  fs.writeFileSync(`${filePath}.sha256`, `${checksum}  ${path.basename(filePath)}\n`, { encoding: "utf8", mode: 0o600 });
+  return { filePath, checksum };
 }
 
-function createProjectFixture(projectRoot, projectId) {
-  fs.mkdirSync(path.join(projectRoot, "src", "ui"), { recursive: true, mode: 0o700 });
-  fs.mkdirSync(path.join(projectRoot, "docs"), { recursive: true, mode: 0o700 });
-  fs.mkdirSync(path.join(projectRoot, "tasks"), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(projectRoot, "package.json"), `${JSON.stringify({ name: projectId, version: "1.0.0", private: true }, null, 2)}\n`, { mode: 0o600 });
-  fs.writeFileSync(path.join(projectRoot, "README.md"), `# ${projectId}\n\nClean registered pilot fixture.\n`, { mode: 0o600 });
-  return {
-    id: projectId,
-    repository: path.resolve(projectRoot),
-    registered: true,
-    cleanAt: "2026-08-22T00:00:00.000Z",
-    initialFiles: ["package.json", "README.md"],
-  };
+function historyEvents(run) { return new Set((run.history ?? []).map((item) => item.event)); }
+function realAcceptedRun(run) {
+  const evidence = buildRunEvidence(run);
+  return run.state === RUN_STATES.DONE
+    && run.completion?.humanApproved === true
+    && evidence.scope.status === "PASS"
+    && evidence.verification.status === "PASS"
+    && evidence.finalization.status === "APPLIED"
+    && evidence.integrity.status === "OK";
 }
 
-function createPilotRun(task, project, now) {
-  const applied = !task.rejected && !task.rollback;
-  const state = applied ? RUN_STATES.DONE : RUN_STATES.FAILED;
-  const changedPaths = task.changedPath ? [task.changedPath] : [];
-  const allowedPaths = task.changedPath ? [task.changedPath] : ["src/allowed-only.js"];
-  const verification = [{ command: "fixture:scope", exitCode: 0 }, { command: "fixture:verification", exitCode: 0 }];
-  const workspace = applied
-    ? { state: "CLEANED", isolated: true, appliedAt: now.toISOString(), appliedPaths: changedPaths, postApplyVerification: verification, postApplyGraphify: { skipped: true, reason: "pilot fixture" }, artifactPath: `pilot-artifacts/${task.id}` }
-    : { state: task.rollback ? "APPLY_FAILED" : "DISCARDED", isolated: true, appliedPaths: [], postApplyVerification: [] };
-  const run = {
-    schemaVersion: 1,
-    revision: 1,
-    runId: `${task.id.toLowerCase()}-run`,
-    state,
-    createdAt: now.toISOString(),
-    updatedAt: now.toISOString(),
-    project: { id: project.id, repository: project.repository },
-    task: { id: task.id, title: task.title, status: applied ? "DONE" : "FAILED", path: `tasks/${task.id}.md`, allowedPaths },
-    plan: { verificationCommands: verification.map((item) => item.command) },
-    approval: applied ? { approvedAt: now.toISOString(), approvedBy: "human:p9.2", scope: "EXECUTE_TASK" } : { approvedAt: now.toISOString(), approvedBy: "human:p9.2", scope: "REVIEW_ONLY" },
-    completion: applied ? { completedAt: now.toISOString(), completedBy: "human:p9.2", humanApproved: true } : undefined,
-    execution: {
-      scopeAudit: { passed: true, changedPaths, allowedPaths, outOfScopePaths: [], deniedPaths: [] },
-      verification,
-      result: applied
-        ? { status: "SUCCESS", gitCommit: { committed: true, commitHash: `${task.id.toLowerCase()}-commit`, parentCommit: "fixture-parent", commitMessage: `feat(${task.id}): ${task.title}`, paths: changedPaths } }
-        : { status: "FAILED", error: task.rejected ? "Human review rejected: scope is not authorized." : "Apply failed; rollback completed." },
-      workspace,
-      invocation: { invocationId: `${task.id.toLowerCase()}-invocation`, count: 1, providerCalls: 0 },
-      ...(task.recovery ? { restartRecovery: { action: "RECONCILED", previousState: RUN_STATES.RUNNING, recoveredAt: now.toISOString() } } : {}),
-      ...(task.rollback ? { automaticRecovery: { status: "ROLLED_BACK", rollbackVerified: true } } : {}),
-      ...(task.requestChanges ? { reviewChanges: [{ iteration: 1, requestedBy: "human:p9.2", reason: "Copy needs clearer user-facing language.", status: "COMPLETED" }] } : {}),
-    },
-    knowledge: task.knowledge ? {
-      proposal: { action: task.knowledge, candidateId: `${task.id.toLowerCase()}-knowledge`, status: "APPROVED" },
-      approval: { approvedBy: "human:p9.2", approvedAt: now.toISOString(), action: task.knowledge },
-      sync: { status: "SYNCED", syncedAt: now.toISOString() },
-    } : undefined,
-    history: [
-      { event: "EXECUTION_APPROVED", state: RUN_STATES.APPROVED, at: now.toISOString(), approvedBy: "human:p9.2" },
-      ...(task.requestChanges ? [{ event: "REVIEW_CHANGES_REQUESTED", state: RUN_STATES.CHANGES_REQUESTED, at: now.toISOString() }] : []),
-      { event: state === RUN_STATES.DONE ? "RUN_DONE" : "RUN_FAILED", state, at: now.toISOString() },
-    ],
-  };
-  return run;
-}
-
-function scanForSecrets(root) {
-  const findings = [];
-  const walk = (directory) => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const filePath = path.join(directory, entry.name);
-      if (entry.isDirectory()) walk(filePath);
-      else if (entry.isFile()) {
-        const text = fs.readFileSync(filePath, "utf8");
-        if (/(BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY|api[_-]?key\s*[:=]|secret\s*[:=]|password\s*[:=])/i.test(text)) findings.push(path.relative(root, filePath));
-      }
-    }
-  };
-  walk(root);
-  return findings;
-}
-
-function evaluateTask(task, run, evidence) {
-  const applied = !task.rejected && !task.rollback;
-  const authorized = evidence.scope.status === "PASS" && evidence.scope.outOfScopePaths.length === 0 && evidence.scope.deniedPaths.length === 0 && evidence.scope.changedPaths.every((item) => evidence.scope.allowedPaths.includes(item));
-  const accepted = applied && evidence.finalization.status === "APPLIED" && evidence.finalization.humanApproved === true && evidence.verification.status === "PASS" && evidence.integrity.status === "OK";
-  const safeRejected = !applied
-    && evidence.integrity.status === "OK"
-    && (evidence.finalization.status === "NOT_APPLIED"
-      || (task.rollback && evidence.finalization.status === "FAILED" && run.execution?.automaticRecovery?.rollbackVerified === true));
-  return {
-    id: task.id,
-    projectId: task.projectId,
-    category: task.category,
-    decision: task.decision,
-    runId: run.runId,
-    status: applied ? (accepted && authorized ? "PASS" : "FAIL") : (safeRejected ? "PASS" : "FAIL"),
-    accepted,
-    authorized,
-    safeRejected,
-    evidence: { scope: evidence.scope.status, verification: evidence.verification.status, finalization: evidence.finalization.status, integrity: evidence.integrity.status, restart: evidence.restart?.status ?? null, knowledgeAction: task.knowledge ?? null },
-  };
-}
-
-export function runFinalPilotCohort({ reportRoot = null, now = new Date() } = {}) {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "orchestrator-p9-2-pilot-"));
-  const projectsRoot = path.join(tempRoot, "projects");
-  const runsRoot = path.join(tempRoot, "runs");
-  const results = [];
-  const runs = [];
-  try {
-    const projectIds = [...new Set(FINAL_PILOT_TASKS.map((task) => task.projectId))];
-    const projects = projectIds.map((projectId) => createProjectFixture(path.join(projectsRoot, projectId), projectId));
-    const registry = { schemaVersion: 1, registeredAt: now.toISOString(), projects };
-    writePrivateJson(path.join(runsRoot, "pilot-project-registry.json"), registry);
-    for (const task of FINAL_PILOT_TASKS) {
-      const project = projects.find((item) => item.id === task.projectId);
-      fs.writeFileSync(path.join(project.repository, "tasks", `${task.id}.md`), [
-        "---",
-        `task_id: ${task.id}`,
-        `project: ${task.projectId}`,
-        `title: ${task.title}`,
-        "status: READY",
-        "---",
-        "",
-        `# ${task.title}`,
-        "",
-        `Pilot category: ${task.category}. Scope is limited to the declared path.`,
-        "",
-      ].join("\n"), { encoding: "utf8", mode: 0o600 });
-      const run = createPilotRun(task, project, now);
-      const evidence = buildRunEvidence(run);
-      runs.push({ task, run, evidence });
-      results.push(evaluateTask(task, run, evidence));
-    }
-    const invocationIds = runs.map(({ run }) => run.execution.invocation.invocationId);
-    const duplicateInvocationCount = invocationIds.length - new Set(invocationIds).size;
-    const secretFindings = scanForSecrets(tempRoot);
-    const applied = results.filter((item) => item.accepted);
-    const rejectedOrFailed = results.filter((item) => !item.accepted);
-    const distinctProjects = new Set(results.map((item) => item.projectId));
-    const checks = {
-      minimumTaskCount: FINAL_PILOT_TASKS.length >= PILOT_COHORT_MIN_TASKS,
-      minimumProjectCount: distinctProjects.size >= PILOT_COHORT_MIN_PROJECTS,
-      acceptedPathsAuthorized: applied.length > 0 && applied.every((item) => item.authorized),
-      noDuplicateInvocation: duplicateInvocationCount === 0,
-      noSecretExposure: secretFindings.length === 0,
-      rejectedFailedMutationsSafe: rejectedOrFailed.every((item) => item.safeRejected),
-      completeEvidence: results.every((item) => item.status === "PASS"),
-    };
-    const report = {
-      schemaVersion: PILOT_COHORT_SCHEMA_VERSION,
-      kind: PILOT_COHORT_KIND,
-      contractVersion: PILOT_COHORT_CONTRACT_VERSION,
-      createdAt: now.toISOString(),
-      status: Object.values(checks).every(Boolean) ? "PASS" : "FAIL",
-      humanGate: { required: true, confirmed: false, instruction: "Review cohort evidence and explicitly accept P9.2 before GA certification." },
-      scope: { taskCount: results.length, projectCount: distinctProjects.size, projectIds: [...distinctProjects], appliedRunCount: applied.length, rejectedOrFailedCount: rejectedOrFailed.length },
-      checks,
-      duplicateInvocationCount,
-      secretFindings,
-      tasks: results,
-      registeredProjects: projects,
-      evidence: { runIds: runs.map(({ run }) => run.runId), categories: [...new Set(results.map((item) => item.category))] },
-    };
-    if (reportRoot) {
-      const reportPath = path.join(reportRoot, "runtime", "pilot-cohort", "p9.2-report.json");
-      const persisted = writePrivateJson(reportPath, report);
-      fs.writeFileSync(`${reportPath}.sha256`, `${persisted.checksum}  ${path.basename(reportPath)}\n`, { encoding: "utf8", mode: 0o600 });
-      return { ...report, reportPath, checksum: persisted.checksum };
-    }
-    return report;
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+function selectBalancedRuns(runs) {
+  const eligible = runs.filter(realAcceptedRun).sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)));
+  const byProject = new Map();
+  for (const run of eligible) {
+    const projectId = run.project?.id;
+    if (!projectId) continue;
+    if (!byProject.has(projectId)) byProject.set(projectId, []);
+    byProject.get(projectId).push(run);
   }
+  const projects = [...byProject.entries()].sort((a, b) => b[1].length - a[1].length);
+  if (projects.length < PILOT_COHORT_MIN_PROJECTS) return [];
+  const selected = [];
+  for (const [, candidates] of projects.slice(0, PILOT_COHORT_MIN_PROJECTS)) selected.push(candidates.shift());
+  const remaining = projects.flatMap(([, candidates]) => candidates).sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)));
+  while (selected.length < PILOT_COHORT_MIN_TASKS && remaining.length) selected.push(remaining.shift());
+  return selected;
+}
+
+function taskProjection(run) {
+  const evidence = buildRunEvidence(run);
+  const events = historyEvents(run);
+  return {
+    runId: run.runId,
+    taskId: run.task?.id ?? null,
+    projectId: run.project?.id ?? null,
+    updatedAt: run.updatedAt ?? run.createdAt ?? null,
+    source: "persisted-real-run",
+    status: realAcceptedRun(run) ? "PASS" : "FAIL",
+    scenarios: { requestChanges: events.has("REVIEW_CHANGES_REQUESTED"), recovery: [...events].some((event) => /RECOVERY|RECONCIL/i.test(event)), knowledgeApproval: events.has("KNOWLEDGE_APPROVED") },
+    evidence: { scope: evidence.scope.status, verification: evidence.verification.status, finalization: evidence.finalization.status, integrity: evidence.integrity.status, humanApproved: evidence.finalization.humanApproved, changedPaths: evidence.scope.changedPaths },
+  };
+}
+
+function exceptionalScenarioCoverage(runs) {
+  const requestChanges = runs.find((run) => historyEvents(run).has("REVIEW_CHANGES_REQUESTED"));
+  const recovery = runs.find((run) => [...historyEvents(run)].some((event) => /RECOVERY|RECONCIL/i.test(event)));
+  const rejection = runs.find((run) => run.state === RUN_STATES.FAILED && !run.execution?.workspace?.appliedAt);
+  return {
+    requestChanges: requestChanges ? { covered: true, runId: requestChanges.runId } : { covered: false, runId: null },
+    recovery: recovery ? { covered: true, runId: recovery.runId } : { covered: false, runId: null },
+    rejection: rejection ? { covered: true, runId: rejection.runId, mutationApplied: false } : { covered: false, runId: null, mutationApplied: null },
+  };
+}
+
+export function runFinalPilotCohort({ reportRoot, sourceRunsRoot = reportRoot, now = new Date() } = {}) {
+  if (!sourceRunsRoot || !path.isAbsolute(sourceRunsRoot)) throw new Error("Final pilot membutuhkan sourceRunsRoot absolut berisi run nyata.");
+  const allRuns = listRuns(sourceRunsRoot);
+  const selectedRuns = selectBalancedRuns(allRuns);
+  const tasks = selectedRuns.map(taskProjection);
+  const projectIds = [...new Set(tasks.map((item) => item.projectId))];
+  const scenarios = exceptionalScenarioCoverage(allRuns);
+  const checks = {
+    realPersistedRunsOnly: tasks.length > 0 && tasks.every((item) => item.source === "persisted-real-run"),
+    minimumTaskCount: tasks.length >= PILOT_COHORT_MIN_TASKS,
+    minimumProjectCount: projectIds.length >= PILOT_COHORT_MIN_PROJECTS,
+    acceptedPathsAuthorized: tasks.length > 0 && tasks.every((item) => item.evidence.scope === "PASS"),
+    verificationPassed: tasks.length > 0 && tasks.every((item) => item.evidence.verification === "PASS"),
+    humanApprovedAndApplied: tasks.length > 0 && tasks.every((item) => item.evidence.humanApproved && item.evidence.finalization === "APPLIED"),
+    completeEvidence: tasks.length > 0 && tasks.every((item) => item.status === "PASS"),
+    exceptionalScenariosCovered: Object.values(scenarios).every((item) => item.covered),
+  };
+  const report = {
+    schemaVersion: PILOT_COHORT_SCHEMA_VERSION, kind: PILOT_COHORT_KIND, contractVersion: PILOT_COHORT_CONTRACT_VERSION,
+    createdAt: now.toISOString(), status: Object.values(checks).every(Boolean) ? "PASS" : "FAIL",
+    humanGate: { required: true, confirmed: false, instruction: "Review real-run cohort evidence before final certification." },
+    source: { runsRoot: path.resolve(sourceRunsRoot), discoveredRunCount: allRuns.length, selectionPolicy: "balanced-latest-human-approved-real-runs" },
+    scope: { taskCount: tasks.length, projectCount: projectIds.length, projectIds }, checks, scenarios, tasks,
+  };
+  if (!reportRoot) return report;
+  const bundleRoot = path.join(reportRoot, "runtime", "pilot-cohort", "evidence", report.createdAt.replace(/[-:.]/g, ""));
+  const artifacts = [];
+  for (const run of selectedRuns) {
+    const artifactPath = path.join(bundleRoot, `${run.runId}.json`);
+    const persisted = writePrivateJson(artifactPath, run);
+    artifacts.push({ runId: run.runId, relativePath: path.relative(reportRoot, artifactPath), checksum: persisted.checksum });
+  }
+  report.evidenceBundle = { root: path.relative(reportRoot, bundleRoot), artifacts };
+  const reportPath = path.join(reportRoot, "runtime", "pilot-cohort", "p9.2-report.json");
+  const persisted = writePrivateJson(reportPath, report);
+  return { ...report, reportPath, checksum: persisted.checksum };
 }
 
 export function verifyFinalPilotCohortReport({ reportPath } = {}) {
@@ -213,6 +120,14 @@ export function verifyFinalPilotCohortReport({ reportPath } = {}) {
   const text = fs.readFileSync(reportPath, "utf8");
   let report = null;
   try { report = JSON.parse(text); } catch { return { valid: false, status: null, checksum: sha256(text), report: null }; }
-  const checksumText = fs.existsSync(`${reportPath}.sha256`) ? fs.readFileSync(`${reportPath}.sha256`, "utf8").trim() : "";
-  return { valid: report?.kind === PILOT_COHORT_KIND && report?.schemaVersion === PILOT_COHORT_SCHEMA_VERSION && checksumText.split(/\s+/)[0] === sha256(text), status: report?.status ?? null, checksum: sha256(text), report };
+  const sidecar = fs.existsSync(`${reportPath}.sha256`) ? fs.readFileSync(`${reportPath}.sha256`, "utf8").trim().split(/\s+/)[0] : null;
+  const reportRoot = path.resolve(path.dirname(reportPath), "../..");
+  const artifactsValid = Array.isArray(report?.evidenceBundle?.artifacts) && report.evidenceBundle.artifacts.length >= PILOT_COHORT_MIN_TASKS && report.evidenceBundle.artifacts.every((artifact) => {
+    const artifactPath = path.join(reportRoot, artifact.relativePath);
+    if (!fs.existsSync(artifactPath) || !fs.existsSync(`${artifactPath}.sha256`)) return false;
+    const artifactText = fs.readFileSync(artifactPath, "utf8");
+    return sha256(artifactText) === artifact.checksum && fs.readFileSync(`${artifactPath}.sha256`, "utf8").trim().split(/\s+/)[0] === artifact.checksum;
+  });
+  const valid = report?.kind === PILOT_COHORT_KIND && report?.schemaVersion === PILOT_COHORT_SCHEMA_VERSION && report?.status === "PASS" && report?.checks?.realPersistedRunsOnly === true && sidecar === sha256(text) && artifactsValid;
+  return { valid, status: report?.status ?? null, checksum: sha256(text), artifactsValid, report };
 }

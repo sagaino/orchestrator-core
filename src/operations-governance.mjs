@@ -242,7 +242,14 @@ export function recordVerifiedBackup({ runsRoot, backupPath, verification, manif
 }
 
 export function readBackupStatus(runsRoot) {
-  return readJson(backupStatusPath(runsRoot));
+  const record = readJson(backupStatusPath(runsRoot));
+  if (!record || record.independentTarget !== null && record.independentTarget !== undefined) return record;
+  if (!record.backupPath) return record;
+  const resolvedRunsRoot = path.resolve(runsRoot);
+  const resolvedBackupPath = path.resolve(record.backupPath);
+  const relative = path.relative(resolvedRunsRoot, resolvedBackupPath);
+  const outsideRuntime = relative !== "" && (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative));
+  return { ...record, independentTarget: outsideRuntime ? true : null, independentTargetDerived: outsideRuntime ? "legacy-backup-path-outside-runtime" : null };
 }
 
 function measureTree(root) {
@@ -324,8 +331,9 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
 
   const signalWindowMs = config.signalWindowHours * 60 * 60 * 1000;
   const recentRuns = listRuns(runsRoot).filter((run) => Date.parse(run.updatedAt ?? run.createdAt ?? "") > now.getTime() - signalWindowMs);
-  const deadlineFailures = recentRuns.filter((run) => /deadline|timeout|output limit/i.test(JSON.stringify(run.execution ?? run.error ?? ""))).length;
-  const providerFailures = recentRuns.filter((run) => /provider|model|rate limit|429/i.test(JSON.stringify(run.execution ?? run.error ?? ""))).length;
+  const unresolvedFailureText = (run) => run.state === "FAILED" ? JSON.stringify({ error: run.error ?? null, resultError: run.execution?.result?.error ?? null, recoveryError: run.execution?.automaticRecovery?.lastError ?? run.execution?.restartRecovery?.error ?? null }) : "";
+  const deadlineFailures = recentRuns.filter((run) => /deadline|timeout|output limit/i.test(unresolvedFailureText(run))).length;
+  const providerFailures = recentRuns.filter((run) => /provider|model|rate limit|429/i.test(unresolvedFailureText(run))).length;
   checks.push(check({ id: "failure-signals", status: deadlineFailures || providerFailures ? "WARN" : "PASS", severity: deadlineFailures || providerFailures ? "WARNING" : "INFO", message: deadlineFailures || providerFailures ? "Kegagalan deadline/provider terdeteksi dalam 24 jam terakhir." : "Tidak ada kegagalan deadline/provider terbaru.", action: deadlineFailures || providerFailures ? "Tinjau run gagal dan jalankan runbook reliability." : "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#reliability", metrics: { deadlineFailures, providerFailures } }));
 
   const daemonState = daemon ?? daemonStatus({ runsRoot });

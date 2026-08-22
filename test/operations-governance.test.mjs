@@ -30,8 +30,10 @@ try {
     verification: { verifiedAt: "2026-08-22T00:00:00.000Z", fileCount: 1, totalBytes: 10 },
     manifest: { backupId: "dr-test", createdAt: "2026-08-22T00:00:00.000Z", completedAt: "2026-08-22T00:00:00.000Z" },
   });
+  fs.writeFileSync(path.join(runsRoot, "successful-provider-run.json"), JSON.stringify({ schemaVersion: 1, runId: "successful-provider-run", state: "DONE", createdAt: "2026-08-22T00:00:00.000Z", updatedAt: "2026-08-22T00:30:00.000Z", project: { id: "fixture", repository: path.join(root, "fixture") }, task: { id: "TASK-OK", path: "tasks/TASK-OK.md" }, execution: { telemetry: { provider: "fixture-provider", model: "fixture-model" }, result: { status: "SUCCESS" } }, history: [] }));
   const ready = operationsReadiness({ runsRoot, now: new Date("2026-08-22T01:00:00.000Z") });
   assert.equal(ready.admission.allowed, true);
+  assert.equal(ready.signals.failures.providerFailures, 0, "successful provider metadata must not be counted as a failure");
   const acknowledged = acknowledgeOperationsAlert({ runsRoot, alertId: "OPS_PROVIDER_FAILURES", acknowledgedBy: "operator", now: new Date("2026-08-22T01:01:00.000Z"), note: "investigating" });
   assert.equal(acknowledged.history.length, 1);
   assert.equal(listOperationsAlertAcknowledgements({ runsRoot, alertId: "OPS_PROVIDER_FAILURES" }).length, 1);
