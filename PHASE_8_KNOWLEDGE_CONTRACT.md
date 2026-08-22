@@ -1,6 +1,6 @@
 # Phase 8 — Knowledge and Long-Running Operations Contract
 
-Status: **P8.2 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P8.2 IMPLEMENTED — HUMAN-ACCEPTED**
 Contract version: **p8.2-2026-08-22**
 Boundary: **durable knowledge provenance, reversible maintenance, owned/deduplicated/snoozable operations alerts, and evidence-backed resolution; no silent admission override**
 
