@@ -456,7 +456,10 @@ export async function main(argv = process.argv.slice(2)) {
     } else if (command === "operations-readiness") {
       const { operationsReadiness } = await import("./operations-governance.mjs");
       result = operationsReadiness({ runsRoot: options.runs });
-      if (result.status !== "READY") process.exitCode = 1;
+      // Warnings (for example an unapplied backup schedule reminder) are
+      // observable but non-blocking. The readiness command fails only when
+      // admission is actually closed by a critical blocker.
+      if (result.admission?.allowed !== true) process.exitCode = 1;
     } else if (command === "certification-verify") {
       const [bundleFilePath] = options.positional;
       if (!bundleFilePath || !path.isAbsolute(bundleFilePath)) fail("certification-verify membutuhkan absolute bundle path.");
