@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 export const RELEASE_MANIFEST_SCHEMA_VERSION = 1;
 export const RELEASE_MANIFEST_KIND = "personal-ai-os-v1-release-manifest";
@@ -17,6 +18,12 @@ function absoluteRoot(value, label) {
 }
 function packageVersion(root) {
   try { return JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version ?? null; } catch { return null; }
+}
+function gitCommit(root) {
+  try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(); } catch { return null; }
+}
+function gitClean(root) {
+  try { return execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim() === ""; } catch { return false; }
 }
 function lockEvidence(root, label) {
   const lockPath = path.join(root, "package-lock.json");
@@ -56,7 +63,13 @@ export function createReleaseManifest({
     kind: RELEASE_MANIFEST_KIND,
     releaseVersion: String(releaseVersion),
     generatedAt: now.toISOString(),
-    provenance: { sourceCommit: sourceCommit ? String(sourceCommit) : null, backendVersion: packageVersion(source), dashboardVersion: packageVersion(dashboard) },
+    provenance: {
+      sourceCommit: sourceCommit ? String(sourceCommit) : gitCommit(source),
+      dashboardCommit: gitCommit(dashboard),
+      backendVersion: packageVersion(source),
+      dashboardVersion: packageVersion(dashboard),
+      repositoriesClean: { backend: gitClean(source), dashboard: gitClean(dashboard) },
+    },
     supportedHost: { platforms: ["darwin"], architectures: ["arm64", "x64"], node: { minimumMajor: 18, maximumMajor: 26 } },
     dependencies: { packageManager: "npm", installCommand: "npm ci --ignore-scripts --no-audit --no-fund", locks: [lockEvidence(source, "backend"), lockEvidence(dashboard, "dashboard")] },
     paths: { sourceRoot: source, dashboardRoot: dashboard, vaultRoot: vault, runsRoot: runs, backupRoot: backup },
@@ -98,6 +111,10 @@ export function verifyReleaseManifest({ manifest, manifestPath = null, now = new
     else if (!fs.existsSync(lock.lockPath)) errors.push(lock.label + " lockfile hilang");
     else if (sha256File(lock.lockPath) !== lock.sha256) errors.push(lock.label + " lockfile checksum berubah");
   }
+  if (!candidate?.provenance?.sourceCommit) errors.push("backend commit tidak tercatat");
+  if (!candidate?.provenance?.dashboardCommit) errors.push("dashboard commit tidak tercatat");
+  if (candidate?.provenance?.backendVersion !== candidate?.releaseVersion) errors.push("backend version tidak sama dengan releaseVersion");
+  if (candidate?.provenance?.dashboardVersion !== candidate?.releaseVersion) errors.push("dashboard version tidak sama dengan releaseVersion");
   if (candidate?.paths?.sourceRoot && !fs.existsSync(path.join(candidate.paths.sourceRoot, "start.sh"))) errors.push("start.sh tidak ditemukan");
   const valid = errors.length === 0 && checksumValid;
   return { valid, checksumValid, sidecarChecksum, checkedAt: now.toISOString(), errors, manifest: candidate ?? null };

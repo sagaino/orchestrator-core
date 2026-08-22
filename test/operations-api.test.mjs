@@ -38,7 +38,7 @@ try {
   assert.equal(releaseResponse.status, 200);
   const releaseBody = await releaseResponse.json();
   assert.equal(releaseBody.data.schemaVersion, 1);
-  assert.equal(releaseBody.data.current.runtimeVersion, "0.1.0");
+  assert.equal(releaseBody.data.current.runtimeVersion, "1.0.0");
   assert.equal(releaseBody.data.candidate.status, "NOT_CONFIGURED");
   assert.equal(releaseBody.data.activation.requiresHumanConfirmation, true);
   assert.equal(releaseBody.data.activation.selfAcceptAllowed, false);

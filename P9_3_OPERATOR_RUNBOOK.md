@@ -1,10 +1,11 @@
 # P9.3 Operator Runbook — UI-First Install, Recovery, and Rollback
 
-Status: **P9.3 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P9.3 HUMAN-ACCEPTED — GA REMEDIATION ALIGNED**
 
 This runbook is the operator path for the local-first AI OS. The dashboard is
-the primary interface. CLI commands are the auditable fallback for an operator
-who has already confirmed the target paths. No step in this document grants
+the primary inspection and preparation interface. The CLI and external
+supervisor are the execution authority for host lifecycle, restore, promotion,
+and release activation. No step in this document grants
 itself approval, clears recovery quarantine, or promotes a release.
 
 ## Safety boundary
@@ -19,26 +20,26 @@ itself approval, clears recovery quarantine, or promotes a release.
 
 ## Install on a clean supported host
 
-1. In the dashboard, open **Release → Installation** and review the release
-   version, supported macOS/Node host, absolute data roots, and lockfile
-   checksums.
+1. Inspect the release manifest and Operations page for the release version,
+   supported macOS/Node host, absolute data roots, and lockfile checksums.
 2. Confirm the source and dashboard repositories are clean and the manifest
    verification is green.
 3. Install dependencies using the reviewed manifest command:
    `npm ci --ignore-scripts --no-audit --no-fund`.
 4. Start only after the human operator confirms the installation checklist.
 
-CLI fallback: `release-manifest <version>` followed by
+Execution path: `release-manifest <version>` followed by
 `release-manifest-verify <absolute-manifest-path>`.
 
 ## Start and stop
 
-1. Dashboard: open **Operations → Runtime**, inspect heartbeat and admission,
-   then choose **Start** or **Stop** and confirm the action.
+1. Open **Operations**, inspect heartbeat and admission, then use the external
+   supervisor or CLI to start or stop the runtime.
 2. Wait for the health indicator and queue drain evidence; never start while a
    recovery quarantine or unresolved critical alert is present.
 
-CLI fallback: `daemon:start`, `daemon:status`, and `daemon:stop`.
+Execution path: `daemon:start`, `daemon:status`, and `daemon:stop`. The
+dashboard intentionally does not activate launchd or stop the host runtime.
 
 ## Task lifecycle
 
@@ -63,8 +64,8 @@ CLI fallback: `daemon:start`, `daemon:status`, and `daemon:stop`.
 
 ## Update and rollback
 
-1. In **Release → Candidate**, verify candidate checksum, compatibility, queue
-   drain, and the external supervisor gate.
+1. Inspect the prepared release candidate, checksum, compatibility, queue
+   drain, and external-supervisor gate in Operations.
 2. Approve activation only as the human operator. Observe startup and health
    evidence.
 3. If startup, migration, or health fails, keep the stable release active and
@@ -99,13 +100,13 @@ and `dr-register-verified <absolute-backup>`.
 ## Restore to a clean recovery target
 
 1. Create a new, empty target directory outside the Vault and runtime roots.
-2. In **Operations → Recovery**, select the verified backup and choose
-   **Restore to quarantine**. Confirm the target path and backup ID.
+2. Inspect the verified backup in Operations, then execute the restore through
+   the CLI to a new quarantine target after confirming target path and backup ID.
 3. Verify the restored Vault, runtime state, audit/evidence files, and
    `RECOVERY_QUARANTINE` banner. Execution must remain blocked.
 4. Run health, compatibility, and evidence checks while still quarantined.
 
-CLI fallback: `dr-restore <absolute-backup-directory>
+Execution path: `dr-restore <absolute-backup-directory>
 <absolute-new-target-root>`.
 
 ## Emergency recovery

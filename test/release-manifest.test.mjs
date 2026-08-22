@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { createReleaseManifest, verifyReleaseManifest, verifyReleaseManifestFile, writeReleaseManifest } from "../src/release-manifest.mjs";
 
 console.log("Running release-manifest.test.mjs...");
@@ -19,6 +20,9 @@ try {
   for (const directory of [sourceRoot, dashboardRoot]) {
     fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify({ name: path.basename(directory), version: "1.0.0" }));
     fs.writeFileSync(path.join(directory, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: {} }));
+    execFileSync("git", ["init", "-q"], { cwd: directory });
+    execFileSync("git", ["add", "."], { cwd: directory });
+    execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"], { cwd: directory });
   }
   const manifest = createReleaseManifest({ sourceRoot, dashboardRoot, vaultRoot, runsRoot, backupRoot, sourceCommit: "abc123", now: new Date("2026-08-22T00:00:00.000Z") });
   assert.equal(manifest.releaseVersion, "1.0.0");

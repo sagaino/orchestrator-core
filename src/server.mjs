@@ -37,6 +37,9 @@ import { backupRecoveryStatus, previewBackupSchedule, previewBackupRotation, ver
 import { getReleaseOperations } from "./release-operations.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
+const RUNTIME_VERSION = (() => {
+  try { return JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version; } catch { return "unknown"; }
+})();
 
 function validateRouteIdentifiers(params) {
   for (const name of ["id", "projectId", "evidenceId"]) {
@@ -70,7 +73,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       data: {
         status: "healthy",
         service: "personal-ai-orchestrator-api",
-        version: "0.1.0",
+        version: RUNTIME_VERSION,
         timestamp: new Date().toISOString(),
       },
     });
