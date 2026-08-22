@@ -182,6 +182,10 @@ case "$1" in
     shift
     exec node "$DIR/src/release-supervisor.mjs" "$@"
     ;;
+  release-certification)
+    shift
+    exec node "$DIR/src/release-certification.mjs" "$@"
+    ;;
   stop)
     stop_services
     exit 0

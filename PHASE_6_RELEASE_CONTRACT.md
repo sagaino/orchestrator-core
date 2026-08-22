@@ -131,3 +131,23 @@ Evidence:
   pass;
 - browser test verifies the activation button remains disabled until the human
   acknowledgement and that the UI explicitly reports no activation occurred.
+
+## 8. P6.5 Guarded Self-Update certification
+
+P6.5 adds `src/release-certification.mjs` and an isolated certification
+command. The command creates disposable stable-runtime and candidate roots,
+then delegates both outcomes to the external supervisor:
+
+- one candidate activation completes successfully;
+- a second candidate fails its health probe and is automatically rolled back;
+- candidate checksums remain stable, the stable source is restored exactly,
+  and source/candidate/supervisor authority remain separate;
+- audit-chain entries reconstruct both outcomes and the certificate records
+  per-file SHA-256 evidence for each source/candidate state.
+
+The latest certificate is stored at
+`runs/runtime/certifications/phase6.5-cert-20260822T020913662Z-787848fd.json`
+with checksum
+`69ddd7aeec310b9c2b9090ccbe684b4f92ac721a8f6e9bffc01901198f5c1b96`.
+Its status is `CERTIFIED_HUMAN_GATE_REQUIRED`: the fixture certification does
+not approve or activate a production candidate.
