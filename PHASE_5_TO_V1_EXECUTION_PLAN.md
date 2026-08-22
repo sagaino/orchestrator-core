@@ -308,6 +308,8 @@ Implementation status: **IMPLEMENTED — HUMAN-ACCEPTED (2026-08-22)**
 
 ### P8.4 — Soak and Capacity Harness
 
+Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+
 - Model: `ECONOMY`
 - Scope: deterministic 24/72-hour workload harness with bounded synthetic jobs,
   restart points, API/SSE load, artifact growth, and alert collection.
