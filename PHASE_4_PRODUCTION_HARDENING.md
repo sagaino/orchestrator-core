@@ -89,8 +89,8 @@ These measurements are a development-host baseline, not a capacity claim.
 | P4-003 | CLOSED | Shared structured/text redaction runs before core durable writes, and the real runtime permission migration applied private modes to 657 directories and 883 files. | 4.2 |
 | P4-004 | CLOSED | The partial-lease visibility race was identified and fixed fail-closed. Certification completed 25 rounds / 200 admission callers and 50 manifest writers with zero duplicates or lost updates. | 4.3 |
 | P4-005 | CLOSED for local single-user deployment | Mutations require an OS-derived local operator session and one-time action nonce; payload actor labels are overwritten. | 4.2 |
-| P4-006 | PARTIALLY CLOSED | Universal process-group deadlines, kill escalation, bounded output, and bounded recovery retries are enforced. API/SSE limits, disk guard, quota, and retention remain Phase 4.4. | 4.3/4.4 |
-| P4-007 | MEDIUM | Health is fragmented and does not provide one readiness decision covering daemon, Vault, repositories, disk, backups, queue age, provider reachability, and evidence integrity. | 4.4 |
+| P4-006 | CLOSED | Universal process-group deadlines, kill escalation, bounded output, bounded recovery, API request/SSE limits, disk guard, quota, and confirmation-only retention are enforced. | 4.3/4.4 |
+| P4-007 | CLOSED | Operations readiness now yields one admission decision with actionable disk, backup freshness, queue age, artifact growth, deadline/provider, daemon, and evidence-integrity signals. | 4.4 |
 | P4-008 | CLOSED for operator mutations | Authorized mutations are recorded in a SHA-256 previous-hash chain with verification API/CLI; Phase 4.5 will anchor the final head in its certification bundle. | 4.2/4.5 |
 | P4-009 | CLOSED | Wildcard SSE CORS response header removed; the localhost origin guard remains authoritative. | 4.2 |
 | P4-010 | LOW | Dashboard lint has eight warnings and the production bundle reports a chunk above 500 kB; neither blocks correctness, but both reduce operations signal quality. | 4.4 |
@@ -184,13 +184,29 @@ cleanup retry, Git conflict, corrupt restart state, and bounded recovery.
 
 ### Phase 4.4 — Operations Center and Resource Governance
 
-Status: **PLANNED**
+Status: **IMPLEMENTED — GOVERNANCE CONTRACT VERIFIED 2026-08-22**
 
-- Publish one readiness projection with actionable degraded reasons.
-- Add queue-age, disk, backup freshness, artifact growth, process deadline,
-  provider failure, and evidence-integrity signals.
-- Add quotas, retention preview, explicit purge approval, and recoverable trash.
-- Define alert severity, deduplication, acknowledgement, and operator runbooks.
+- `GET /api/operations/readiness` and `operations-readiness` publish one
+  deterministic admission decision. The projection includes disk free space,
+  verified backup freshness, runtime/artifact quotas, audit-chain integrity,
+  queue age, deadline/provider failures, and daemon signal.
+- Production launcher enables `ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD=1`.
+  A blocked readiness state prevents daemon admission and dashboard run starts;
+  developer fixtures remain explicitly non-enforcing unless that policy is set.
+- API traffic has separate read/mutation request buckets (240/120 per minute by
+  default), while SSE connections are capped at 20 by default and return 429
+  with `Retry-After` when full. Limits are configurable through
+  `ORCHESTRATOR_MAX_SSE_CLIENTS`, `ORCHESTRATOR_MIN_FREE_DISK_MB`,
+  `ORCHESTRATOR_MAX_RUNTIME_BYTES`, `ORCHESTRATOR_MAX_ARTIFACT_BYTES`,
+  `ORCHESTRATOR_MAX_BACKUP_AGE_HOURS`, and `ORCHESTRATOR_MAX_QUEUE_AGE_MINUTES`.
+- Retention is preview-first. `retention-preview` writes an expiring plan;
+  `retention-purge <plan-id> --confirm` requires a bound operator identity and
+  moves only old workspace artifacts/backups into recoverable runtime trash.
+  It never auto-deletes Vault, source, audit, run manifests, or evidence.
+  `retention-restore <trash-id> --confirm` restores a non-conflicting trash item.
+- Alerts expose severity, a stable deduplication key, acknowledgement semantics,
+  an action, and an operator runbook. The Dashboard Operations page visualizes
+  the same readiness object, active alerts, and retention confirmation flow.
 
 Exit gate: the dashboard detects and explains every Phase 4.3 injected failure,
 and no automated cleanup deletes audit or source data without confirmation.

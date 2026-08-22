@@ -6,6 +6,7 @@ import { listJobs, JOB_STATES } from "./job-queue.mjs";
 import { listRuns, RUN_STATES } from "./run-manager.mjs";
 import { normalizeSafeRelativePath } from "./security.mjs";
 import { recoveryModePath } from "./recovery-mode.mjs";
+import { recordVerifiedBackup } from "./operations-governance.mjs";
 
 export const DR_SCHEMA_VERSION = 1;
 export const DR_RPO_TARGET_HOURS = 24;
@@ -225,7 +226,7 @@ export function createDisasterRecoveryBackup({
     };
     writeManifest(partialPath, manifest);
     fs.renameSync(partialPath, backupPath);
-    return {
+    const result = {
       schemaVersion: manifest.schemaVersion,
       kind: manifest.kind,
       backupId,
@@ -240,6 +241,9 @@ export function createDisasterRecoveryBackup({
       backupPath,
       manifestPath: path.join(backupPath, "manifest.json"),
     };
+    const verification = verifyDisasterRecoveryBackup({ backupPath });
+    recordVerifiedBackup({ runsRoot, backupPath, verification, manifest });
+    return result;
   } catch (error) {
     if (fs.existsSync(partialPath)) safeRemovePartial(resolvedBackupRoot, partialPath);
     throw error;
@@ -317,6 +321,11 @@ export function verifyDisasterRecoveryBackup({ backupPath } = {}) {
   };
   Object.defineProperty(result, "manifest", { value: manifest, enumerable: false });
   return result;
+}
+
+export function registerVerifiedDisasterRecoveryBackup({ runsRoot, backupPath } = {}) {
+  const verification = verifyDisasterRecoveryBackup({ backupPath });
+  return recordVerifiedBackup({ runsRoot, backupPath, verification, manifest: verification.manifest });
 }
 
 export function restoreDisasterRecoveryBackup({ backupPath, targetRoot } = {}) {
