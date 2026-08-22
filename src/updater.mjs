@@ -4,6 +4,19 @@ import { randomUUID } from "node:crypto";
 import { listJobs, JOB_STATES } from "./job-queue.mjs";
 import { daemonStatus, startDaemon, stopDaemon } from "./daemon.mjs";
 
+export const RUNTIME_SOURCE_ITEMS = Object.freeze([
+  "src",
+  "templates",
+  "schemas",
+  "docs",
+  "package.json",
+  "package-lock.json",
+  "start.sh",
+  "stop.sh",
+  "README.md",
+  "PHASE_6_RELEASE_CONTRACT.md",
+]);
+
 export function runtimeBackupsRoot(runsRoot) {
   return path.join(runsRoot, "runtime-backups");
 }
@@ -43,12 +56,14 @@ export function backupRuntimeSource({ sourceRoot, runsRoot }) {
   fs.mkdirSync(backupDir, { recursive: true });
 
   let filesCount = 0;
-  // Backup src, templates, docs, package.json
-  for (const item of ["src", "templates", "docs", "package.json"]) {
+  const presentItems = [];
+  // Backup every source item that a release candidate is allowed to replace.
+  for (const item of RUNTIME_SOURCE_ITEMS) {
     const srcPath = path.join(sourceRoot, item);
     const destPath = path.join(backupDir, item);
     if (fs.existsSync(srcPath)) {
       filesCount += copyRecursiveSync(srcPath, destPath);
+      presentItems.push(item);
     }
   }
 
@@ -58,6 +73,7 @@ export function backupRuntimeSource({ sourceRoot, runsRoot }) {
     backedUpAt: new Date().toISOString(),
     sourceRoot,
     filesCount,
+    items: presentItems,
   };
   fs.writeFileSync(path.join(backupDir, "backup-manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
 
@@ -69,11 +85,20 @@ export function restoreRuntimeSource({ backupDir, sourceRoot }) {
     throw new Error(`Backup directory not found: ${backupDir}`);
   }
 
-  for (const item of ["src", "templates", "docs", "package.json"]) {
+  const backupManifest = fs.existsSync(path.join(backupDir, "backup-manifest.json"))
+    ? JSON.parse(fs.readFileSync(path.join(backupDir, "backup-manifest.json"), "utf8"))
+    : {};
+  const presentItems = Array.isArray(backupManifest.items)
+    ? new Set(backupManifest.items)
+    : new Set(RUNTIME_SOURCE_ITEMS.filter((item) => fs.existsSync(path.join(backupDir, item))));
+  for (const item of RUNTIME_SOURCE_ITEMS) {
     const backupItemPath = path.join(backupDir, item);
     const targetItemPath = path.join(sourceRoot, item);
-    if (fs.existsSync(backupItemPath)) {
+    if (presentItems.has(item) && fs.existsSync(backupItemPath)) {
+      fs.rmSync(targetItemPath, { recursive: true, force: true });
       copyRecursiveSync(backupItemPath, targetItemPath);
+    } else if (!presentItems.has(item)) {
+      fs.rmSync(targetItemPath, { recursive: true, force: true });
     }
   }
 }
@@ -117,7 +142,7 @@ export async function performGuardedUpdate({
     } catch {}
 
     onProgress({ stage: "APPLYING_RELEASE_CANDIDATE" });
-    copyRecursiveSync(releaseCandidateRoot, sourceRoot);
+    copyRecursiveSync(releaseCandidateRoot, sourceRoot, new Set(["node_modules", ".git", "runs", "candidate-manifest.json", "checksums.sha256"]));
     updateApplied = true;
 
     onProgress({ stage: "STARTING_NEW_DAEMON" });
@@ -150,6 +175,7 @@ export async function performGuardedUpdate({
         return {
           success: false,
           rolledBack: false,
+          errorCode: err.code ?? null,
           error: `Update failed (${err.message}) and rollback encountered error: ${rollbackErr.message}`,
           backupDir: backup.backupDir,
         };
@@ -158,6 +184,7 @@ export async function performGuardedUpdate({
     return {
       success: false,
       rolledBack: true,
+      errorCode: err.code ?? null,
       error: err.message,
       backupDir: backup.backupDir,
     };

@@ -105,3 +105,9 @@ grant approval by itself.
   nonce hash supplied outside the candidate manifest.
 - `npm test`, `bash -n start.sh`, and the dedicated release-supervisor suite
   pass. A real candidate remains stored separately from the stable runtime.
+
+P6.3 adds deterministic drills for startup crash, missing heartbeat, corrupt
+manifest, incompatible schema, failed migration, and failed health probe. Each
+case records the injected diagnostic, requires a failure or rejection, hashes
+the managed stable source before and after, and passes only when the hashes are
+identical and uncertain work is not replayed.

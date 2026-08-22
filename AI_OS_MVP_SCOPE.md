@@ -200,9 +200,19 @@ Phase 0 is complete when this document is tracked in the repository, linked from
 
 Subsequent implementation phases must reference this contract. A proposed feature that conflicts with the In Scope, Out of Scope, or Mandatory Safety Properties sections must be documented as a scope change before implementation.
 
+The MVP scope remains the product boundary. Work after the Phase 0–4 MVP
+certification follows the separately versioned
+[Phase 5 to v1.0 Execution Plan](./PHASE_5_TO_V1_EXECUTION_PLAN.md); it is a
+sequenced hardening and release roadmap, not a replacement for this scope
+contract. Any post-MVP work must continue to preserve the safety properties and
+out-of-scope restrictions defined above.
+
 Implementation status:
 
 - **Phase 0 — MVP Scope Contract:** complete.
 - **Phase 1 — Security Hardening:** complete.
 - **Phase 2 — Runtime Durability and Exactly-Once Execution:** implemented; see [Phase 2 Runtime Durability Contract](./PHASE_2_DURABILITY.md).
 - **Phase 3 — AI OS Shell and Pilot Readiness:** Phase 3.0 scope frozen; see [Phase 3 Shell and Pilot Contract](./PHASE_3_SHELL_PILOT.md).
+- **Phase 4 — Production Hardening and Controlled Operations:** complete; see [Phase 4 Production Hardening](./PHASE_4_PRODUCTION_HARDENING.md) and [Phase 4 Production Certificate](./PHASE_4_PRODUCTION_CERTIFICATE.md).
+- **Phase 5 — Cost and Context Efficiency:** complete through P5.4; efficiency certification was human-accepted with a 36.83% median token reduction; see [Phase 5 to v1.0 Execution Plan](./PHASE_5_TO_V1_EXECUTION_PLAN.md).
+- **Phase 6 — Guarded Release and Self-Update:** in progress; P6.0–P6.2 are implemented and P6.2 is human-accepted. P6.3 is the next drill packet; see [Phase 6 Release Compatibility Contract](./PHASE_6_RELEASE_CONTRACT.md).
