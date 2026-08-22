@@ -178,6 +178,10 @@ check_status() {
 
 # Handle command line arguments
 case "$1" in
+  release-supervisor)
+    shift
+    exec node "$DIR/src/release-supervisor.mjs" "$@"
+    ;;
   stop)
     stop_services
     exit 0
