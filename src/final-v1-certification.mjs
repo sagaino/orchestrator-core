@@ -9,6 +9,7 @@ import { redactText } from "./redaction.mjs";
 import { verifyMigrationMatrixReport } from "./migration-upgrade.mjs";
 import { verifyFinalPilotCohortReport } from "./final-pilot-cohort.mjs";
 import { verifyRecoveryRehearsalReport } from "./operator-recovery-rehearsal.mjs";
+import { verifyReleaseArtifact } from "./release-artifact.mjs";
 
 export const FINAL_CERTIFICATION_SCHEMA_VERSION = 2;
 export const FINAL_CERTIFICATION_CONTRACT_VERSION = "p9.4-ga-remediation-2026-08-22";
@@ -140,6 +141,7 @@ export async function runFinalV1Certification({ reportRoot = null, repoRoot = RE
     pilot: safeEvidenceVerification(verifyFinalPilotCohortReport, path.join(resolvedReportRoot, "runtime", "pilot-cohort", "p9.2-report.json")),
     recovery: safeEvidenceVerification(verifyRecoveryRehearsalReport, path.join(resolvedReportRoot, "runtime", "recovery-rehearsal", "p9.3-report.json")),
   };
+  const releaseArtifact = verifyReleaseArtifact({ manifestPath: path.join(resolvedReportRoot, "runtime", "release-artifacts", `v${releaseVersion}`, "release-artifact.json") });
   const documentationPaths = ["P9_3_OPERATOR_RUNBOOK.md", "P9_4_THREAT_MODEL.md", "PHASE_9_GA_CONTRACT.md", "PHASE_5_TO_V1_EXECUTION_PLAN.md", "AI_OS_MVP_SCOPE.md"];
   const documentation = { valid: documentationPaths.every((item) => fs.existsSync(path.join(repoRoot, item))), paths: documentationPaths.map((item) => path.join(repoRoot, item)) };
   const checks = {
@@ -151,6 +153,7 @@ export async function runFinalV1Certification({ reportRoot = null, repoRoot = RE
     releaseManifestValid: manifestVerification.valid === true,
     bundleChecksumsValid: bundleChecksums.valid,
     durableEvidenceValid: Object.values(durableEvidence).every((item) => item.valid === true),
+    releaseArtifactValid: releaseArtifact.valid === true && releaseArtifact.manifest?.components?.some((item) => item.label === "backend" && item.commit === sourceCommit) && releaseArtifact.manifest?.components?.some((item) => item.label === "dashboard" && item.commit === repoCommit(resolvedDashboardRoot)),
     auditHeadValid: audit.valid === true,
     releaseProvenanceAnchored: Boolean(sourceCommit && manifest.provenance?.sourceCommit === sourceCommit && manifestVerification.valid === true),
     dashboardProvenanceAnchored: Boolean(manifest.provenance?.dashboardCommit && manifest.provenance.dashboardCommit === repoCommit(resolvedDashboardRoot)),
@@ -170,7 +173,7 @@ export async function runFinalV1Certification({ reportRoot = null, repoRoot = RE
     gates,
     threatModel: risk,
     provenance: { sourceCommit, dashboardCommit: repoCommit(resolvedDashboardRoot), manifestPath, manifestChecksum: manifestPersisted.checksum, manifestVerification, auditHead: audit.head ?? null, auditEntries: audit.entries ?? 0 },
-    evidence: { documentation, bundleChecksums, durableEvidence: Object.fromEntries(Object.entries(durableEvidence).map(([key, value]) => [key, { valid: value.valid, status: value.status, checksum: value.checksum }])), reportRoots: { backend: path.resolve(repoRoot), dashboard: resolvedDashboardRoot, runs: resolvedReportRoot } },
+    evidence: { documentation, bundleChecksums, durableEvidence: Object.fromEntries(Object.entries(durableEvidence).map(([key, value]) => [key, { valid: value.valid, status: value.status, checksum: value.checksum }])), releaseArtifact: { valid: releaseArtifact.valid, manifestPath: path.join(resolvedReportRoot, "runtime", "release-artifacts", `v${releaseVersion}`, "release-artifact.json"), checksum: releaseArtifact.valid ? sha256(fs.readFileSync(path.join(resolvedReportRoot, "runtime", "release-artifacts", `v${releaseVersion}`, "release-artifact.json"), "utf8")) : null }, reportRoots: { backend: path.resolve(repoRoot), dashboard: resolvedDashboardRoot, runs: resolvedReportRoot } },
     nextAction: "Human gate remains required before v1.0.0 is assigned or production activation occurs.",
   };
   const reportPath = path.join(resolvedReportRoot, "runtime", "certifications", "v1.0-final-certificate.json");
