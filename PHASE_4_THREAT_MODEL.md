@@ -1,6 +1,6 @@
 # Phase 4 Threat Model
 
-Status: **v1.2 — PHASE 4.3 RELIABILITY CONTROLS APPLIED**
+Status: **v1.3 — PHASE 4.5 PRODUCTION CERTIFICATION REVIEWED**
 Reviewed: **2026-08-22**
 Applies to: **Personal AI OS local-first single-user deployment**
 
@@ -62,14 +62,14 @@ The worktree is a Git boundary, not an OS security sandbox.
 | Duplicate task/provider execution | Tampering/repudiation | Concurrent admission or crash creates separate jobs/invocations | partial leases fail closed; fsynced atomic lease; stable invocation ID; 25-round multiprocess stress proof | LOW; continue stress regression and investigate any future recurrence as release-blocking |
 | Evidence secret leakage | Information disclosure | Provider JSON, stdout/stderr, prompts, test logs, or copied files persist a secret | shared redaction before core durable writes; private runtime modes; bounded output | LOW for known secret values and token patterns; artifact-content scanning remains defense in depth |
 | Evidence rewriting | Tampering/repudiation | User-level process edits JSON/JSONL history or artifact | operator mutation SHA-256 chain with verification API/CLI | LOW for mutation history; Phase 4.5 must externally anchor the certification head |
-| API/SSE exhaustion | Denial of service | Token holder opens clients or sends repeated expensive requests | loopback binding, body cap, worker limit | MEDIUM: no rate/SSE/request concurrency limit |
+| API/SSE exhaustion | Denial of service | Token holder opens clients or sends repeated expensive requests | loopback binding, body cap, separate request buckets, worker limit, SSE connection cap and retry response | LOW for supervised local deployment |
 | Stuck child process | Denial of service | Test/build/tool never exits or ignores graceful shutdown | capability deadlines, output ceilings, process-group TERM then KILL escalation | LOW for normal descendants; OS-level resource quotas remain Phase 4.4 |
-| Disk exhaustion | Denial of service/tampering | Unbounded events, artifacts, backups, screenshots, or provider output fill disk | output tails bounded in some ledgers | MEDIUM: no quota, retention, or low-disk admission guard |
-| Irrecoverable host/state loss | Denial of service | disk failure, deletion, corruption, or incompatible change removes Vault/runtime evidence | versioned quiescent backup, checksums, quarantine restore, fail-closed recovery mode | MEDIUM: independent-media scheduling and full operator promotion timing remain operational dependencies |
+| Disk exhaustion | Denial of service/tampering | Unbounded events, artifacts, backups, screenshots, or provider output fill disk | bounded output, runtime/artifact quotas, disk admission guard, explicit retention preview and recoverable trash | LOW for supervised local deployment |
+| Irrecoverable host/state loss | Denial of service | disk failure, deletion, corruption, or incompatible change removes Vault/runtime evidence | versioned quiescent backup, checksums, quarantine restore, fail-closed recovery mode, 24-hour backup freshness gate | MEDIUM: independent-media rotation and human recovery promotion timing remain operational dependencies |
 | Malicious upload/path escape | Tampering | crafted path, symlink, MIME mismatch, or oversized asset | contained path resolution, realpath ancestor checks, signature and size checks | LOW |
 | Cross-origin API action | Spoofing/elevation | hostile page sends authenticated request | localhost Origin/Referer guard, bearer token, operator session/nonce; no wildcard SSE CORS | LOW |
 | Verification weakening | Tampering | agent edits package scripts or requested checks | frozen script definitions, dependency reconciliation, post-apply checks | LOW for detected repository changes; child-process authority remains critical |
-| Supply-chain compromise | Elevation/information disclosure | compromised CLI, package, update, model, or transitive dependency | lockfile, `--ignore-scripts` for reconciliation, updater rollback | HIGH until capability isolation and provenance policy exist |
+| Supply-chain compromise | Elevation/information disclosure | compromised CLI, package, update, model, or transitive dependency | capability isolation, environment allowlist, lockfile, `--ignore-scripts` reconciliation, updater rollback, and supervised acceptance | LOW for supported macOS local deployment; provenance remains an operational review concern |
 
 ## Abuse Cases Required for Phase 4 Tests
 
@@ -117,5 +117,14 @@ The worktree is a Git boundary, not an OS security sandbox.
   and explicit human acceptance.
 - LOW: must have an owner and planned release or documented acceptance.
 
-The operator's current decision is to accept these risks only for supervised,
-loopback-only local pilots while Phase 4 controls are implemented.
+The operator accepts the remaining medium recovery dependency only for the
+supervised, loopback-only local deployment described in the Phase 4.5
+certificate. It has a named owner and review date; it does not authorize public
+API exposure or unattended execution.
+
+## Phase 4.5 Residual Risk Acceptance
+
+| ID | Severity | Owner | Review by | Explicit acceptance | Compensating control |
+|---|---|---|---|---|---|
+| P4-R1 | MEDIUM | local operator | 2026-09-21 | user, 2026-08-22 Phase 4.5 execution authorization | verified quiescent backup, isolated quarantine restore, loopback-only supervised deployment, and 24-hour Operations Center freshness gate |
+| P4-R2 | LOW | dashboard maintainer | 2026-09-21 | documented | eight lint warnings and one bundle-size warning are non-blocking; typecheck, build, security, and browser gates pass |

@@ -159,6 +159,7 @@ Disaster recovery:
   dr-backup <absolute-backup-root>
   dr-verify <absolute-backup-directory>
   dr-restore <absolute-backup-directory> <absolute-new-target-root>
+  certification-verify <absolute-bundle-path>
 
 Conversational flow:
   request-task <project-id> <request> [--start] [--by <name>]
@@ -288,6 +289,12 @@ export async function main(argv = process.argv.slice(2)) {
       const { operationsReadiness } = await import("./operations-governance.mjs");
       result = operationsReadiness({ runsRoot: options.runs });
       if (!result.admission.allowed) process.exitCode = 1;
+    } else if (command === "certification-verify") {
+      const [bundleFilePath] = options.positional;
+      if (!bundleFilePath || !path.isAbsolute(bundleFilePath)) fail("certification-verify membutuhkan absolute bundle path.");
+      const { verifyProductionCertification } = await import("./production-certification.mjs");
+      result = verifyProductionCertification({ bundleFilePath });
+      if (!result.valid) process.exitCode = 1;
     } else if (command === "retention-preview") {
       const [olderThanDays = "30"] = options.positional;
       const { previewRetention } = await import("./operations-governance.mjs");

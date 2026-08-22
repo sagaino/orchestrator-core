@@ -1,6 +1,6 @@
 # Phase 4 — Production Hardening and Controlled Operations
 
-Status: **PHASE 4.3 IMPLEMENTED — PRODUCTION CERTIFICATION BLOCKED**
+Status: **PHASE 4 COMPLETE — LOCAL SUPERVISED PRODUCTION CERTIFIED**
 Baseline date: **2026-08-22 (Asia/Jakarta)**
 Deployment model: **local-first, single-user macOS host**
 
@@ -213,13 +213,28 @@ and no automated cleanup deletes audit or source data without confirmation.
 
 ### Phase 4.5 — Production Readiness Certification
 
-Status: **PLANNED**
+Status: **IMPLEMENTED — CERTIFIED 2026-08-22**
 
-- Run multiple real scoped tasks across at least two registered projects.
-- Complete backup/restore and crash-recovery drills from the dashboard/runbook.
-- Re-run the threat model and close or explicitly accept every residual risk.
-- Record reliability, recovery, resource, security, and audit evidence in a
-  signed or checksummed certification bundle.
+- Revalidated two immutable, human-accepted scoped pilots: `TASK-003` on
+  `test-add-project` and `TASK-025` on `orchestrator-dashboard`. Both retain
+  passing scope, pre/post-apply verification, evidence integrity, and cleaned
+  workspace records. `FE-024` on `starter-app` remains an additional completed
+  pilot but was not rerun because that repository has user-owned local files.
+- Reran `typecheck`, `build`, and `test:e2e` on clean `test-add-project`; reran
+  dashboard typecheck/lint/build/security/browser verification; and reran the
+  complete orchestrator regression suite.
+- Created, SHA-256 verified, and restored quiescent backup
+  `dr-20260822T001634Z-e9fed046` (1,637 files / 85,633,652 bytes) into an
+  isolated recovery root. The restored inspection API returned `200` while a
+  mutation returned `423`, proving quarantine execution denial. Updater crash
+  rollback regression also passed; live daemon restart restored healthy state.
+- Re-reviewed the threat model. No CRITICAL or HIGH risk remains. The one
+  MEDIUM operational dependency has owner, review date, compensating controls,
+  and explicit local-supervised acceptance recorded in the certificate.
+- Wrote a private checksummed bundle under
+  `runs/runtime/certifications/phase4-cert-20260822T002000234Z-e23bed2f.json`
+  (`b4664ee0cfe28ee226cc9df1f5c6e1a7b9f9cf07c7786aaa98774e0ea848d28b`).
+  `certification-verify` verifies its checksum and schema.
 
 Exit gate: no open CRITICAL or HIGH finding; all mandatory drills pass; residual
 MEDIUM risks have an owner, expiry, and explicit human acceptance.
