@@ -338,10 +338,15 @@ export function activateWorkspace(workspace) {
   };
 }
 
+export function verificationRequiresLoopback(scriptName, scriptCommand = "") {
+  return /(?:^|[:_-])(?:e2e|browser)(?:$|[:_-])/i.test(String(scriptName))
+    || /playwright|cypress/i.test(String(scriptCommand));
+}
+
 function parseVerificationCommand(command) {
   const match = String(command).match(/^npm run ([A-Za-z0-9:_-]+)$/);
   if (!match) throw new Error(`Verification command tidak didukung saat apply workspace: ${command}`);
-  return { command: "npm", args: ["run", match[1]] };
+  return { command: "npm", args: ["run", match[1]], scriptName: match[1] };
 }
 
 function packageInstallInvocation(repository) {
@@ -486,11 +491,13 @@ export async function applyIsolatedWorkspace({
     assertVerificationScriptsUnmodified(workspace.sourceRepository, manifest.execution?.frozenVerificationScripts);
     for (const verificationCommand of manifest.plan.verificationCommands) {
       const invocation = parseVerificationCommand(verificationCommand);
+      const { scriptName, ...processInvocation } = invocation;
       const result = await requireSuccessfulProcess(processRunner, {
-        ...invocation,
+        ...processInvocation,
         cwd: workspace.sourceRepository,
         stage: `workspace-apply:verification:${verificationCommand}`,
         eventLogPath,
+        allowLoopback: verificationRequiresLoopback(scriptName, manifest.execution?.frozenVerificationScripts?.[scriptName]),
       }, `Post-apply verification gagal: ${verificationCommand}`);
       verification.push({ command: verificationCommand, exitCode: result.exitCode });
     }
