@@ -66,6 +66,14 @@ export function createReadyTaskEvent(vaultRoot, filePath, services) {
   }
 
   const context = buildContext(vaultRoot, projectId, filePath);
+  const lines = document.body.split(/\r?\n/);
+  const criteriaHeading = lines.findIndex((line) => /^##\s+Acceptance Criteria\s*$/i.test(line));
+  const criteriaLines = criteriaHeading < 0 ? [] : lines.slice(criteriaHeading + 1);
+  const nextHeading = criteriaLines.findIndex((line) => /^##\s+/.test(line));
+  const acceptanceCriteria = (nextHeading < 0 ? criteriaLines : criteriaLines.slice(0, nextHeading))
+    .filter((line) => /^\s*(?:[-*]|\d+[.)])\s+/.test(line))
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").trim())
+    .filter(Boolean).slice(0, 12);
   const readiness = validateTaskReadiness(context, { readMarkdown });
   if (!readiness.ready) {
     const blockerIds = readiness.blockers.map((item) => item.id).join(", ");
@@ -93,6 +101,7 @@ export function createReadyTaskEvent(vaultRoot, filePath, services) {
       requiresChanges: document.metadata.requires_changes === true,
       risk: String(document.metadata.risk ?? "UNKNOWN").toUpperCase(),
       complexity: String(document.metadata.complexity ?? "UNKNOWN").toUpperCase(),
+      acceptanceCriteria,
       sources: Array.isArray(document.metadata.sources)
         ? document.metadata.sources.map(String)
         : [],

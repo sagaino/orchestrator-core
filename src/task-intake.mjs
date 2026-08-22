@@ -6,6 +6,7 @@ import { runProcess } from "./executor.mjs";
 import { enqueueTaskJob } from "./job-queue.mjs";
 import { createAgentTelemetryRecord, persistIntakeTelemetry } from "./telemetry.mjs";
 import { tryDeterministicTaskDraft } from "./fast-path-intake.mjs";
+import { buildStageContext } from "./context-compactor.mjs";
 
 function taskDraftSchema() {
   return JSON.stringify({
@@ -232,14 +233,13 @@ export async function planTaskWithAgy({
     "=== ATTACHED UI MOCKUPS & ASSETS ===",
     assetsContext,
     "",
-    "=== RELEVANT WIKI ARCHITECTURE PATTERNS ===",
-    knowledgeContext,
-    "",
-    "=== GRAPHIFY TARGETED CONTEXT ===",
-    graphContext || "Tidak ada node relevan.",
-    "",
-    "=== USER NATURAL LANGUAGE REQUEST ===",
-    request,
+    buildStageContext({
+      stage: "intake",
+      latestFeedback: request,
+      graphifyContext: graphContext,
+      knowledge: relevantKnowledge,
+      revisionState: { activeTasks: JSON.stringify(compactActiveTaskSummary(tasks)), assets: assetsContext },
+    }).text,
   ].join("\n");
   const result = await processRunner({
     command: "agy",

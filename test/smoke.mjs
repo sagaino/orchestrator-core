@@ -924,6 +924,10 @@ try {
     "",
     "## Hasil Yang Diharapkan (Expected Result)",
     "The selected product filter is restored after the page reloads and the test command passes.",
+    "",
+    "## Acceptance Criteria",
+    "1. The selected product filter survives a reload.",
+    "2. Only allowed paths are changed.",
   ].join("\n"));
 
   const scan = scanReadyTasks(vault, taskServices);
@@ -932,6 +936,10 @@ try {
   assert.equal(scan.events[0].event, "TASK_READY");
   assert.equal(scan.events[0].mode, "observe-only");
   assert.equal(scan.events[0].task.id, "FIX-001");
+  assert.deepEqual(scan.events[0].task.acceptanceCriteria, [
+    "The selected product filter survives a reload.",
+    "Only allowed paths are changed.",
+  ]);
   assert.equal(scan.events[0].plan.approvalRequired, true);
   assert.equal(scan.events[0].readiness.verdict, "PASS");
   assert.ok(scan.events[0].retrieval.knowledge.some((item) => item.path.includes("persistent-filter")));
