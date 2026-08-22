@@ -118,6 +118,8 @@ export function getReleaseOperations({
       drained: drain.drained,
       blockers: drain.blockers,
       counts: drain.counts,
+      pending: drain.pending,
+      activation: drain.activation,
       daemon: drain.daemon,
     },
     compatibility: {
@@ -131,7 +133,7 @@ export function getReleaseOperations({
       status: backup ? "AVAILABLE" : "MISSING",
       backupId: backup?.backupId ?? null,
       verifiedAt: verifiedBackup?.verifiedAt ?? null,
-      backedUpAt: backup?.backedUpAt ?? null,
+      backedUpAt: backup?.backedUpAt ?? backup?.completedAt ?? backup?.createdAt ?? null,
       filesCount: backup?.filesCount ?? verifiedBackup?.fileCount ?? null,
     },
     health: {

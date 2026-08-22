@@ -71,24 +71,31 @@ export function inspectReleaseDrain({ runsRoot, daemonStatusFn = daemonStatus } 
   const blockers = [...jobs.blockers, ...runs.blockers];
   blockers.push(...invocationLedger.blockers);
 
+  const pending = { jobs: 0, runs: 0, invocations: 0 };
+
   for (const job of jobs.records) {
     if (["QUEUED", "RUNNING"].includes(job.state)) {
+      pending.jobs += 1;
       blockers.push({ code: "QUEUE_NOT_DRAINED", jobId: job.jobId, state: job.state, reason: "Queued or running work must reach a safe state." });
     }
   }
   for (const run of runs.records) {
     if (ACTIVE_RUN_STATES.has(run.state)) {
+      pending.runs += 1;
       blockers.push({ code: "ACTIVE_RUN", runId: run.runId, state: run.state, reason: "Active execution state must reach a safe state." });
     }
   }
   for (const invocation of invocations) {
     const status = String(invocation.status ?? "UNKNOWN").toUpperCase();
     if (!SAFE_INVOCATION_STATES.has(status)) {
+      pending.invocations += 1;
       blockers.push({ code: "UNCERTAIN_INVOCATION", invocationId: invocation.invocationId ?? null, status, reason: "Invocation result is active or uncertain; activation is fail-closed." });
     }
   }
   const daemon = daemonStatusFn({ runsRoot });
   if (daemon?.running) blockers.push({ code: "DAEMON_RUNNING", pid: daemon.pid ?? null, reason: "Supervisor must stop the daemon before activation." });
+  const pendingTotal = pending.jobs + pending.runs + pending.invocations;
+  const daemonStopOnly = Boolean(daemon?.running) && pendingTotal === 0 && blockers.every((item) => item.code === "DAEMON_RUNNING");
   return {
     schemaVersion: RELEASE_SUPERVISOR_SCHEMA_VERSION,
     drained: blockers.length === 0,
@@ -96,6 +103,12 @@ export function inspectReleaseDrain({ runsRoot, daemonStatusFn = daemonStatus } 
     safeStates: ["DONE", "FAILED", "SUPERSEDED", "REVIEW", "RETROSPECTIVE", "KNOWLEDGE_APPROVAL", "WIKI_SYNCED"],
     daemon: { running: Boolean(daemon?.running), pid: daemon?.pid ?? null },
     counts: { jobs: jobs.records.length, runs: runs.records.length, invocations: invocations.length },
+    pending: { ...pending, total: pendingTotal },
+    activation: {
+      state: blockers.length === 0 ? "READY" : daemonStopOnly ? "STOP_DAEMON_REQUIRED" : pendingTotal > 0 ? "PENDING_WORK" : "BLOCKED",
+      daemonStopRequired: Boolean(daemon?.running),
+      daemonStopOnly,
+    },
   };
 }
 

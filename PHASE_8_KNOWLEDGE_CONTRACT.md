@@ -17,15 +17,17 @@ provenance set:
 - `supersession` state: `ACTIVE`, `SUPERSEDED`, or `RETIRED`.
 
 `src/knowledge-provenance.mjs` is the shared validator and renderer. New Wiki
-pages receive the complete contract, while legacy pages are reported by
-`knowledge-health` as explicit `PROVENANCE` warnings for directed migration.
-Malformed fields are errors. `PROJECT_ONLY` retrospectives remain on the task
-and do not require global knowledge provenance.
+pages receive the complete contract. Legacy pages can be migrated only through
+the explicit `knowledge-provenance-preview`, `knowledge-provenance-apply`, and
+`knowledge-provenance-rollback` workflow; each step records checksums and an
+immutable artifact under `03-Sources/other/knowledge-decisions/`. Malformed
+fields are errors. `PROJECT_ONLY` retrospectives remain on the task and do not
+require global knowledge provenance.
 
 The schema is recorded at
 `schemas/knowledge-provenance.schema.json`. Candidate templates expose the
-same fields so promotion does not lose provenance. No safe-fix path rewrites
-existing knowledge content automatically.
+same fields so promotion does not lose provenance. The generic safe-fix path
+never rewrites existing knowledge content automatically.
 
 ## Evidence
 
@@ -33,6 +35,8 @@ existing knowledge content automatically.
   calculation, project-only bypass, and legacy/malformed health findings;
 - smoke coverage verifies newly promoted Wiki pages contain the complete
   provenance set;
+- migration tests and the Knowledge Center preview/confirm/rollback panel cover
+  legacy provenance repair without silent writes;
 - full backend test suite and smoke test pass.
 
 ## P8.1 Duplicate, Merge, and Staleness Workflow
