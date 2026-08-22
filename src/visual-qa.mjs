@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createVisualEvidence, persistVisualEvidence, VISUAL_EVIDENCE_SCHEMA_VERSION } from "./visual-evidence.mjs";
 import { compareVisualArtifacts, readPng } from "./visual-comparison.mjs";
 import { ACCESSIBILITY_EVIDENCE_SCHEMA_VERSION, runAccessibilityAudit } from "./visual-accessibility.mjs";
+import { completeVisualRevision } from "./visual-revision.mjs";
 
 export const VISUAL_CAPTURE_SCHEMA_VERSION = 1;
 export const VISUAL_CAPTURE_VIEWPORTS = Object.freeze({
@@ -254,6 +255,15 @@ export async function captureVisualEvidence({
     viewports,
     evidenceContract: { schemaVersion: VISUAL_EVIDENCE_SCHEMA_VERSION, comparison: "P7.2", accessibility: "P7.3" },
   };
+  let revisionLink = null;
+  if (Number.isInteger(revision?.iteration) && revision.iteration > 0) {
+    try {
+      revisionLink = completeVisualRevision({ runsRoot, runId, iteration: revision.iteration, afterEvidenceIds: viewports.map((item) => item.evidenceId) });
+    } catch (error) {
+      revisionLink = { status: "LINK_FAILED", error: error.message, iteration: revision.iteration };
+    }
+  }
+  report.revisionLink = revisionLink;
   const persisted = persistCaptureReport({ runsRoot, report });
   return { ...report, persistence: persisted };
 }

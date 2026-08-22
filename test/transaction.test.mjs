@@ -55,9 +55,16 @@ try {
     runId,
     requestedBy: "user",
     reason: "Fix alignment",
+    visualFeedback: {
+      beforeEvidenceIds: ["visual-before-1"],
+      visualAnnotations: [{ id: "pin-1", x: 20, y: 30, comment: "Align card" }],
+      inlineComments: [{ file: "src/app.ts", line: 4, comment: "Use spacing token" }],
+    },
   });
   assert.equal(revisionResult.state, RUN_STATES.CHANGES_REQUESTED);
   assert.equal(revisionResult.task.status, "IN_PROGRESS");
+  assert.equal(revisionResult.execution.reviewChanges[0].visualFeedback.visualAnnotations.length, 1);
+  assert.deepEqual(revisionResult.execution.reviewChanges[0].visualFeedback.beforeEvidenceIds, ["visual-before-1"]);
 
   // Verify task file was updated to IN_PROGRESS
   const updatedTask = fs.readFileSync(taskPath, "utf8");

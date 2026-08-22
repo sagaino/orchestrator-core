@@ -18,6 +18,7 @@ import path from "node:path";
 import { cleanupIsolatedWorkspace } from "./workspace-manager.mjs";
 import { appendRunTelemetry } from "./telemetry.mjs";
 import { acquireDurableLease, releaseDurableLease } from "./durable-runtime.mjs";
+import { createVisualRevisionRecord, normalizeVisualFeedback } from "./visual-revision.mjs";
 
 export function cleanTerminalOutput(rawOutput) {
   if (!rawOutput || typeof rawOutput !== "string") return "";
@@ -244,6 +245,7 @@ async function requestChangesTaskRunInternal({
   reason,
   revisionExecutor = reviseRun,
   retrospective = retrospectRun,
+  visualFeedback = null,
   onProgress = () => {},
 }) {
   const cleanedReason = cleanTerminalOutput(reason);
@@ -253,7 +255,21 @@ async function requestChangesTaskRunInternal({
     runId,
     requestedBy,
     reason: cleanedReason || reason,
+    visualFeedback,
   });
+  if (visualFeedback) {
+    const normalizedVisualFeedback = normalizeVisualFeedback(visualFeedback);
+    createVisualRevisionRecord({
+      runsRoot,
+      runId,
+      iteration: visualFeedback.iteration ?? manifest.execution?.reviewChanges?.at(-1)?.iteration,
+      requestedBy,
+      reason: cleanedReason || reason,
+      inlineComments: normalizedVisualFeedback.inlineComments,
+      visualAnnotations: normalizedVisualFeedback.visualAnnotations,
+      beforeEvidenceIds: normalizedVisualFeedback.beforeEvidenceIds,
+    });
+  }
   updateJobForRun(runsRoot, runId, {
     state: JOB_STATES.RUNNING,
     runState: manifest.state,

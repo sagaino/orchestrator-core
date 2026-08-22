@@ -5,6 +5,7 @@ import path from "node:path";
 import { createOrchestratorServer } from "../src/server.mjs";
 import { captureVisualEvidence } from "../src/visual-qa.mjs";
 import { createVisualEvidence, persistVisualEvidence } from "../src/visual-evidence.mjs";
+import { createVisualRevisionRecord } from "../src/visual-revision.mjs";
 
 console.log("Running visual-evidence-api.test.mjs...");
 
@@ -67,6 +68,14 @@ try {
   const captures = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence/captures`, { headers: auth });
   assert.equal(captures.status, 200);
   assert.equal((await captures.json()).data.length, 1);
+  createVisualRevisionRecord({ runsRoot, runId, iteration: 1, requestedBy: "reviewer", reason: "Fix visual spacing", beforeEvidenceIds: [] });
+  const revisions = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-revisions`, { headers: auth });
+  assert.equal(revisions.status, 200);
+  assert.equal((await revisions.json()).data.length, 1);
+  const completeRevision = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-revisions/1/complete`, { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Operator-Session": session.sessionId, "X-Action-Nonce": session.actionNonce }, body: JSON.stringify({ afterEvidenceIds: captureBody.viewports.map((item) => item.evidenceId) }) });
+  assert.equal(completeRevision.status, 200);
+  assert.equal((await completeRevision.json()).data.status, "COMPLETED");
+  session.actionNonce = completeRevision.headers.get("x-action-nonce");
   const body = {
     evidenceId: "visual-api-1",
     route: "/operations",

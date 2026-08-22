@@ -5,6 +5,7 @@ import { createReadyTaskEvent } from "./adapters/vault-task-watcher.mjs";
 import { runtimeOwnerAlive, withDurableLease } from "./durable-runtime.mjs";
 import { redactSensitive } from "./redaction.mjs";
 import { injectFault } from "./fault-injection.mjs";
+import { normalizeVisualFeedback } from "./visual-revision.mjs";
 
 export const RUN_STATES = Object.freeze({
   PENDING_APPROVAL: "PENDING_APPROVAL",
@@ -885,6 +886,7 @@ export function beginReviewRevision({
   runId,
   requestedBy = "user",
   reason,
+  visualFeedback = null,
 }) {
   const filePath = manifestPath(runsRoot, runId);
   const manifest = getRun(runsRoot, runId);
@@ -899,6 +901,7 @@ export function beginReviewRevision({
   const reviewer = String(requestedBy).trim() || "user";
   const revisionReason = String(reason ?? "").trim();
   if (!revisionReason) throw new Error("Request changes membutuhkan --reason yang jelas.");
+  const normalizedVisualFeedback = visualFeedback ? normalizeVisualFeedback(visualFeedback) : null;
 
   const manifestBackup = JSON.stringify(manifest);
   const taskFilePath = path.join(vaultRoot, manifest.task.path);
@@ -938,6 +941,12 @@ export function beginReviewRevision({
           requestedAt,
           requestedBy: reviewer,
           reason: revisionReason,
+          visualFeedback: normalizedVisualFeedback ? {
+            iteration,
+            beforeEvidenceIds: normalizedVisualFeedback.beforeEvidenceIds,
+            visualAnnotations: normalizedVisualFeedback.visualAnnotations,
+            inlineComments: normalizedVisualFeedback.inlineComments,
+          } : null,
           status: "RUNNING",
         },
       ],
