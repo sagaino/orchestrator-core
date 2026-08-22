@@ -63,7 +63,7 @@ function sbplString(value) {
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-export function sandboxPolicy({ profileName, cwd, writableRoots = [cwd], readableRoots = [cwd], home = os.homedir(), deniedReadRoots = [], providerManagedSandbox = false }) {
+export function sandboxPolicy({ profileName, cwd, writableRoots = [cwd], readableRoots = [cwd], home = os.homedir(), deniedReadRoots = [], providerManagedSandbox = false, allowLoopback = false }) {
   const profile = CAPABILITY_PROFILES[profileName];
   if (!profile) throw new Error(`Capability profile tidak dikenal: ${profileName}`);
   const reads = [...new Set(readableRoots.filter(Boolean).flatMap(rootAliases))];
@@ -88,12 +88,15 @@ export function sandboxPolicy({ profileName, cwd, writableRoots = [cwd], readabl
     ];
     forms.push(`(deny file-write* (require-all ${permittedWrites.join(" ")}))`);
   }
-  if (profile.network === "deny") forms.push("(deny network*)");
+  if (profile.network === "deny" && allowLoopback) {
+    forms.push('(deny network-outbound (require-not (remote ip "localhost:*")))');
+    forms.push('(deny network-inbound (require-not (local ip "localhost:*")))');
+  } else if (profile.network === "deny") forms.push("(deny network*)");
   else if (profile.network === "provider") forms.push("(allow network*)");
   return forms.join(" ");
 }
 
-export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.env, capabilityProfile, writableRoots, readableRoots, home, deniedReadRoots }) {
+export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.env, capabilityProfile, writableRoots, readableRoots, home, deniedReadRoots, allowLoopback = false }) {
   const profileName = capabilityProfile || "verification";
   const profile = CAPABILITY_PROFILES[profileName];
   if (!profile) throw new Error(`Capability profile tidak dikenal: ${profileName}`);
@@ -115,7 +118,7 @@ export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.
   const effectiveArgs = providerManagedSandbox && !args.includes("--sandbox") ? [...args, "--sandbox"] : args;
   return {
     command: "/usr/bin/sandbox-exec",
-    args: ["-p", sandboxPolicy({ profileName, cwd, writableRoots: effectiveWritableRoots, readableRoots: effectiveReadableRoots, home: effectiveHome, deniedReadRoots, providerManagedSandbox }), command, ...effectiveArgs],
+    args: ["-p", sandboxPolicy({ profileName, cwd, writableRoots: effectiveWritableRoots, readableRoots: effectiveReadableRoots, home: effectiveHome, deniedReadRoots, providerManagedSandbox, allowLoopback }), command, ...effectiveArgs],
     env: sanitizedEnv,
     deadlineMs: profile.deadlineMs,
     maxOutputBytes: profile.maxOutputBytes,

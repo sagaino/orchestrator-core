@@ -4,10 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { appendAuditEntry, verifyAuditChain, auditChainPath } from "../src/audit-chain.mjs";
 import { allowlistedEnvironment, CAPABILITY_PROFILES, capabilityForStage, prepareCapabilitySpawn, sandboxPolicy } from "../src/capability-policy.mjs";
-import { runProcess } from "../src/executor.mjs";
+import { aiRepairApplicable, runProcess, verificationRequiresLoopback } from "../src/executor.mjs";
 import { OperatorSessionStore } from "../src/api/operator-session.mjs";
 import { redactSensitive, redactText } from "../src/redaction.mjs";
 import { hardenRuntimePermissions } from "../src/runtime-hardening.mjs";
+import { changedPaths, repositorySnapshot, snapshotFromObject } from "../src/workspace-manager.mjs";
 
 console.log("Running phase-4-2-security.test.mjs...");
 assert.deepEqual(Object.keys(CAPABILITY_PROFILES).sort(), ["agent", "graphify", "preview", "updater", "verification"]);
@@ -19,6 +20,10 @@ assert.equal(filtered.HOST_SECRET, undefined);
 assert.equal(filtered.API_KEY, undefined);
 assert.match(sandboxPolicy({ profileName: "agent", cwd: "/tmp" }), /\(allow network\*\)/);
 assert.match(sandboxPolicy({ profileName: "verification", cwd: "/tmp" }), /\(deny network\*\)/);
+const loopbackPolicy = sandboxPolicy({ profileName: "verification", cwd: "/tmp", allowLoopback: true });
+assert.match(loopbackPolicy, /deny network-outbound \(require-not \(remote ip "localhost:\*"\)\)/);
+assert.match(loopbackPolicy, /deny network-inbound \(require-not \(local ip "localhost:\*"\)\)/);
+assert.doesNotMatch(loopbackPolicy, /\(deny network\*\)/);
 assert.doesNotMatch(sandboxPolicy({ profileName: "agent", cwd: "/tmp", home: "/Users/fixture" }), /Library\/Keychains/);
 assert.match(sandboxPolicy({ profileName: "verification", cwd: "/tmp", home: "/Users/fixture" }), /Library\/Keychains/);
 const providerPolicy = sandboxPolicy({ profileName: "agent", cwd: "/tmp", home: "/Users/fixture", providerManagedSandbox: true });
@@ -26,6 +31,12 @@ assert.doesNotMatch(providerPolicy, /deny file-write\* \(require-all/);
 assert.match(providerPolicy, /deny file-write\* \(subpath "\/Users\/fixture\/\.ssh"\)/);
 for (const stage of ["task-intake-planner", "retrospective", "knowledge-classification", "knowledge-ingest", "knowledge-harvest-pass-1"]) assert.equal(capabilityForStage(stage), "agent");
 assert.equal(capabilityForStage("verification:npm-test"), "verification");
+assert.equal(verificationRequiresLoopback("test:e2e", "playwright test"), true);
+assert.equal(verificationRequiresLoopback("test:browser", "vitest run"), true);
+assert.equal(verificationRequiresLoopback("test", "vitest run"), false);
+assert.equal(aiRepairApplicable(new Error("listen EPERM: operation not permitted 127.0.0.1:4173")), false);
+assert.equal(aiRepairApplicable(new Error("Scope guard menolak automatic recovery di luar allowed_paths: test-results/playwright/.last-run.json")), false);
+assert.equal(aiRepairApplicable(new Error("Verification gagal: unit assertion mismatch")), true);
 
 const preparedAgy = prepareCapabilitySpawn({ command: "agy", args: ["-p", "fixture"], cwd: "/tmp", env: { PATH: "/bin", HOME: "/Users/fixture" }, capabilityProfile: "agent" });
 try {
@@ -87,6 +98,39 @@ try {
   assert.equal(observation.network, undefined);
   assert.ok(observation.networkError);
   assert.equal(fs.existsSync(outside), false);
+
+  const loopbackScript = [
+    "const net=require('net');const result={};",
+    "const server=net.createServer((socket)=>socket.end('ok'));",
+    "server.listen(0,'127.0.0.1',()=>{",
+    "const local=net.connect(server.address().port,'127.0.0.1');",
+    "local.on('data',()=>{result.loopback=true;local.destroy();server.close();const external=net.connect(80,'93.184.216.34');external.on('connect',()=>{result.external=true;external.destroy();console.log(JSON.stringify(result))});external.on('error',(error)=>{result.externalError=error.code;console.log(JSON.stringify(result))})});",
+    "local.on('error',(error)=>{result.loopbackError=error.code;server.close();console.log(JSON.stringify(result))});",
+    "});server.on('error',(error)=>{result.bindError=error.code;console.log(JSON.stringify(result))});",
+  ].join("");
+  const loopbackResult = await runProcess({
+    command: process.execPath,
+    args: ["-e", loopbackScript],
+    cwd: workspace,
+    stage: "verification:test:e2e",
+    capabilityProfile: "verification",
+    allowLoopback: true,
+    env: { ...process.env, HOME: hostHome },
+    home: hostHome,
+    deadlineMs: 10_000,
+  });
+  assert.equal(loopbackResult.exitCode, 0, loopbackResult.stderrTail);
+  const loopbackObservation = JSON.parse(loopbackResult.stdoutTail.trim());
+  assert.equal(loopbackObservation.loopback, true, loopbackObservation.loopbackError);
+  assert.equal(loopbackObservation.external, undefined);
+  assert.equal(loopbackObservation.externalError, "EPERM");
+
+  const snapshotBeforeArtifacts = repositorySnapshot(workspace);
+  const playwrightArtifact = path.join(workspace, "test-results", "playwright", ".last-run.json");
+  fs.mkdirSync(path.dirname(playwrightArtifact), { recursive: true });
+  fs.writeFileSync(playwrightArtifact, "{}\n");
+  assert.deepEqual(changedPaths(snapshotBeforeArtifacts, repositorySnapshot(workspace)), []);
+  assert.equal(snapshotFromObject({ "src/App.tsx": "hash", "test-results/playwright/.last-run.json": "artifact" }).has("test-results/playwright/.last-run.json"), false);
 
   const runsRoot = path.join(fixture, "runs");
   appendAuditEntry(runsRoot, { event: "TEST", actor: "local:test", detail: `token=${knownSecret}` });
