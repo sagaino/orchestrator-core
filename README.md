@@ -8,6 +8,10 @@ Implementasi durability, exactly-once invocation, dan restart reconciliation dij
 
 Kontrak integrasi dashboard, evidence, browser lifecycle testing, dan sertifikasi pilot dijelaskan dalam [Phase 3 AI OS Shell and Pilot Contract](./PHASE_3_SHELL_PILOT.md).
 
+Roadmap pasca-sertifikasi sampai Personal AI OS v1.0 GA, termasuk paket kerja
+yang dapat dieksekusi model economy, tersedia di
+[Phase 5 to v1.0 Execution Plan](./PHASE_5_TO_V1_EXECUTION_PLAN.md).
+
 ---
 
 ## ⚡ Quick Start (1-Command Launcher)
