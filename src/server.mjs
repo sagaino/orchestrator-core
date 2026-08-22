@@ -27,6 +27,7 @@ import { buildRunEvidence } from "./interaction.mjs";
 import { createVisualEvidence, getVisualEvidence, listVisualEvidence, persistVisualEvidence } from "./visual-evidence.mjs";
 import { auditVisualEvidence, captureVisualEvidence, comparePersistedVisualEvidence, listCaptureReports } from "./visual-qa.mjs";
 import { completeVisualRevision, getVisualRevision, listVisualRevisions } from "./visual-revision.mjs";
+import { createVisualQACertification, getVisualQACertification } from "./visual-certification.mjs";
 import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
@@ -612,6 +613,35 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       const completed = completeVisualRevision({ runsRoot, runId: params.id, iteration: Number(params.iteration), afterEvidenceIds: body?.afterEvidenceIds ?? [] });
       eventHub.broadcast("VISUAL_REVISION_COMPLETED", { runId: params.id, iteration: completed.iteration, status: completed.status, afterEvidenceIds: completed.afterEvidenceIds });
       sendJson(res, 200, { success: true, data: completed });
+    } catch (err) {
+      sendError(res, err.statusCode || 400, err.message, err.details);
+    }
+  });
+
+  router.get("/api/runs/:id/visual-certification", async (req, res, { params }) => {
+    try {
+      getRun(runsRoot, params.id);
+      sendJson(res, 200, { success: true, data: getVisualQACertification({ runsRoot, runId: params.id }) });
+    } catch (err) {
+      sendError(res, 404, err.message);
+    }
+  });
+
+  router.post("/api/runs/:id/visual-certification", async (req, res, { params }) => {
+    try {
+      getRun(runsRoot, params.id);
+      const body = await parseJsonBody(req);
+      const result = createVisualQACertification({
+        runsRoot,
+        runId: params.id,
+        baselineCaptureId: body?.baselineCaptureId,
+        postChangeCaptureId: body?.postChangeCaptureId,
+        revisionIteration: Number(body?.revisionIteration),
+        restartReconstruction: body?.restartReconstruction ?? {},
+        humanGate: body?.humanGate ?? {},
+      });
+      eventHub.broadcast("VISUAL_QA_CERTIFIED", { runId: params.id, certificationId: result.certificationId, status: result.status, blockers: result.blockers });
+      sendJson(res, 201, { success: result.status === "CERTIFIED", data: result });
     } catch (err) {
       sendError(res, err.statusCode || 400, err.message, err.details);
     }

@@ -1,8 +1,8 @@
 # Phase 7 — Visual QA Contract
 
-Status: **P7.4 IMPLEMENTED — HUMAN-ACCEPTED**
-Contract version: **p7.4-2026-08-22**
-Boundary: **bounded capture, deterministic comparison, layout diagnostics, accessibility evidence, and visual feedback revision linkage; no source rewrite**
+Status: **P7.5 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Contract version: **p7.5-2026-08-22**
+Boundary: **bounded capture, deterministic comparison, layout diagnostics, accessibility evidence, visual feedback revision linkage, and certification evidence; no source rewrite**
 
 ## P7.0 Visual Evidence Contract
 
@@ -114,6 +114,29 @@ endpoint supports recovery when capture and revision persistence occur in a
 different order. This loop records evidence and feedback; it never rewrites
 source code or silently auto-accepts a run.
 
+## P7.5 Visual QA Certification
+
+`src/visual-certification.mjs` evaluates one completed, scoped UI run against
+the full visual QA exit gate. It requires baseline and post-change captures for
+desktop, tablet, and mobile; passing accessibility evidence; a completed
+annotated revision with before/after evidence linkage; restart reconstruction
+evidence; and cleanup whose artifacts remain under the run root rather than
+the source repository. The certification record is checksum-backed and
+survives process restart.
+
+Certification is deliberately a human gate. A complete technical record is
+stored as `HUMAN_GATE_REQUIRED` until an operator confirms the gate; only then
+does the record become `CERTIFIED`. Failed checks are explicit `BLOCKED`
+results and do not auto-accept the run.
+
+The API surface is:
+
+- `GET /api/runs/:id/visual-certification`
+- `POST /api/runs/:id/visual-certification`
+
+The Runs inspector displays certification status, baseline/post-change/restart
+check results, and blockers when a record is available.
+
 ## Evidence
 
 - visual contract unit test covers captured and unavailable screenshots,
@@ -128,7 +151,11 @@ source code or silently auto-accepts a run.
   bounded finding limits, capture persistence, and the audit API;
 - visual revision tests cover annotation/comment normalization, before/after
   evidence filtering, durable persistence, restart reads, and capture linking;
+- visual certification tests cover the full multi-viewport pilot gate,
+  accessibility status, annotated revision linkage, restart reconstruction,
+  cleanup/source-leakage checks, human-gate transition, API reads/writes, and
+  checksum tamper rejection;
 - dashboard types and Run Inspector expose route, viewport, comparison,
-  accessibility status, revision, before/after evidence counts, and artifact
-  checksum;
+  accessibility status, revision, before/after evidence counts, certification
+  checks, and artifact checksum;
 - dashboard typecheck, lint, build, and five browser tests pass.
