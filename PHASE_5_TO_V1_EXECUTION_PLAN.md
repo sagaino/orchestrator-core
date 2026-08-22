@@ -278,6 +278,8 @@ manual archaeology or uncontrolled growth.
 
 ### P8.1 — Duplicate, Merge, and Staleness Workflow
 
+Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+
 - Model: `ECONOMY`
 - Scope: deterministic similarity candidates, explicit merge preview, stale
   review queue, and reversible index updates. No automatic content deletion.
