@@ -1,6 +1,6 @@
 # Phase 9 — v1.0 GA Certification Contract
 
-Status: **P9.0–P9.1 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P9.0–P9.1 HUMAN-ACCEPTED**
 Contract version: **p9.1-2026-08-22**
 Boundary: **reproducible local-first release packaging, installation, upgrade, recovery, documentation, and final human-gated v1.0 certification**
 
@@ -29,8 +29,8 @@ CLI:
   guardrails, uninstall preservation, lockfile drift detection, and checksum
   verification;
 - backend full suite and smoke test remain the release gate;
-- P9.1 migration/upgrade matrix is implemented below; human acceptance remains
-  separate from automated evidence.
+- P9.1 migration/upgrade matrix is implemented below; both P9.0 and P9.1 have
+  now passed their separate human acceptance gates.
 
 ## P9.1 Migration and Upgrade Matrix
 
@@ -44,7 +44,8 @@ The certification harness covers clean install, Phase 4 → v1.0 migration,
 restore-then-upgrade while preserving `executionBlocked`, future/incompatible
 schema rejection, interrupted migration rollback, failed-step rollback, and
 repeatable replay. It runs in an isolated fixture and emits a checksummed
-`p9.1-report.json`; the report remains human-gated.
+`p9.1-report.json`; the report was reviewed as part of the human acceptance
+gate.
 
 CLI:
 
@@ -55,5 +56,5 @@ CLI:
 
 P9.1 exit gate: all matrix cases PASS, migrations are versioned and repeatable,
 backup evidence is verified, incompatible input is rejected before mutation,
-and failed/interrupted work remains fail-closed. Human acceptance is required
-before production migration or v1.0 activation.
+and failed/interrupted work remains fail-closed. P9.1 is human-accepted;
+production migration or v1.0 activation remains a separate operational gate.
