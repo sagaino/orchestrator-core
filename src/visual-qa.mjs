@@ -10,6 +10,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { createVisualEvidence, persistVisualEvidence, VISUAL_EVIDENCE_SCHEMA_VERSION } from "./visual-evidence.mjs";
 import { compareVisualArtifacts, readPng } from "./visual-comparison.mjs";
+import { ACCESSIBILITY_EVIDENCE_SCHEMA_VERSION, runAccessibilityAudit } from "./visual-accessibility.mjs";
 
 export const VISUAL_CAPTURE_SCHEMA_VERSION = 1;
 export const VISUAL_CAPTURE_VIEWPORTS = Object.freeze({
@@ -87,8 +88,14 @@ async function defaultCaptureViewport({ url, viewport, outputPath, timeoutMs, si
       }
       return { route: { status: responseStatus === null || responseStatus >= 400 ? "MISSING_ROUTE" : "RENDERED", httpStatus: responseStatus, title: document.title || null }, layout: { horizontalOverflow: scrollWidth > clientWidth + 1, scrollWidth, clientWidth, clippedElements: candidates }, viewport: { width, height } };
     }, { width: viewport.width, height: viewport.height, responseStatus: response?.status() ?? null });
+    let accessibility;
+    try {
+      accessibility = await runAccessibilityAudit(page);
+    } catch (error) {
+      accessibility = { schemaVersion: ACCESSIBILITY_EVIDENCE_SCHEMA_VERSION, status: "UNKNOWN", findings: [{ id: "ACCESSIBILITY_AUDIT_UNAVAILABLE", severity: "INFO", message: error.message }], checks: { bounded: true, unavailable: true } };
+    }
     await page.screenshot({ path: outputPath, fullPage: false, animations: "disabled" });
-    return { status: "CAPTURED", diagnostics, processTree: { strategy: "playwright-browser-close", bounded: true } };
+    return { status: "CAPTURED", diagnostics, accessibility, processTree: { strategy: "playwright-browser-close", bounded: true } };
   } finally {
     signal?.removeEventListener("abort", onAbort);
     await closeBrowser();
@@ -205,6 +212,7 @@ export async function captureVisualEvidence({
     if (!captured && fs.existsSync(outputPath)) fs.rmSync(outputPath, { force: true });
     const errorMessage = result.error?.message ?? (captured ? null : "Capture tidak menghasilkan screenshot artifact.");
     const comparison = captured ? compareCapture({ runsRoot, evidenceId: `${captureId}-${name}`, actualPath: outputPath, reference, comparisonRoot: path.join(path.dirname(root), "comparisons"), captureDiagnostics: result.result?.diagnostics ?? null, pixelThreshold, maxMismatchRatio }) : { status: "UNKNOWN", method: "pixel-diff-v1", score: null, mismatchPixels: null, notes: ["Comparison skipped because screenshot capture failed."], diagnostics: { reason: "ACTUAL_CAPTURE_UNAVAILABLE", layout: result.result?.diagnostics?.layout ?? null, route: result.result?.diagnostics?.route ?? null, viewport: result.result?.diagnostics?.viewport ?? viewport, artifacts: null } };
+    const accessibility = result.result?.accessibility ?? { schemaVersion: ACCESSIBILITY_EVIDENCE_SCHEMA_VERSION, status: "UNKNOWN", findings: [{ id: "SCANNER_DEFERRED", severity: "INFO", message: "Accessibility audit tidak tersedia karena capture gagal." }], checks: { bounded: true, unavailable: true } };
     const evidence = createVisualEvidence({
       evidenceId: `${captureId}-${name}`,
       runId,
@@ -213,7 +221,7 @@ export async function captureVisualEvidence({
       reference,
       actual: { status: captured ? "CAPTURED" : "UNAVAILABLE", path: captured ? outputPath : null, capturedAt: captured ? new Date().toISOString() : null, diagnostics: result.result?.diagnostics ?? null },
       comparison: errorMessage && comparison.status === "UNKNOWN" ? { ...comparison, notes: [errorMessage, ...comparison.notes] } : comparison,
-      accessibility: { status: "UNKNOWN", findings: [{ id: "SCANNER_DEFERRED", severity: "INFO", message: "Accessibility scanning deferred to P7.3." }] },
+      accessibility,
       revision,
       artifactPath: captured ? outputPath : null,
       createdAt: new Date().toISOString(),
@@ -255,6 +263,37 @@ export function comparePersistedVisualEvidence({ runsRoot, evidence, reference =
   const actualPath = evidence.actual?.path ?? evidence.artifact?.path;
   const comparison = compareCapture({ runsRoot, evidenceId: evidence.evidenceId, actualPath, reference, comparisonRoot: path.join(runsRoot, "runtime", "visual-evidence", evidence.runId, "comparisons"), captureDiagnostics: evidence.actual?.diagnostics ?? null, pixelThreshold, maxMismatchRatio });
   const updated = createVisualEvidence({ ...evidence, reference, actual: { ...evidence.actual, diagnostics: evidence.actual?.diagnostics ?? null }, comparison, artifactPath: actualPath, createdAt: evidence.createdAt });
+  return persistVisualEvidence({ runsRoot, evidence: updated });
+}
+
+export async function auditVisualEvidence({ runsRoot, evidence, baseUrl, route = evidence?.route, viewport = evidence?.viewport, timeoutMs = 30_000 } = {}) {
+  if (!evidence?.evidenceId || !evidence?.runId) throw new Error("Visual evidence tidak lengkap untuk accessibility audit.");
+  if (typeof baseUrl !== "string" || !/^https?:\/\//.test(baseUrl)) throw new Error("baseUrl harus berupa URL HTTP(S).");
+  if (!route?.startsWith?.("/")) throw new Error("route harus berupa path lokal yang diawali '/'.");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 500 || timeoutMs > 120_000) throw new Error("timeoutMs harus integer antara 500 dan 120000.");
+  let browser;
+  let timer;
+  const operation = (async () => {
+    const { chromium } = await import("playwright");
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: viewport.deviceScaleFactor ?? 1 });
+    await page.goto(new URL(route, baseUrl).toString(), { waitUntil: "networkidle", timeout: timeoutMs });
+    return runAccessibilityAudit(page, { maxElements: 120, maxTabStops: 20 });
+  })();
+  let accessibility;
+  try {
+    accessibility = await Promise.race([
+      operation,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Accessibility audit timeout setelah ${timeoutMs}ms.`)), timeoutMs); }),
+    ]);
+  } catch (error) {
+    accessibility = { schemaVersion: ACCESSIBILITY_EVIDENCE_SCHEMA_VERSION, status: "UNKNOWN", findings: [{ id: "ACCESSIBILITY_AUDIT_UNAVAILABLE", severity: "INFO", message: error.message }], checks: { bounded: true, unavailable: true } };
+  } finally {
+    clearTimeout(timer);
+    await browser?.close().catch(() => {});
+    operation.catch(() => {});
+  }
+  const updated = createVisualEvidence({ ...evidence, actual: { ...evidence.actual, diagnostics: evidence.actual?.diagnostics ?? null }, accessibility, createdAt: evidence.createdAt, artifactPath: evidence.actual?.path ?? evidence.artifact?.path });
   return persistVisualEvidence({ runsRoot, evidence: updated });
 }
 

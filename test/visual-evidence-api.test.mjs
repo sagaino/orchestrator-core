@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createOrchestratorServer } from "../src/server.mjs";
 import { captureVisualEvidence } from "../src/visual-qa.mjs";
+import { createVisualEvidence, persistVisualEvidence } from "../src/visual-evidence.mjs";
 
 console.log("Running visual-evidence-api.test.mjs...");
 
@@ -47,6 +48,10 @@ try {
           return { status: "CAPTURED", processTree: { strategy: "fixture", bounded: true } };
         },
       }),
+      auditVisualEvidence: ({ runsRoot: targetRunsRoot, evidence }) => persistVisualEvidence({
+        runsRoot: targetRunsRoot,
+        evidence: createVisualEvidence({ ...evidence, accessibility: { schemaVersion: 1, status: "FAIL", findings: [{ id: "FIXTURE_A11Y", severity: "ERROR", message: "Fixture accessibility finding." }], checks: { bounded: true } }, createdAt: evidence.createdAt, artifactPath: evidence.actual.path }),
+      }),
     },
   });
   await server.start();
@@ -82,6 +87,10 @@ try {
   const compare = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence/visual-api-1/compare`, { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Operator-Session": session.sessionId, "X-Action-Nonce": session.actionNonce }, body: JSON.stringify({ reference: { kind: "path", path: path.join(root, "missing-reference.png") } }) });
   assert.equal(compare.status, 200);
   assert.equal((await compare.json()).data.comparison.status, "UNKNOWN");
+  session.actionNonce = compare.headers.get("x-action-nonce");
+  const accessibility = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence/visual-api-1/accessibility`, { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Operator-Session": session.sessionId, "X-Action-Nonce": session.actionNonce }, body: JSON.stringify({ baseUrl: "http://127.0.0.1:4173" }) });
+  assert.equal(accessibility.status, 200);
+  assert.equal((await accessibility.json()).data.accessibility.status, "FAIL");
   const list = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence`, { headers: auth });
   assert.equal(list.status, 200);
   const visualEvidence = (await list.json()).data;

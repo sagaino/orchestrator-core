@@ -135,7 +135,7 @@ export function createVisualEvidence({
     reference: { kind: reference?.kind ?? "NONE", path: reference?.path ?? null, checksum: reference?.checksum ?? null },
     actual: { status: actual?.status ?? (resolvedArtifact.exists ? "CAPTURED" : "UNAVAILABLE"), path: actual?.path ?? (resolvedArtifact.exists ? resolvedArtifact.path : null), capturedAt: actual?.capturedAt ?? null, diagnostics: actual?.diagnostics ?? null },
     comparison: { status: comparison?.status ?? "UNKNOWN", method: comparison?.method ?? "NOT_CAPTURED", score: comparison?.score ?? null, mismatchPixels: comparison?.mismatchPixels ?? null, notes: Array.isArray(comparison?.notes) ? comparison.notes : [], diagnostics: comparison?.diagnostics ?? null },
-    accessibility: { status: accessibility?.status ?? "UNKNOWN", findings: Array.isArray(accessibility?.findings) ? accessibility.findings : [] },
+    accessibility: { schemaVersion: accessibility?.schemaVersion ?? null, status: accessibility?.status ?? "UNKNOWN", findings: Array.isArray(accessibility?.findings) ? accessibility.findings : [], checks: accessibility?.checks ?? null },
     revision: { number: revision?.number ?? 1, requestedBy: revision?.requestedBy ?? null, reason: revision?.reason ?? null, createdAt: revision?.createdAt ?? createdAt },
     artifact: resolvedArtifact,
     createdAt,
