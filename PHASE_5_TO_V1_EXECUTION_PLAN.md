@@ -343,10 +343,14 @@ Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
 
 ### P9.1 — Migration and Upgrade Matrix
 
+Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+
 - Model: `ECONOMY + STRONG REVIEW`; activation is `HUMAN GATE`.
 - Scope: latest Phase 4 runtime to v1.0, clean install, restore then upgrade,
   incompatible future schema, interrupted migration, and rollback.
 - Exit gate: migrations are versioned, repeatable, backed up, and fail closed.
+- Evidence: `src/migration-upgrade.mjs`, `test/migration-upgrade.test.mjs`, and
+  the checksummed `runs/runtime/migration-matrix/p9.1-report.json`.
 
 ### P9.2 — Final Pilot Cohort
 

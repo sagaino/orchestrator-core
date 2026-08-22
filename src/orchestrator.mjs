@@ -216,6 +216,7 @@ Disaster recovery:
   release-manifest [<version>] [--dashboard <absolute-path>]
   release-manifest-verify <absolute-manifest-path>
   certification-verify <absolute-bundle-path>
+  migration-matrix [--runs <absolute-runs-root>]
 
 Conversational flow:
   request-task <project-id> <request> [--start] [--by <name>]
@@ -411,6 +412,10 @@ export async function main(argv = process.argv.slice(2)) {
       const { verifyReleaseManifestFile } = await import("./release-manifest.mjs");
       result = verifyReleaseManifestFile({ manifestPath });
       if (!result.valid) process.exitCode = 1;
+    } else if (command === "migration-matrix") {
+      const { runMigrationMatrixCertification } = await import("./migration-upgrade.mjs");
+      result = runMigrationMatrixCertification({ reportRoot: options.runs });
+      if (result.status !== "PASS") process.exitCode = 1;
     } else if (command === "operations-readiness") {
       const { operationsReadiness } = await import("./operations-governance.mjs");
       result = operationsReadiness({ runsRoot: options.runs });
