@@ -111,3 +111,23 @@ manifest, incompatible schema, failed migration, and failed health probe. Each
 case records the injected diagnostic, requires a failure or rejection, hashes
 the managed stable source before and after, and passes only when the hashes are
 identical and uncertain work is not replayed.
+
+## 7. P6.4 Release Operations evidence
+
+P6.4 adds `GET /api/operations/release`, a read-only DTO consumed by the
+dashboard Operations page. It exposes the current runtime and verified
+candidate version, queue-drain blockers, compatibility outcome, backup ID,
+health checks, rollback evidence, and the external activation policy.
+
+The dashboard confirmation is intentionally non-mutating: it records only a
+local UI acknowledgement and explains that activation must still be performed
+by the external supervisor with the OS-derived operator identity, session, and
+nonce. No candidate can self-accept or activate in-process.
+
+Evidence:
+
+- backend operations API test covers the versioned DTO and fail-closed defaults;
+- dashboard TypeScript, lint, production build, and Playwright browser fixture
+  pass;
+- browser test verifies the activation button remains disabled until the human
+  acknowledgement and that the UI explicitly reports no activation occurred.

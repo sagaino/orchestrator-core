@@ -20,7 +20,7 @@ try {
     port: 0,
     host: "127.0.0.1",
     apiToken: "a".repeat(64),
-    rateLimiter: new RequestRateLimiter({ readLimit: 2, mutationLimit: 1 }),
+    rateLimiter: new RequestRateLimiter({ readLimit: 3, mutationLimit: 1 }),
   });
   await service.start();
   const port = service.server.address().port;
@@ -34,6 +34,14 @@ try {
   const sessionResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, { headers: { Authorization: `Bearer ${"a".repeat(64)}` } });
   assert.equal(sessionResponse.status, 200);
   const session = (await sessionResponse.json()).data;
+  const releaseResponse = await fetch(`http://127.0.0.1:${port}/api/operations/release`, { headers: { Authorization: `Bearer ${"a".repeat(64)}` } });
+  assert.equal(releaseResponse.status, 200);
+  const releaseBody = await releaseResponse.json();
+  assert.equal(releaseBody.data.schemaVersion, 1);
+  assert.equal(releaseBody.data.current.runtimeVersion, "0.1.0");
+  assert.equal(releaseBody.data.candidate.status, "NOT_CONFIGURED");
+  assert.equal(releaseBody.data.activation.requiresHumanConfirmation, true);
+  assert.equal(releaseBody.data.activation.selfAcceptAllowed, false);
   const acknowledged = await fetch(`http://127.0.0.1:${port}/api/operations/alerts/acknowledge`, {
     method: "POST",
     headers: {
