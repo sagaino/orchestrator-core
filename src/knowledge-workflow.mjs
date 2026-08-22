@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { runProcess } from "./executor.mjs";
 import { getRun, RUN_STATES, transitionRun, updateRunExecution } from "./run-manager.mjs";
 import { agyConfigArgs, resolveAgyConfig } from "./agent-config.mjs";
+import { resolveAgentRoute } from "./agent-routing.mjs";
 import { applyIsolatedWorkspace, cleanupIsolatedWorkspace } from "./workspace-manager.mjs";
 import { notifyKnowledgeCandidateReady } from "./notification-service.mjs";
 import { appendRunTelemetry, createAgentTelemetryRecord } from "./telemetry.mjs";
@@ -300,8 +301,13 @@ export function buildDeterministicProjectOnlyProposal(manifest) {
 }
 
 async function generateProposalWithAgy({ manifest, vaultRoot, runsRoot, processRunner = runProcess }) {
+  const route = resolveAgentRoute({
+    stage: "knowledge-classification",
+    risk: manifest.task?.risk ?? "UNKNOWN",
+    complexity: manifest.task?.complexity ?? "UNKNOWN",
+  });
   // Fast-path: If task is purely project-internal UI/layout/test change, bypass LLM completely (0 tokens consumed)
-  if (isDeterministicProjectOnlyTask(manifest)) {
+  if (route.tier === "ECONOMY" && isDeterministicProjectOnlyTask(manifest)) {
     const proposal = buildDeterministicProjectOnlyProposal(manifest);
     return {
       proposal,
@@ -310,7 +316,10 @@ async function generateProposalWithAgy({ manifest, vaultRoot, runsRoot, processR
   }
 
   const eventLogPath = path.join(runsRoot, "events", `${manifest.runId}.jsonl`);
-  const agentConfig = resolveAgyConfig(process.env, "retrospective");
+  const agentConfig = resolveAgyConfig(process.env, "knowledge-classification", {
+    risk: manifest.task?.risk ?? "UNKNOWN",
+    complexity: manifest.task?.complexity ?? "UNKNOWN",
+  });
   const projectRepository = manifest.execution?.workspace?.path ?? manifest.project.repository;
   const prompt = buildCompressedRetrospectivePrompt({ manifest, vaultRoot, projectRepository });
   const result = await processRunner({

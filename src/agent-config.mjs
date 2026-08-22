@@ -1,6 +1,8 @@
 const VALID_EFFORTS = new Set(["low", "medium", "high"]);
+import { resolveAgentRoute, tierRequiresStrongReview } from "./agent-routing.mjs";
 
 export const DEFAULT_AGY_MODEL = "gemini-3.7-flash-high";
+export const STRONG_REVIEW_MODEL = "gemini-3.7-flash-high";
 export const DEFAULT_AGY_EFFORT = "high";
 
 export const STAGE_DEFAULT_EFFORTS = Object.freeze({
@@ -8,6 +10,7 @@ export const STAGE_DEFAULT_EFFORTS = Object.freeze({
   "TASK_INTAKE": "low",
   "retrospective": "low",
   "RETROSPECTIVE": "low",
+  "knowledge-classification": "low",
   "implementation": "high",
   "recovery": "high",
 });
@@ -62,6 +65,14 @@ export function resolveAgyConfig(env = process.env, stage = "implementation", co
   const rawModel = String(env.ORCHESTRATOR_AGY_MODEL ?? DEFAULT_AGY_MODEL).trim();
   if (!rawModel) throw new Error("ORCHESTRATOR_AGY_MODEL tidak boleh kosong.");
 
+  const route = resolveAgentRoute({
+    stage,
+    // Missing metadata is unknown and therefore fail-safe: it must select
+    // strong review instead of silently becoming ordinary medium work.
+    risk: context.risk ?? "UNKNOWN",
+    complexity: context.complexity ?? (context.request ? detectTaskComplexity(context.request, context) : "UNKNOWN"),
+    requestedTier: context.requestedTier ?? context.tier,
+  });
   let defaultForStage = STAGE_DEFAULT_EFFORTS[stage] ?? DEFAULT_AGY_EFFORT;
   
   if (stage === "implementation" && context.request) {
@@ -69,7 +80,10 @@ export function resolveAgyConfig(env = process.env, stage = "implementation", co
     defaultForStage = detectTaskComplexity(context.request, context);
   } else if ((stage === "task-intake" || stage === "TASK_INTAKE") && env.ORCHESTRATOR_INTAKE_EFFORT) {
     defaultForStage = env.ORCHESTRATOR_INTAKE_EFFORT;
-  } else if ((stage === "retrospective" || stage === "RETROSPECTIVE") && env.ORCHESTRATOR_RETRO_EFFORT) {
+  } else if (
+    (stage === "retrospective" || stage === "RETROSPECTIVE" || stage === "knowledge-classification")
+    && env.ORCHESTRATOR_RETRO_EFFORT
+  ) {
     defaultForStage = env.ORCHESTRATOR_RETRO_EFFORT;
   }
 
@@ -78,19 +92,25 @@ export function resolveAgyConfig(env = process.env, stage = "implementation", co
     throw new Error(`ORCHESTRATOR_AGY_EFFORT tidak valid: ${effort}. Gunakan low, medium, atau high.`);
   }
 
+  // A provider/env label may request a stronger tier, but can never weaken
+  // the frozen policy. Strong review is represented by high effort.
+  const resolvedEffort = tierRequiresStrongReview(route.tier) ? "high" : effort;
   let model = rawModel;
+  if (tierRequiresStrongReview(route.tier) && model !== STRONG_REVIEW_MODEL) {
+    model = STRONG_REVIEW_MODEL;
+  }
   // Match model suffix with effort to prevent agy CLI conflict
-  if (effort === "high") {
+  if (resolvedEffort === "high") {
     if (model === "gemini-3.7-flash") model = "gemini-3.7-flash-high";
-  } else if (effort === "medium") {
+  } else if (resolvedEffort === "medium") {
     if (model === "gemini-3.7-flash-high" || model === "gemini-3.7-flash-low") model = "gemini-3.7-flash-medium";
-  } else if (effort === "low") {
+  } else if (resolvedEffort === "low") {
     if (model.endsWith("-high") || model.endsWith("-medium")) {
       model = model.replace(/-(high|medium)$/, "");
     }
   }
 
-  return { model, effort };
+  return { model, effort: resolvedEffort };
 }
 
 export function agyConfigArgs(config = resolveAgyConfig()) {

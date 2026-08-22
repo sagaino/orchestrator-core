@@ -268,7 +268,8 @@ export function buildAgyInvocation(
     .map((item) => `- ${path.join(vaultRoot, item.path)}`)
     .join("\n");
   const agentConfig = resolveAgyConfig(process.env, "implementation", {
-    request: manifest.task?.title || "",
+    risk: manifest.task?.risk ?? "UNKNOWN",
+    complexity: manifest.task?.complexity ?? "UNKNOWN",
     allowedPaths: manifest.task?.allowedPaths || [],
   });
   const prompt = [
@@ -329,7 +330,10 @@ export function buildAgyRecoveryInvocation(
   const knowledge = manifest.retrieval.knowledge
     .map((item) => `- ${path.join(vaultRoot, item.path)}`)
     .join("\n");
-  const agentConfig = resolveAgyConfig(process.env, "recovery");
+  const agentConfig = resolveAgyConfig(process.env, "recovery", {
+    risk: manifest.task?.risk ?? "UNKNOWN",
+    complexity: manifest.task?.complexity ?? "UNKNOWN",
+  });
   const failureDetail = typeof failure === "string"
     ? failure
     : (diagnosticTail(failure?.result) || String(failure ?? "Unknown failure"));
@@ -418,6 +422,8 @@ export function buildAgyRevisionInvocation(
   // Dynamically resolve configuration based on revision feedback complexity
   const agentConfig = resolveAgyConfig(process.env, "implementation", {
     request: `${manifest.task.title} ${feedbackText}`,
+    risk: manifest.task?.risk ?? "UNKNOWN",
+    complexity: manifest.task?.complexity ?? "UNKNOWN",
     allowedPaths: manifest.task.allowedPaths ?? [],
   });
 

@@ -1,5 +1,24 @@
 import fs from "node:fs";
 import path from "node:path";
+import { resolveAgentRoute } from "./agent-routing.mjs";
+import { detectTaskComplexity } from "./agent-config.mjs";
+
+const FAST_PATH_SAFE_WORDS = new Set([
+  "ubah", "ganti", "perbaiki", "tambahkan", "update", "fix", "change", "set", "adjust", "tweak", "rename", "hide", "show", "display", "tampilkan", "sembunyikan", "switch", "toggle",
+  "the", "a", "an", "in", "on", "to", "for", "of", "and", "with", "from", "be", "as", "into", "jadi", "menjadi", "di", "pada", "untuk", "ke", "dengan", "dari", "dan", "yang",
+  "text", "label", "title", "button", "placeholder", "typo", "padding", "margin", "warna", "color", "icon", "styling", "css", "font", "size", "border", "opacity", "shadow", "rounded", "gap", "align", "alignment", "z", "index", "hover", "cursor", "disabled", "readonly", "loading", "spinner", "class", "tailwind", "layout",
+]);
+const FAST_PATH_SAFE_PROPERTIES = new Set([
+  "text", "label", "title", "button", "placeholder", "typo", "padding", "margin", "warna", "color", "icon", "styling", "css", "font", "size", "border", "opacity", "shadow", "rounded", "gap", "align", "alignment", "z", "hover", "cursor", "disabled", "readonly", "loading", "class", "tailwind", "layout",
+]);
+
+function isSafeFastPathRequest(request, allowedPaths) {
+  const withoutPaths = allowedPaths.reduce((value, filePath) => value.replaceAll(String(filePath).toLowerCase(), " "), request.toLowerCase());
+  const tokens = withoutPaths.match(/[\p{L}\p{N}-]+/gu) ?? [];
+  return tokens.length > 0
+    && tokens.every((token) => FAST_PATH_SAFE_WORDS.has(token))
+    && tokens.some((token) => FAST_PATH_SAFE_PROPERTIES.has(token));
+}
 
 /**
  * Attempts deterministic fast-path task planning without invoking LLM tokens.
@@ -40,6 +59,16 @@ export function tryDeterministicTaskDraft({ project, request, attachedAssets = [
   if (complexityIndicators.test(cleanRequest)) {
     return null;
   }
+  // The deterministic path must never conceal work requiring strong review.
+  const complexity = detectTaskComplexity(cleanRequest);
+  // Only a fully allowlisted UI/text/style request qualifies for the
+  // zero-token path. Any unrecognized word or mixed intent is unknown.
+  const safeRequest = isSafeFastPathRequest(cleanRequest, validAllowedPaths);
+  const risk = safeRequest && complexity !== "high"
+    ? "LOW"
+    : "UNKNOWN";
+  const route = resolveAgentRoute({ stage: "task-intake", risk, complexity });
+  if (route.tier === "STRONG_REVIEW") return null;
 
   if (isSimpleStylingOrText && validAllowedPaths.length <= 3) {
     // Generate clean concise title
@@ -64,6 +93,7 @@ export function tryDeterministicTaskDraft({ project, request, attachedAssets = [
       allowedPaths: validAllowedPaths,
       requiresChanges: true,
       risk: "LOW",
+      complexity: complexity.toUpperCase(),
       clarificationNeeded: false,
       clarificationQuestion: null,
       _isFastPath: true,
