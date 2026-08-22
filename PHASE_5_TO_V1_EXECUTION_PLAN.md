@@ -354,6 +354,8 @@ Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 ### P9.2 — Final Pilot Cohort
 
+Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+
 - Model: `ECONOMY` for ordinary implementation; acceptance is `HUMAN GATE`.
 - Scope: at least ten real scoped tasks across at least three clean registered
   projects, including code, UI, failure recovery, request-changes, rejection,
@@ -361,6 +363,8 @@ Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 - Exit gate: 100% accepted paths authorized; 0 duplicate invocation; 0 secret
   exposure; 0 unrecoverable rejected/failed mutation; every applied run has
   explicit human acceptance and complete evidence.
+- Evidence: `src/final-pilot-cohort.mjs`, `test/final-pilot-cohort.test.mjs`, and
+  the checksummed `runs/runtime/pilot-cohort/p9.2-report.json`.
 
 ### P9.3 — Operator Documentation and Recovery Rehearsal
 
