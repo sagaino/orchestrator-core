@@ -6,7 +6,7 @@ import { listJobs, JOB_STATES } from "./job-queue.mjs";
 import { listRuns, RUN_STATES } from "./run-manager.mjs";
 import { normalizeSafeRelativePath } from "./security.mjs";
 import { recoveryModePath } from "./recovery-mode.mjs";
-import { recordVerifiedBackup } from "./operations-governance.mjs";
+import { readBackupStatus, recordVerifiedBackup } from "./operations-governance.mjs";
 
 export const DR_SCHEMA_VERSION = 1;
 export const DR_RPO_TARGET_HOURS = 24;
@@ -242,7 +242,7 @@ export function createDisasterRecoveryBackup({
       manifestPath: path.join(backupPath, "manifest.json"),
     };
     const verification = verifyDisasterRecoveryBackup({ backupPath });
-    recordVerifiedBackup({ runsRoot, backupPath, verification, manifest });
+    recordVerifiedBackup({ runsRoot, backupPath, verification, manifest, sourceRoots: [vaultRoot, runsRoot] });
     return result;
   } catch (error) {
     if (fs.existsSync(partialPath)) safeRemovePartial(resolvedBackupRoot, partialPath);
@@ -323,9 +323,17 @@ export function verifyDisasterRecoveryBackup({ backupPath } = {}) {
   return result;
 }
 
-export function registerVerifiedDisasterRecoveryBackup({ runsRoot, backupPath } = {}) {
+export function registerVerifiedDisasterRecoveryBackup({ runsRoot, backupPath, vaultRoot = null } = {}) {
   const verification = verifyDisasterRecoveryBackup({ backupPath });
-  return recordVerifiedBackup({ runsRoot, backupPath, verification, manifest: verification.manifest });
+  const previous = readBackupStatus(runsRoot);
+  return recordVerifiedBackup({
+    runsRoot,
+    backupPath,
+    verification,
+    manifest: verification.manifest,
+    sourceRoots: vaultRoot ? [vaultRoot, runsRoot] : [],
+    independentTarget: vaultRoot ? null : previous?.independentTarget ?? null,
+  });
 }
 
 export function restoreDisasterRecoveryBackup({ backupPath, targetRoot } = {}) {

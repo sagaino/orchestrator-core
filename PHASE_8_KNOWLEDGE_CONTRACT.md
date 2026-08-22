@@ -1,8 +1,8 @@
 # Phase 8 — Knowledge and Long-Running Operations Contract
 
-Status: **P8.2 IMPLEMENTED — HUMAN-ACCEPTED**
-Contract version: **p8.2-2026-08-22**
-Boundary: **durable knowledge provenance, reversible maintenance, owned/deduplicated/snoozable operations alerts, and evidence-backed resolution; no silent admission override**
+Status: **P8.3 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Contract version: **p8.3-2026-08-22**
+Boundary: **durable knowledge provenance, reversible maintenance, owned/deduplicated/snoozable operations alerts, evidence-backed resolution, and review-only backup operations; no silent admission override, automatic restore/promotion, or permanent delete**
 
 ## P8.0 Knowledge Provenance and Quality Contract
 
@@ -87,4 +87,31 @@ capture for resolution. API and CLI callers share the same durable contract.
 - `test/operations-alerts-api.test.mjs` covers authenticated acknowledge,
   resolve, and resolution history routes;
 - existing operations governance/API suites remain green;
+- dashboard typecheck, lint, build, security, and browser gates remain green.
+
+## P8.3 Backup Rotation and Recovery Review
+
+Backup operations now expose a read-only status contract for the registered
+backup and its independent target, a launchd-compatible schedule preview, an
+explicit-confirmation install that writes a reviewable plist without calling
+`launchctl`, and a rotation preview that never moves or deletes backup data.
+The scheduler performs only the quiescent backup, verification, and status
+registration sequence. Restore, promotion, retention purge, and permanent
+delete remain outside the scheduler and require separate operator action.
+
+Registered backup verification can be rerun without changing the target. A
+durable recovery-drill record stores operator identity, evidence, result, RTO,
+and due date. Missing, failed, or overdue drills surface as Operations alerts;
+they do not silently open admission. Independent-target status is also surfaced
+as a readiness check, with unknown or non-independent targets unable to pass.
+
+## P8.3 Evidence
+
+- `test/backup-operations.test.mjs` covers independent-target inference,
+  launchd preview/install guardrails, rotation preview, registered verification,
+  recovery-drill overdue state, and readiness checks;
+- `test/backup-operations-api.test.mjs` covers authenticated status, schedule
+  preview, and recovery-drill recording routes;
+- backend disaster-recovery, operations governance, and operations API suites
+  remain green;
 - dashboard typecheck, lint, build, security, and browser gates remain green.

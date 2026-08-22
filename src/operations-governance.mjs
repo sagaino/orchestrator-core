@@ -13,6 +13,7 @@ const PLAN_TTL_MS = 60 * 60 * 1000;
 const ALERT_HISTORY_SCHEMA_VERSION = 2;
 const DEFAULT_ALERT_DEDUPE_WINDOW_MINUTES = 60;
 const DEFAULT_ALERT_SNOOZE_MAX_HOURS = 24 * 7;
+const DEFAULT_RECOVERY_DRILL_INTERVAL_DAYS = 30;
 
 const ALERT_RUNBOOKS = Object.freeze({
   OPS_DISK: { ownerRole: "operations", steps: ["Periksa free disk pada volume runtime.", "Buat retention preview.", "Pindahkan artefak ke trash hanya setelah konfirmasi operator."] },
@@ -47,6 +48,7 @@ export function operationsConfig() {
     alertTtlHours: configuredInteger("ORCHESTRATOR_ALERT_TTL_HOURS", 24, { min: 1, max: 24 * 365 }),
     alertDeduplicationWindowMinutes: configuredInteger("ORCHESTRATOR_ALERT_DEDUPE_WINDOW_MINUTES", DEFAULT_ALERT_DEDUPE_WINDOW_MINUTES, { min: 1, max: 24 * 365 * 60 }),
     alertSnoozeMaxHours: configuredInteger("ORCHESTRATOR_ALERT_SNOOZE_MAX_HOURS", DEFAULT_ALERT_SNOOZE_MAX_HOURS, { min: 1, max: 24 * 365 }),
+    recoveryDrillIntervalDays: configuredInteger("ORCHESTRATOR_RECOVERY_DRILL_INTERVAL_DAYS", DEFAULT_RECOVERY_DRILL_INTERVAL_DAYS, { min: 1, max: 3650 }),
   };
 }
 
@@ -168,7 +170,54 @@ export function backupStatusPath(runsRoot) {
   return runtimePath(runsRoot, "backup-status.json");
 }
 
-export function recordVerifiedBackup({ runsRoot, backupPath, verification, manifest }) {
+export function recoveryDrillPath(runsRoot) {
+  return runtimePath(runsRoot, "recovery-drill.json");
+}
+
+export function recordRecoveryDrill({ runsRoot, drillId = `drill-${randomUUID()}`, performedBy, evidence, result = "PASS", now = new Date(), rtoMinutes = null, intervalDays = DEFAULT_RECOVERY_DRILL_INTERVAL_DAYS } = {}) {
+  if (!String(performedBy ?? "").trim()) throw new Error("Recovery drill membutuhkan operator teridentifikasi.");
+  const normalizedEvidence = typeof evidence === "string" ? { summary: evidence.trim() } : evidence;
+  if (!normalizedEvidence || typeof normalizedEvidence !== "object" || (!String(normalizedEvidence.summary ?? "").trim() && !String(normalizedEvidence.reference ?? normalizedEvidence.path ?? normalizedEvidence.runId ?? "").trim())) throw new Error("Recovery drill membutuhkan evidence summary, reference, path, atau runId.");
+  if (!["PASS", "FAIL"].includes(result)) throw new Error("Recovery drill result harus PASS atau FAIL.");
+  const normalizedIntervalDays = Number(intervalDays);
+  if (!Number.isInteger(normalizedIntervalDays) || normalizedIntervalDays < 1 || normalizedIntervalDays > 3650) throw new Error("intervalDays harus integer 1-3650.");
+  const normalizedRtoMinutes = rtoMinutes === null || rtoMinutes === undefined ? null : Number(rtoMinutes);
+  if (normalizedRtoMinutes !== null && (!Number.isFinite(normalizedRtoMinutes) || normalizedRtoMinutes < 0)) throw new Error("rtoMinutes harus berupa angka non-negatif.");
+  const record = {
+    schemaVersion: 1,
+    drillId: String(drillId),
+    performedBy: String(performedBy).trim(),
+    performedAt: now.toISOString(),
+    result,
+    evidence: normalizedEvidence,
+    rtoMinutes: normalizedRtoMinutes,
+    intervalDays: normalizedIntervalDays,
+    nextDueAt: new Date(now.getTime() + normalizedIntervalDays * 24 * 60 * 60 * 1000).toISOString(),
+  };
+  writePrivateJson(recoveryDrillPath(runsRoot), record);
+  return record;
+}
+
+export function readRecoveryDrill(runsRoot) {
+  return readJson(recoveryDrillPath(runsRoot));
+}
+
+export function recoveryDrillStatus({ runsRoot, now = new Date(), config = operationsConfig() } = {}) {
+  const record = readRecoveryDrill(runsRoot);
+  if (!record?.performedAt) return { status: "MISSING", lastDrill: null, dueAt: null, overdueByMs: null, intervalDays: config.recoveryDrillIntervalDays };
+  const intervalDays = Number.isInteger(record.intervalDays) && record.intervalDays > 0 ? record.intervalDays : config.recoveryDrillIntervalDays;
+  const dueAt = new Date(Date.parse(record.performedAt) + intervalDays * 24 * 60 * 60 * 1000);
+  const overdueByMs = Math.max(0, now.getTime() - dueAt.getTime());
+  return {
+    status: record.result !== "PASS" ? "FAILED" : overdueByMs > 0 ? "OVERDUE" : "CURRENT",
+    lastDrill: record,
+    dueAt: dueAt.toISOString(),
+    overdueByMs,
+    intervalDays,
+  };
+}
+
+export function recordVerifiedBackup({ runsRoot, backupPath, verification, manifest, sourceRoots = [], independentTarget = null }) {
   if (!runsRoot || !backupPath || !verification?.verifiedAt || !manifest?.backupId) {
     throw new Error("Record backup membutuhkan runsRoot, backupPath, verification, dan manifest valid.");
   }
@@ -181,6 +230,12 @@ export function recordVerifiedBackup({ runsRoot, backupPath, verification, manif
     completedAt: manifest.completedAt,
     fileCount: verification.fileCount,
     totalBytes: verification.totalBytes,
+    independentTarget: independentTarget === null
+      ? (sourceRoots.length > 0 ? sourceRoots.every((sourceRoot) => {
+        const relative = path.relative(path.resolve(sourceRoot), path.resolve(backupPath));
+        return relative !== "" && (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative));
+      }) : null)
+      : Boolean(independentTarget),
   };
   writePrivateJson(backupStatusPath(runsRoot), record);
   return record;
@@ -234,6 +289,17 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
     : backupAgeMs > backupMaxAgeMs
       ? check({ id: "backup", status: "FAIL", severity: "CRITICAL", message: "Backup terverifikasi sudah melewati target RPO.", action: "Buat dan verifikasi backup baru sebelum menerima pekerjaan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } })
       : check({ id: "backup", status: "PASS", severity: "INFO", message: "Backup terverifikasi masih memenuhi target RPO.", action: "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } }));
+
+  checks.push(backup?.independentTarget === true
+    ? check({ id: "backup-target", status: "PASS", severity: "INFO", message: "Backup target berada di luar Vault dan runtime roots.", action: "Tidak ada tindakan.", runbook: "PHASE_4_DR_RUNBOOK.md#independent-media" })
+    : backup?.independentTarget === false
+      ? check({ id: "backup-target", status: "FAIL", severity: "CRITICAL", message: "Backup target tidak independen dari source dataset.", action: "Pindahkan backup ke target di luar Vault dan runtime roots, lalu verifikasi ulang.", runbook: "PHASE_4_DR_RUNBOOK.md#independent-media" })
+      : check({ id: "backup-target", status: "WARN", severity: "WARNING", message: "Status independent backup target belum diketahui.", action: "Daftarkan backup baru melalui P8.3 dengan target eksternal yang eksplisit.", runbook: "PHASE_4_DR_RUNBOOK.md#independent-media" }));
+
+  const drill = recoveryDrillStatus({ runsRoot, now, config });
+  checks.push(drill.status === "CURRENT"
+    ? check({ id: "recovery-drill", status: "PASS", severity: "INFO", message: "Recovery drill masih dalam jadwal.", action: "Tidak ada tindakan.", runbook: "PHASE_4_DR_RUNBOOK.md#recovery-drill", metrics: { dueAt: drill.dueAt } })
+    : check({ id: "recovery-drill", status: "WARN", severity: "WARNING", message: drill.status === "FAILED" ? "Recovery drill terakhir gagal." : drill.status === "MISSING" ? "Belum ada recovery drill terdaftar." : "Recovery drill sudah melewati jadwal.", action: "Jalankan recovery drill terkontrol dan catat evidence; scheduler tidak melakukan restore otomatis.", runbook: "PHASE_4_DR_RUNBOOK.md#recovery-drill", metrics: { dueAt: drill.dueAt, overdueByMs: drill.overdueByMs } }));
 
   const runtime = measureTree(runsRoot);
   const artifacts = measureTree(path.join(runsRoot, "workspace-artifacts"));
@@ -297,7 +363,7 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
       resolutionEvidenceRequired: true,
     };
   });
-  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, runtime, artifacts, queue: { queued: queued.length, oldestAgeMs: queueAgeMs }, failures: { deadlineFailures, providerFailures } } };
+  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, recoveryDrill: drill, runtime, artifacts, queue: { queued: queued.length, oldestAgeMs: queueAgeMs }, failures: { deadlineFailures, providerFailures } } };
 }
 
 export function assertOperationalReadiness({ runsRoot, now, config } = {}) {
