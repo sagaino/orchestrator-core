@@ -1,6 +1,6 @@
 # Phase 8 — Knowledge and Long-Running Operations Contract
 
-Status: **P8.0 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P8.0 IMPLEMENTED — HUMAN-ACCEPTED**
 Contract version: **p8.0-2026-08-22**
 Boundary: **durable provenance for global knowledge; project-only fast path; no automatic content merge, deletion, or contradiction resolution**
 
