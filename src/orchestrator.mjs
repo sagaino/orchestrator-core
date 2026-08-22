@@ -79,6 +79,13 @@ function parseArguments(args) {
     force: false,
     confirm: false,
     install: false,
+    soakRoot: null,
+    durationHours: null,
+    stepMinutes: null,
+    workers: null,
+    apiRequests: null,
+    sseClients: null,
+    restartEvery: null,
     fixSafe: false,
     once: false,
     autoCommit: true,
@@ -133,6 +140,27 @@ function parseArguments(args) {
       options.confirm = true;
     } else if (args[index] === "--install") {
       options.install = true;
+    } else if (args[index] === "--soak-root") {
+      options.soakRoot = path.resolve(args[index + 1]);
+      index += 1;
+    } else if (args[index] === "--duration-hours") {
+      options.durationHours = Number(args[index + 1]);
+      index += 1;
+    } else if (args[index] === "--step-minutes") {
+      options.stepMinutes = Number(args[index + 1]);
+      index += 1;
+    } else if (args[index] === "--workers") {
+      options.workers = Number(args[index + 1]);
+      index += 1;
+    } else if (args[index] === "--api-requests") {
+      options.apiRequests = Number(args[index + 1]);
+      index += 1;
+    } else if (args[index] === "--sse-clients") {
+      options.sseClients = Number(args[index + 1]);
+      index += 1;
+    } else if (args[index] === "--restart-every") {
+      options.restartEvery = Number(args[index + 1]);
+      index += 1;
     } else if (args[index] === "--fix-safe") {
       options.fixSafe = true;
     } else if (args[index] === "--once") {
@@ -167,6 +195,7 @@ Disaster recovery:
   backup-rotation-preview <absolute-backup-root> [<older-than-days>] [<keep-latest>]
   backup-verify-registered
   recovery-drill-record --reason <evidence> [--decision PASS|FAIL] [--by <name>]
+  soak-harness [<duration-hours>] [--soak-root <absolute-path>]
   certification-verify <absolute-bundle-path>
 
 Conversational flow:
@@ -234,6 +263,13 @@ Options:
   --force               Izinkan recovery/retry setelah review worktree
   --confirm             Konfirmasi eksplisit purge archive dari Vault
   --install             Tulis schedule artifact; tidak menjalankan launchctl
+  --soak-root <path>    Root terisolasi untuk fixture soak; tidak memakai runtime produksi secara default
+  --duration-hours <n>  Durasi virtual harness (1-72 jam)
+  --step-minutes <n>    Granularitas waktu virtual (1-60 menit)
+  --workers <n>         Jumlah worker sintetis (1-8)
+  --api-requests <n>    Request API per langkah (1-20)
+  --sse-clients <n>     Koneksi SSE bersamaan (1-20)
+  --restart-every <n>   Restart deterministik setiap N langkah
   --fix-safe            Perbaiki index saja dan catat lint; tidak mengubah isi knowledge
   --by <name>           Record requester atau approver identity
   --reason <text>       Record rejection atau request-changes feedback
@@ -322,6 +358,19 @@ export async function main(argv = process.argv.slice(2)) {
       if (!String(options.reason ?? "").trim()) fail("recovery-drill-record membutuhkan --reason <evidence>");
       const { recordRecoveryDrill } = await import("./backup-operations.mjs");
       result = recordRecoveryDrill({ runsRoot: options.runs, performedBy: options.approvedBy, evidence: options.reason, result: options.decision || "PASS" });
+    } else if (command === "soak-harness") {
+      const [durationHours = "24"] = options.positional;
+      const { runSoakCapacityHarness } = await import("./soak-capacity-harness.mjs");
+      result = await runSoakCapacityHarness({
+        harnessRoot: options.soakRoot,
+        durationHours: options.durationHours ?? Number(durationHours),
+        stepMinutes: options.stepMinutes ?? 15,
+        workers: options.workers ?? 2,
+        apiRequestsPerStep: options.apiRequests ?? 4,
+        sseClients: options.sseClients ?? 4,
+        restartEverySteps: options.restartEvery ?? 16,
+      });
+      if (result.status !== "PASS") process.exitCode = 1;
     } else if (command === "operations-readiness") {
       const { operationsReadiness } = await import("./operations-governance.mjs");
       result = operationsReadiness({ runsRoot: options.runs });

@@ -115,3 +115,26 @@ as a readiness check, with unknown or non-independent targets unable to pass.
 - backend disaster-recovery, operations governance, and operations API suites
   remain green;
 - dashboard typecheck, lint, build, security, and browser gates remain green.
+
+## P8.4 Soak and Capacity Harness
+
+`src/soak-capacity-harness.mjs` provides a deterministic virtual-time harness
+for one-to-72-hour windows, bounded synthetic queue admission, restart points,
+authenticated API request load, bounded SSE clients, artifact-growth tracking,
+and Operations alert collection. Synthetic jobs are admitted but never
+executed, so a passing soak cannot silently approve work or invoke a provider.
+
+Each run emits explicit invariant evidence for duplicate admission/invocation,
+lost persisted state across restart, silent approval, bounded client/output
+growth, and recoverable runtime state. The harness is isolated by default and
+accepts an explicit fixture root when durable report evidence is required.
+Response and artifact caps are validated before a run can pass.
+
+## P8.4 Evidence
+
+- `test/soak-capacity-harness.test.mjs` covers virtual-time workload, restart
+  reconstruction, API/SSE load, bounded output, alert collection, and all
+  safety invariants;
+- CLI `soak-harness` exposes bounded duration/capacity controls and returns a
+  machine-readable report with no provider invocation or automatic approval;
+- backend full suite and smoke test remain the release gate.
