@@ -78,6 +78,7 @@ function parseArguments(args) {
     autoStart: false,
     force: false,
     confirm: false,
+    install: false,
     fixSafe: false,
     once: false,
     autoCommit: true,
@@ -130,6 +131,8 @@ function parseArguments(args) {
       options.force = true;
     } else if (args[index] === "--confirm") {
       options.confirm = true;
+    } else if (args[index] === "--install") {
+      options.install = true;
     } else if (args[index] === "--fix-safe") {
       options.fixSafe = true;
     } else if (args[index] === "--once") {
@@ -159,6 +162,11 @@ Disaster recovery:
   dr-backup <absolute-backup-root>
   dr-verify <absolute-backup-directory>
   dr-restore <absolute-backup-directory> <absolute-new-target-root>
+  backup-status
+  backup-schedule <absolute-backup-root> [<interval-hours>] [--install --confirm]
+  backup-rotation-preview <absolute-backup-root> [<older-than-days>] [<keep-latest>]
+  backup-verify-registered
+  recovery-drill-record --reason <evidence> [--decision PASS|FAIL] [--by <name>]
   certification-verify <absolute-bundle-path>
 
 Conversational flow:
@@ -225,6 +233,7 @@ Options:
   --start               Queue a conversational task for background execution
   --force               Izinkan recovery/retry setelah review worktree
   --confirm             Konfirmasi eksplisit purge archive dari Vault
+  --install             Tulis schedule artifact; tidak menjalankan launchctl
   --fix-safe            Perbaiki index saja dan catat lint; tidak mengubah isi knowledge
   --by <name>           Record requester atau approver identity
   --reason <text>       Record rejection atau request-changes feedback
@@ -290,7 +299,29 @@ export async function main(argv = process.argv.slice(2)) {
       const [backupPath] = options.positional;
       if (!backupPath || !path.isAbsolute(backupPath)) fail("dr-register-verified membutuhkan absolute backup directory.");
       const { registerVerifiedDisasterRecoveryBackup } = await import("./disaster-recovery.mjs");
-      result = registerVerifiedDisasterRecoveryBackup({ runsRoot: options.runs, backupPath });
+      result = registerVerifiedDisasterRecoveryBackup({ runsRoot: options.runs, vaultRoot: options.vault, backupPath });
+    } else if (command === "backup-status") {
+      const { backupRecoveryStatus } = await import("./backup-operations.mjs");
+      result = backupRecoveryStatus({ runsRoot: options.runs, vaultRoot: options.vault });
+    } else if (command === "backup-schedule") {
+      const [backupRoot, intervalHours = "24"] = options.positional;
+      if (!backupRoot || !path.isAbsolute(backupRoot)) fail("backup-schedule membutuhkan absolute backup root.");
+      const { installBackupSchedule, previewBackupSchedule } = await import("./backup-operations.mjs");
+      result = options.install
+        ? installBackupSchedule({ runsRoot: options.runs, vaultRoot: options.vault, backupRoot, intervalHours: Number(intervalHours), confirmed: options.confirm })
+        : previewBackupSchedule({ runsRoot: options.runs, vaultRoot: options.vault, backupRoot, intervalHours: Number(intervalHours) });
+    } else if (command === "backup-rotation-preview") {
+      const [backupRoot, olderThanDays = "30", keepLatest = "2"] = options.positional;
+      if (!backupRoot || !path.isAbsolute(backupRoot)) fail("backup-rotation-preview membutuhkan absolute backup root.");
+      const { previewBackupRotation } = await import("./backup-operations.mjs");
+      result = previewBackupRotation({ backupRoot, sourceRoots: [options.vault, options.runs], olderThanDays: Number(olderThanDays), keepLatest: Number(keepLatest) });
+    } else if (command === "backup-verify-registered") {
+      const { verifyRegisteredBackup } = await import("./backup-operations.mjs");
+      result = verifyRegisteredBackup({ runsRoot: options.runs });
+    } else if (command === "recovery-drill-record") {
+      if (!String(options.reason ?? "").trim()) fail("recovery-drill-record membutuhkan --reason <evidence>");
+      const { recordRecoveryDrill } = await import("./backup-operations.mjs");
+      result = recordRecoveryDrill({ runsRoot: options.runs, performedBy: options.approvedBy, evidence: options.reason, result: options.decision || "PASS" });
     } else if (command === "operations-readiness") {
       const { operationsReadiness } = await import("./operations-governance.mjs");
       result = operationsReadiness({ runsRoot: options.runs });

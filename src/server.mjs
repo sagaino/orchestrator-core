@@ -33,6 +33,7 @@ import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
 import { RequestRateLimiter, operationsReadiness, previewRetention, applyRetentionPlan, listRetentionTrash, restoreRetentionTrash, acknowledgeOperationsAlert, listOperationsAlertAcknowledgements, listOperationsAlertResolutions, resolveOperationsAlert } from "./operations-governance.mjs";
+import { backupRecoveryStatus, previewBackupSchedule, previewBackupRotation, verifyRegisteredBackup, recordRecoveryDrill } from "./backup-operations.mjs";
 import { getReleaseOperations } from "./release-operations.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
@@ -87,6 +88,45 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   router.get("/api/operations/readiness", async (req, res) => {
     const readiness = operationsReadiness({ runsRoot });
     sendJson(res, 200, { success: readiness.admission.allowed, data: readiness });
+  });
+
+  router.get("/api/operations/backups/status", async (req, res) => {
+    try {
+      sendJson(res, 200, { success: true, data: backupRecoveryStatus({ runsRoot, vaultRoot }) });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
+  });
+
+  router.post("/api/operations/backups/schedule/preview", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const preview = previewBackupSchedule({ runsRoot, vaultRoot, backupRoot: body?.backupRoot, intervalHours: body?.intervalHours ?? 24 });
+      sendJson(res, 200, { success: true, data: preview });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
+  });
+
+  router.post("/api/operations/backups/rotation/preview", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const preview = previewBackupRotation({ backupRoot: body?.backupRoot, sourceRoots: [vaultRoot, runsRoot], olderThanDays: body?.olderThanDays ?? 30, keepLatest: body?.keepLatest ?? 2 });
+      sendJson(res, 200, { success: true, data: preview });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
+  });
+
+  router.post("/api/operations/backups/verify", async (req, res) => {
+    try {
+      const result = verifyRegisteredBackup({ runsRoot });
+      eventHub.broadcast("BACKUP_VERIFIED", { backupId: result.status.backupId });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
+  });
+
+  router.post("/api/operations/recovery-drill/record", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const result = recordRecoveryDrill({ runsRoot, performedBy: req.operatorIdentity ?? body?.performedBy, evidence: body?.evidence, result: body?.result ?? "PASS", rtoMinutes: body?.rtoMinutes });
+      eventHub.broadcast("RECOVERY_DRILL_RECORDED", { drillId: result.drillId, result: result.result });
+      sendJson(res, 201, { success: true, data: result });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
   });
 
   router.get("/api/operations/release", async (req, res) => {
