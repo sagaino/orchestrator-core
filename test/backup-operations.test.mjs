@@ -74,7 +74,15 @@ try {
 
   const readiness = operationsReadiness({ runsRoot, now, config: { ...operationsConfig(), recoveryDrillIntervalDays: 30 }, daemon: { running: false, heartbeatAt: null } });
   assert.equal(readiness.checks.find((item) => item.id === "backup-target").status, "PASS");
+  assert.equal(readiness.checks.find((item) => item.id === "backup-schedule").status, "WARN", "schedule artifact is installed but launchd remains an explicit operator action");
+  assert.equal(readiness.admission.allowed, true, "schedule reminder must not block task admission");
   assert.equal(readiness.checks.find((item) => item.id === "recovery-drill").status, "PASS");
+
+  const schedulePath = path.join(runsRoot, "runtime", "operations", "backup-schedule.json");
+  const schedule = JSON.parse(fs.readFileSync(schedulePath, "utf8"));
+  fs.writeFileSync(schedulePath, JSON.stringify({ ...schedule, launchctlActivated: true }));
+  const activeScheduleReadiness = operationsReadiness({ runsRoot, now, config: { ...operationsConfig(), recoveryDrillIntervalDays: 30 }, daemon: { running: false, heartbeatAt: null } });
+  assert.equal(activeScheduleReadiness.checks.find((item) => item.id === "backup-schedule").status, "PASS");
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }

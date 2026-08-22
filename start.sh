@@ -106,6 +106,45 @@ log_error() {
   echo -e "  ${C_RED}[✗]${C_RESET} $1"
 }
 
+graceful_kill_pid() {
+  local pid="$1"
+  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  kill -TERM "$pid" 2>/dev/null || true
+  for _ in {1..60}; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
+graceful_kill_matching() {
+  local pattern="$1"
+  pkill -TERM -f "$pattern" 2>/dev/null || true
+  for _ in {1..60}; do
+    if ! pgrep -f "$pattern" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  pkill -KILL -f "$pattern" 2>/dev/null || true
+}
+
+graceful_kill_port() {
+  local port="$1"
+  local pids
+  pids=$(lsof -ti :"$port" 2>/dev/null || true)
+  if [ -z "$pids" ]; then
+    return 0
+  fi
+  while IFS= read -r pid; do
+    graceful_kill_pid "$pid"
+  done <<< "$pids"
+}
+
 # --- Action: Stop Services ---
 stop_services() {
   echo -e "\n${C_YELLOW}${C_BOLD}🛑 Stopping Personal AI Orchestrator...${C_RESET}"
@@ -119,27 +158,19 @@ stop_services() {
   # 2. Kill via saved PID file
   if [ -f "$PID_FILE" ]; then
     while IFS= read -r pid; do
-      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        kill -9 "$pid" 2>/dev/null || true
-      fi
+      graceful_kill_pid "$pid"
     done < "$PID_FILE"
     rm -f "$PID_FILE"
   fi
 
   # 3. Kill any background daemon worker or server processes
-  pkill -9 -f "orchestrator.mjs (daemon-worker|daemon|server)" 2>/dev/null || true
+  graceful_kill_matching "orchestrator.mjs (daemon-worker|daemon|server)"
 
   # 4. Kill any lingering process holding the ports
-  local backend_pids=$(lsof -ti :$BACKEND_PORT 2>/dev/null || true)
-  if [ -n "$backend_pids" ]; then
-    echo "$backend_pids" | xargs kill -9 2>/dev/null || true
-  fi
+  graceful_kill_port "$BACKEND_PORT"
   log_success "Backend Daemon stopped (Port $BACKEND_PORT freed)"
 
-  local frontend_pids=$(lsof -ti :$FRONTEND_PORT 2>/dev/null || true)
-  if [ -n "$frontend_pids" ]; then
-    echo "$frontend_pids" | xargs kill -9 2>/dev/null || true
-  fi
+  graceful_kill_port "$FRONTEND_PORT"
   log_success "Dashboard UI stopped (Port $FRONTEND_PORT freed)"
 
   log_success "✨ All services stopped cleanly.\n"
@@ -324,9 +355,9 @@ if [ -f "$LAUNCHD_PLIST" ]; then
   launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
 fi
 launchctl remove "com.sagaino.personal-ai-orchestrator" 2>/dev/null || true
-pkill -9 -f "orchestrator.mjs (daemon-worker|daemon|server)" 2>/dev/null || true
-lsof -ti :$BACKEND_PORT | xargs kill -9 2>/dev/null || true
-lsof -ti :$FRONTEND_PORT | xargs kill -9 2>/dev/null || true
+graceful_kill_matching "orchestrator.mjs (daemon-worker|daemon|server)"
+graceful_kill_port "$BACKEND_PORT"
+graceful_kill_port "$FRONTEND_PORT"
 
 # 6. Trap SIGINT and SIGTERM for Graceful Shutdown
 trap 'stop_services; exit 0' SIGINT SIGTERM EXIT

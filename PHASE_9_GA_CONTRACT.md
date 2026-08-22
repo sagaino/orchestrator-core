@@ -4,6 +4,12 @@ Status: **P9.0–P9.4 HUMAN-ACCEPTED — v1.0 GA CERTIFICATION COMPLETE**
 Contract version: **p9.1-2026-08-22**
 Boundary: **reproducible local-first release packaging, installation, upgrade, recovery, documentation, and final human-gated v1.0 certification**
 
+The accepted v1.0.4 certificate is stored at
+`runs/runtime/certifications/v1.0.4-final-certificate.json`, approved by
+`local:sagaino` on 2026-08-22, and valid until 2026-08-29. Production
+activation remains a separate external-supervisor action. Post-certificate
+source changes require a fresh certificate and human acceptance.
+
 ## P9.0 Release Manifest and Installation Contract
 
 The release-manifest module creates a versioned, checksum-backed release

@@ -18,6 +18,7 @@ const DEFAULT_RECOVERY_DRILL_INTERVAL_DAYS = 30;
 const ALERT_RUNBOOKS = Object.freeze({
   OPS_DISK: { ownerRole: "operations", steps: ["Periksa free disk pada volume runtime.", "Buat retention preview.", "Pindahkan artefak ke trash hanya setelah konfirmasi operator."] },
   OPS_BACKUP: { ownerRole: "recovery-operator", steps: ["Jalankan dr-backup saat daemon quiescent.", "Verifikasi backup.", "Register backup terverifikasi sebelum admission dibuka."] },
+  OPS_BACKUP_SCHEDULE: { ownerRole: "recovery-operator", steps: ["Buat preview schedule dengan target eksternal.", "Install artifact schedule setelah review operator.", "Aktifkan launchd secara terpisah, lalu verifikasi freshness backup."] },
   OPS_RUNTIME_STORAGE: { ownerRole: "operations", steps: ["Buat retention preview.", "Review kandidat dan ukuran artefak.", "Pulihkan dari trash bila perubahan tidak sesuai."] },
   OPS_ARTIFACT_GROWTH: { ownerRole: "operations", steps: ["Tinjau tren pertumbuhan artefak.", "Buat retention preview.", "Catat keputusan retensi."] },
   OPS_EVIDENCE_INTEGRITY: { ownerRole: "security-operator", steps: ["Hentikan eksekusi baru.", "Verifikasi audit chain.", "Ikuti evidence recovery runbook sebelum resume."] },
@@ -174,6 +175,14 @@ export function recoveryDrillPath(runsRoot) {
   return runtimePath(runsRoot, "recovery-drill.json");
 }
 
+export function backupSchedulePath(runsRoot) {
+  return runtimePath(runsRoot, "backup-schedule.json");
+}
+
+export function readBackupScheduleArtifact(runsRoot) {
+  return readJson(backupSchedulePath(runsRoot));
+}
+
 export function recordRecoveryDrill({ runsRoot, drillId = `drill-${randomUUID()}`, performedBy, evidence, result = "PASS", now = new Date(), rtoMinutes = null, intervalDays = DEFAULT_RECOVERY_DRILL_INTERVAL_DAYS } = {}) {
   if (!String(performedBy ?? "").trim()) throw new Error("Recovery drill membutuhkan operator teridentifikasi.");
   const normalizedEvidence = typeof evidence === "string" ? { summary: evidence.trim() } : evidence;
@@ -317,13 +326,22 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
     ? check({ id: "backup", status: "FAIL", severity: "CRITICAL", message: "Belum ada disaster-recovery backup yang terverifikasi.", action: "Jalankan dr-backup ketika daemon quiescent, lalu dr-register-verified.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore" })
     : backupAgeMs > backupMaxAgeMs
       ? check({ id: "backup", status: "FAIL", severity: "CRITICAL", message: "Backup terverifikasi sudah melewati target RPO.", action: "Buat dan verifikasi backup baru sebelum menerima pekerjaan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } })
-      : check({ id: "backup", status: "PASS", severity: "INFO", message: "Backup terverifikasi masih memenuhi target RPO.", action: "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } }));
+      : backupAgeMs > backupMaxAgeMs * 0.75
+        ? check({ id: "backup", status: "WARN", severity: "WARNING", message: "Backup terverifikasi mendekati batas target RPO.", action: "Jadwalkan backup berikutnya dan verifikasi sebelum batas RPO terlewati.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } })
+        : check({ id: "backup", status: "PASS", severity: "INFO", message: "Backup terverifikasi masih memenuhi target RPO.", action: "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } }));
 
   checks.push(backup?.independentTarget === true
     ? check({ id: "backup-target", status: "PASS", severity: "INFO", message: "Backup target berada di luar Vault dan runtime roots.", action: "Tidak ada tindakan.", runbook: "PHASE_4_DR_RUNBOOK.md#independent-media" })
     : backup?.independentTarget === false
       ? check({ id: "backup-target", status: "FAIL", severity: "CRITICAL", message: "Backup target tidak independen dari source dataset.", action: "Pindahkan backup ke target di luar Vault dan runtime roots, lalu verifikasi ulang.", runbook: "PHASE_4_DR_RUNBOOK.md#independent-media" })
       : check({ id: "backup-target", status: "WARN", severity: "WARNING", message: "Status independent backup target belum diketahui.", action: "Daftarkan backup baru melalui P8.3 dengan target eksternal yang eksplisit.", runbook: "PHASE_4_DR_RUNBOOK.md#independent-media" }));
+
+  const backupSchedule = readBackupScheduleArtifact(runsRoot);
+  checks.push(!backupSchedule
+    ? check({ id: "backup-schedule", status: "WARN", severity: "WARNING", message: "Backup schedule belum dipasang; freshness masih bergantung pada backup manual.", action: "Buat dan review schedule artifact, lalu aktifkan launchd secara terpisah jika disetujui.", runbook: "PHASE_4_DR_RUNBOOK.md#scheduled-backup", metrics: { configured: false, launchctlActivated: false } })
+    : backupSchedule.launchctlActivated === true
+      ? check({ id: "backup-schedule", status: "PASS", severity: "INFO", message: "Backup schedule terpasang dan ditandai aktif.", action: "Tidak ada tindakan.", runbook: "PHASE_4_DR_RUNBOOK.md#scheduled-backup", metrics: { configured: true, launchctlActivated: true, intervalHours: backupSchedule.intervalHours ?? null } })
+      : check({ id: "backup-schedule", status: "WARN", severity: "WARNING", message: "Backup schedule artifact tersedia tetapi launchd belum aktif.", action: "Review plist lalu aktifkan launchd secara eksplisit; dashboard tidak mengaktifkannya otomatis.", runbook: "PHASE_4_DR_RUNBOOK.md#scheduled-backup", metrics: { configured: true, launchctlActivated: false, intervalHours: backupSchedule.intervalHours ?? null } }));
 
   const drill = recoveryDrillStatus({ runsRoot, now, config });
   checks.push(drill.status === "CURRENT"
@@ -393,7 +411,7 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
       resolutionEvidenceRequired: true,
     };
   });
-  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, recoveryDrill: drill, runtime, artifacts, queue: { queued: queued.length, oldestAgeMs: queueAgeMs }, failures: { deadlineFailures, providerFailures } } };
+  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, backupSchedule: { configured: Boolean(backupSchedule), launchctlActivated: backupSchedule?.launchctlActivated === true, intervalHours: backupSchedule?.intervalHours ?? null }, recoveryDrill: drill, runtime, artifacts, queue: { queued: queued.length, oldestAgeMs: queueAgeMs }, failures: { deadlineFailures, providerFailures } } };
 }
 
 export function assertOperationalReadiness({ runsRoot, now, config } = {}) {

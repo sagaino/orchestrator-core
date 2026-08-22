@@ -1,6 +1,6 @@
 # AI OS v1.0.4 Hotfix
 
-Status: **IMPLEMENTED — HUMAN ACCEPTANCE REQUIRED**  
+Status: **IMPLEMENTED — INCLUDED IN THE ACCEPTED v1.0.4 CERTIFICATE**
 Date: 2026-08-22
 
 ## Incident
@@ -28,5 +28,7 @@ run to `FAILED`.
 - The prior TASK-004 source repository was restored cleanly after rollback.
 - The failed run remains immutable and is eligible for a new safe retry.
 
-Fresh machine certification and separate human acceptance are required before
-tagging v1.0.4.
+Fresh-machine certification and separate human acceptance were completed in the
+accepted v1.0.4 certificate. Production migration/activation remains a
+separate external-supervisor operation. Any later source change requires a new
+certificate before promotion.
