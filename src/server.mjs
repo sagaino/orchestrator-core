@@ -32,7 +32,7 @@ import { createVisualQACertification, getVisualQACertification } from "./visual-
 import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
-import { RequestRateLimiter, operationsReadiness, previewRetention, applyRetentionPlan, listRetentionTrash, restoreRetentionTrash, acknowledgeOperationsAlert, listOperationsAlertAcknowledgements } from "./operations-governance.mjs";
+import { RequestRateLimiter, operationsReadiness, previewRetention, applyRetentionPlan, listRetentionTrash, restoreRetentionTrash, acknowledgeOperationsAlert, listOperationsAlertAcknowledgements, listOperationsAlertResolutions, resolveOperationsAlert } from "./operations-governance.mjs";
 import { getReleaseOperations } from "./release-operations.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
@@ -106,8 +106,22 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   router.post("/api/operations/alerts/acknowledge", async (req, res) => {
     const body = await parseJsonBody(req);
-    const result = acknowledgeOperationsAlert({ runsRoot, alertId: body.alertId, acknowledgedBy: body.acknowledgedBy ?? body.readBy, note: body.note });
+    const result = acknowledgeOperationsAlert({ runsRoot, alertId: body.alertId, acknowledgedBy: body.acknowledgedBy ?? body.readBy, owner: body.owner, dedupeKey: body.dedupeKey, note: body.note, snoozeUntil: body.snoozeUntil, snoozeMinutes: body.snoozeMinutes });
     sendJson(res, 200, { success: true, data: result });
+  });
+
+  router.get("/api/operations/alerts/resolutions", async (req, res) => {
+    const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+    sendJson(res, 200, { success: true, data: listOperationsAlertResolutions({ runsRoot, alertId: parsedUrl.searchParams.get("alertId") }) });
+  });
+
+  router.post("/api/operations/alerts/resolve", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const result = resolveOperationsAlert({ runsRoot, alertId: body.alertId, resolvedBy: body.resolvedBy ?? body.acknowledgedBy, evidence: body.evidence, note: body.note });
+      eventHub.broadcast("OPERATIONS_ALERT_RESOLVED", { alertId: result.alertId, resolvedBy: result.resolvedBy });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message); }
   });
 
   router.post("/api/operations/retention/preview", async (req, res) => {

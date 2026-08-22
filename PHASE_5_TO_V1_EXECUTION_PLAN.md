@@ -288,6 +288,8 @@ Implementation status: **IMPLEMENTED — HUMAN-ACCEPTED (2026-08-22)**
 
 ### P8.2 — Alert Ownership and Runbooks
 
+Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+
 - Model: `ECONOMY`
 - Scope: durable acknowledgement, owner, snooze expiry, deduplication window,
   and resolution evidence for Operations alerts.
