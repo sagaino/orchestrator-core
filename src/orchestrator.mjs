@@ -177,6 +177,12 @@ Conversational flow:
   rotate-api-token --confirm
   telemetry [run-id-or-task-id] [--project <project-id>]
   knowledge-health [--fix-safe] [--by <name>]
+  knowledge-maintenance
+  knowledge-duplicates
+  knowledge-stale [<due-soon-days>]
+  knowledge-merge-preview <source-path> <target-path>
+  knowledge-merge-apply <source-path> <target-path> --confirm [--by <name>]
+  knowledge-merge-revert <plan-id> --confirm [--by <name>]
   knowledge-candidates
   knowledge-review <candidate-id>
   promote-knowledge <candidate-id> [--target <path>] [--by <name>]
@@ -475,6 +481,32 @@ export async function main(argv = process.argv.slice(2)) {
         fixSafe: options.fixSafe,
         fixedBy: options.approvedBy,
       });
+    } else if (["knowledge-maintenance", "knowledge-duplicates", "knowledge-stale"].includes(command)) {
+      const { listKnowledgeMaintenance } = await import("./knowledge-maintenance.mjs");
+      const report = listKnowledgeMaintenance({
+        vaultRoot: options.vault,
+        dueSoonDays: options.positional[0] ? Number(options.positional[0]) : 30,
+      });
+      result = command === "knowledge-duplicates"
+        ? { schemaVersion: report.schemaVersion, action: "KNOWLEDGE_DUPLICATES", generatedAt: report.generatedAt, duplicates: report.duplicates, summary: report.summary }
+        : command === "knowledge-stale"
+          ? { schemaVersion: report.schemaVersion, action: "KNOWLEDGE_STALE_QUEUE", generatedAt: report.generatedAt, stale: report.stale, summary: report.summary }
+          : report;
+    } else if (command === "knowledge-merge-preview") {
+      const [sourcePath, targetPath] = options.positional;
+      if (!sourcePath || !targetPath) fail("knowledge-merge-preview membutuhkan <source-path> dan <target-path>");
+      const { previewKnowledgeMerge } = await import("./knowledge-maintenance.mjs");
+      result = previewKnowledgeMerge({ vaultRoot: options.vault, sourcePath, targetPath });
+    } else if (command === "knowledge-merge-apply") {
+      const [sourcePath, targetPath] = options.positional;
+      if (!sourcePath || !targetPath) fail("knowledge-merge-apply membutuhkan <source-path> dan <target-path>");
+      const { applyKnowledgeMerge } = await import("./knowledge-maintenance.mjs");
+      result = applyKnowledgeMerge({ vaultRoot: options.vault, sourcePath, targetPath, approvedBy: options.approvedBy, confirmed: options.confirm });
+    } else if (command === "knowledge-merge-revert") {
+      const [selector] = options.positional;
+      if (!selector) fail("knowledge-merge-revert membutuhkan <plan-id>");
+      const { revertKnowledgeMerge } = await import("./knowledge-maintenance.mjs");
+      result = revertKnowledgeMerge({ vaultRoot: options.vault, selector, revertedBy: options.approvedBy, confirmed: options.confirm });
     } else if (command === "knowledge-candidates") {
       const { listKnowledgeCandidates } = await import("./knowledge-workflow.mjs");
       result = listKnowledgeCandidates({ vaultRoot: options.vault });
