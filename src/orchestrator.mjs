@@ -243,6 +243,9 @@ Conversational flow:
   knowledge-maintenance
   knowledge-duplicates
   knowledge-stale [<due-soon-days>]
+  knowledge-provenance-preview [<review-days>]
+  knowledge-provenance-apply <plan-id> --confirm [--by <name>]
+  knowledge-provenance-rollback <plan-id> --confirm [--by <name>]
   knowledge-merge-preview <source-path> <target-path>
   knowledge-merge-apply <source-path> <target-path> --confirm [--by <name>]
   knowledge-merge-revert <plan-id> --confirm [--by <name>]
@@ -651,6 +654,22 @@ export async function main(argv = process.argv.slice(2)) {
         : command === "knowledge-stale"
           ? { schemaVersion: report.schemaVersion, action: "KNOWLEDGE_STALE_QUEUE", generatedAt: report.generatedAt, stale: report.stale, summary: report.summary }
           : report;
+    } else if (command === "knowledge-provenance-preview") {
+      const { previewKnowledgeProvenanceMigration } = await import("./knowledge-provenance-migration.mjs");
+      result = previewKnowledgeProvenanceMigration({
+        vaultRoot: options.vault,
+        reviewDays: options.positional[0] ? Number(options.positional[0]) : 180,
+      });
+    } else if (command === "knowledge-provenance-apply") {
+      const [selector] = options.positional;
+      if (!selector) fail("knowledge-provenance-apply membutuhkan <plan-id>");
+      const { applyKnowledgeProvenanceMigration } = await import("./knowledge-provenance-migration.mjs");
+      result = applyKnowledgeProvenanceMigration({ vaultRoot: options.vault, selector, approvedBy: options.approvedBy, confirmed: options.confirm });
+    } else if (command === "knowledge-provenance-rollback") {
+      const [selector] = options.positional;
+      if (!selector) fail("knowledge-provenance-rollback membutuhkan <plan-id>");
+      const { rollbackKnowledgeProvenanceMigration } = await import("./knowledge-provenance-migration.mjs");
+      result = rollbackKnowledgeProvenanceMigration({ vaultRoot: options.vault, selector, revertedBy: options.approvedBy, confirmed: options.confirm });
     } else if (command === "knowledge-merge-preview") {
       const [sourcePath, targetPath] = options.positional;
       if (!sourcePath || !targetPath) fail("knowledge-merge-preview membutuhkan <source-path> dan <target-path>");

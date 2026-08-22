@@ -12,6 +12,7 @@ import { enqueueTaskJob, listJobs, getJob, updateJobForRun, reconcileJobs, JOB_S
 import { listKnowledgeCandidates, promoteKnowledgeCandidate, rejectKnowledgeCandidate, acceptRun } from "./knowledge-workflow.mjs";
 import { knowledgeHealth } from "./knowledge-quality.mjs";
 import { listKnowledgeMaintenance, previewKnowledgeMerge, applyKnowledgeMerge, revertKnowledgeMerge } from "./knowledge-maintenance.mjs";
+import { previewKnowledgeProvenanceMigration, applyKnowledgeProvenanceMigration, rollbackKnowledgeProvenanceMigration } from "./knowledge-provenance-migration.mjs";
 import { listNotifications, acknowledgeNotifications, emitTestNotification } from "./notification-service.mjs";
 import { telemetryReport } from "./telemetry.mjs";
 import { daemonStatus } from "./daemon.mjs";
@@ -1185,6 +1186,43 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       const report = listKnowledgeMaintenance({ vaultRoot, dueSoonDays: Number.isFinite(dueSoonDays) ? dueSoonDays : 30 });
       sendJson(res, 200, { success: true, data: { schemaVersion: report.schemaVersion, action: "KNOWLEDGE_STALE_QUEUE", generatedAt: report.generatedAt, stale: report.stale, summary: report.summary } });
     } catch (error) { sendError(res, error.statusCode || 400, error.message); }
+  });
+
+  router.post("/api/knowledge/provenance/migration/preview", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const preview = previewKnowledgeProvenanceMigration({ vaultRoot, reviewDays: body?.reviewDays, now: body?.now ? new Date(body.now) : new Date() });
+      eventHub.broadcast("KNOWLEDGE_PROVENANCE_MIGRATION_PREVIEWED", { planId: preview.planId, summary: preview.summary });
+      sendJson(res, 201, { success: true, data: preview });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
+  });
+
+  router.post("/api/knowledge/provenance/migration/apply", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const result = applyKnowledgeProvenanceMigration({
+        vaultRoot,
+        selector: body?.planId ?? body?.selector,
+        approvedBy: req.operatorIdentity ?? body?.approvedBy,
+        confirmed: body?.confirmed === true || body?.confirm === true,
+      });
+      eventHub.broadcast("KNOWLEDGE_PROVENANCE_MIGRATION_APPLIED", { planId: result.planId, summary: result.summary });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
+  });
+
+  router.post("/api/knowledge/provenance/migration/rollback", async (req, res) => {
+    try {
+      const body = await parseJsonBody(req);
+      const result = rollbackKnowledgeProvenanceMigration({
+        vaultRoot,
+        selector: body?.planId ?? body?.selector,
+        revertedBy: req.operatorIdentity ?? body?.revertedBy ?? body?.approvedBy,
+        confirmed: body?.confirmed === true || body?.confirm === true,
+      });
+      eventHub.broadcast("KNOWLEDGE_PROVENANCE_MIGRATION_ROLLED_BACK", { planId: result.planId });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) { sendError(res, error.statusCode || 400, error.message, error.details); }
   });
 
   router.get("/api/knowledge/merge/preview", async (req, res) => {
