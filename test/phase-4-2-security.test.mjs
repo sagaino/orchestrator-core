@@ -8,7 +8,7 @@ import { aiRepairApplicable, runProcess, verificationRequiresLoopback } from "..
 import { OperatorSessionStore } from "../src/api/operator-session.mjs";
 import { redactSensitive, redactText } from "../src/redaction.mjs";
 import { hardenRuntimePermissions } from "../src/runtime-hardening.mjs";
-import { changedPaths, repositorySnapshot, snapshotFromObject } from "../src/workspace-manager.mjs";
+import { changedPaths, repositorySnapshot, snapshotFromObject, verificationRequiresLoopback as postApplyVerificationRequiresLoopback } from "../src/workspace-manager.mjs";
 import { isSafeInfrastructureFailure } from "../src/task-workflow.mjs";
 
 console.log("Running phase-4-2-security.test.mjs...");
@@ -35,6 +35,8 @@ assert.equal(capabilityForStage("verification:npm-test"), "verification");
 assert.equal(verificationRequiresLoopback("test:e2e", "playwright test"), true);
 assert.equal(verificationRequiresLoopback("test:browser", "vitest run"), true);
 assert.equal(verificationRequiresLoopback("test", "vitest run"), false);
+assert.equal(postApplyVerificationRequiresLoopback("test:e2e", "playwright test"), true);
+assert.equal(postApplyVerificationRequiresLoopback("test", "vitest run"), false);
 assert.equal(aiRepairApplicable(new Error("listen EPERM: operation not permitted 127.0.0.1:4173")), false);
 assert.equal(aiRepairApplicable(new Error("Scope guard menolak automatic recovery di luar allowed_paths: test-results/playwright/.last-run.json")), false);
 assert.equal(aiRepairApplicable(new Error("Verification gagal: unit assertion mismatch")), true);

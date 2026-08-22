@@ -1,6 +1,6 @@
 {
   "name": "personal-ai-orchestrator",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "description": "Approval-gated orchestrator for the Obsidian Wiki and external projects.",
