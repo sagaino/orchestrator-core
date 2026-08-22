@@ -1,6 +1,6 @@
 # Phase 8 — Knowledge and Long-Running Operations Contract
 
-Status: **P8.1 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P8.1 IMPLEMENTED — HUMAN-ACCEPTED**
 Contract version: **p8.1-2026-08-22**
 Boundary: **durable provenance, deterministic duplicate/staleness review, explicit reversible merge; no automatic content deletion or silent merge**
 
