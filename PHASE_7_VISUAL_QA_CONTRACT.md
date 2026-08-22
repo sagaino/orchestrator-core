@@ -1,6 +1,6 @@
 # Phase 7 — Visual QA Contract
 
-Status: **P7.0 IMPLEMENTED — HUMAN ACCEPTANCE REQUIRED**  
+Status: **P7.0 IMPLEMENTED — HUMAN-ACCEPTED**  
 Contract version: **p7.0-2026-08-22**  
 Boundary: **metadata contract only; no capture or scanner is implicit**
 
