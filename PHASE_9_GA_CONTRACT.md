@@ -1,6 +1,6 @@
 # Phase 9 — v1.0 GA Certification Contract
 
-Status: **P9.0–P9.3 HUMAN-ACCEPTED; P9.4 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P9.0–P9.4 HUMAN-ACCEPTED — v1.0 GA CERTIFICATION COMPLETE**
 Contract version: **p9.1-2026-08-22**
 Boundary: **reproducible local-first release packaging, installation, upgrade, recovery, documentation, and final human-gated v1.0 certification**
 
@@ -130,9 +130,10 @@ CLI:
 - `final-certification-verify <absolute-certificate-path>` verifies the
   certificate schema and checksum.
 
-The certificate can report `CERTIFIED_HUMAN_GATE_REQUIRED`, but
-`humanGate.approved` remains false. It never assigns v1.0.0, promotes a
-recovery target, or activates a production release. P9.4 exit requires no
-residual CRITICAL/HIGH risk, controlled MEDIUM risk, clean repositories,
-passing gate reruns, valid documentation and bundle checksums, and explicit
-human assignment of `v1.0.0`.
+The certificate reported `CERTIFIED_HUMAN_GATE_REQUIRED`, and the human owner
+has now accepted P9.4. The certificate still records `humanGate.approved=false`
+because phase acceptance is distinct from production activation and does not
+assign v1.0.0, promote a recovery target, or activate a production release.
+The P9.4 exit evidence has no residual CRITICAL/HIGH risk, controlled MEDIUM
+risk, clean repositories, passing gate reruns, and valid documentation and
+bundle checksums.
