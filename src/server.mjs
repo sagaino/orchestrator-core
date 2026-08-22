@@ -28,6 +28,7 @@ import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
 import { RequestRateLimiter, operationsReadiness, previewRetention, applyRetentionPlan, listRetentionTrash, restoreRetentionTrash, acknowledgeOperationsAlert, listOperationsAlertAcknowledgements } from "./operations-governance.mjs";
+import { getReleaseOperations } from "./release-operations.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 
@@ -53,7 +54,7 @@ export function idempotencyScopeKey({ key, method, requestTarget, rawBody = "" }
     .digest("hex");
 }
 
-export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
+export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRoot = process.cwd(), releaseCandidateRoot = process.env.ORCHESTRATOR_RELEASE_CANDIDATE_ROOT ?? null }) {
   const router = new Router();
 
   // --- 1. System & Health ---
@@ -81,6 +82,16 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   router.get("/api/operations/readiness", async (req, res) => {
     const readiness = operationsReadiness({ runsRoot });
     sendJson(res, 200, { success: readiness.admission.allowed, data: readiness });
+  });
+
+  router.get("/api/operations/release", async (req, res) => {
+    try {
+      const readReleaseOperations = services?.getReleaseOperations ?? getReleaseOperations;
+      const release = readReleaseOperations({ sourceRoot, releaseCandidateRoot, runsRoot });
+      sendJson(res, 200, { success: true, data: release });
+    } catch (error) {
+      sendError(res, error.statusCode || 500, error.message);
+    }
   });
 
   router.get("/api/operations/alerts/acknowledgements", async (req, res) => {
@@ -1225,6 +1236,8 @@ export function createOrchestratorServer({
   eventHub = null,
   apiToken = null,
   rateLimiter = null,
+  sourceRoot = process.cwd(),
+  releaseCandidateRoot = process.env.ORCHESTRATOR_RELEASE_CANDIDATE_ROOT ?? null,
   services: customServices = {},
 } = {}) {
   const recoveryAtStart = readRecoveryMode(runsRoot);
@@ -1249,7 +1262,7 @@ export function createOrchestratorServer({
     ...customServices,
   };
 
-  const router = createRouter({ vaultRoot, runsRoot, eventHub: hub, services });
+  const router = createRouter({ vaultRoot, runsRoot, eventHub: hub, services, sourceRoot, releaseCandidateRoot });
 
   const requestListener = async (req, res) => {
     // 1. Origin validation applies to preflight and regular requests.
