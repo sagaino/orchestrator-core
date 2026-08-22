@@ -10,6 +10,8 @@ import { verifyMigrationMatrixReport } from "./migration-upgrade.mjs";
 import { verifyFinalPilotCohortReport } from "./final-pilot-cohort.mjs";
 import { verifyRecoveryRehearsalReport } from "./operator-recovery-rehearsal.mjs";
 import { verifyReleaseArtifact } from "./release-artifact.mjs";
+import { DEFAULT_VAULT } from "./core.mjs";
+import { readBackupStatus } from "./operations-governance.mjs";
 
 export const FINAL_CERTIFICATION_SCHEMA_VERSION = 2;
 export const FINAL_CERTIFICATION_CONTRACT_VERSION = "p9.4-ga-remediation-2026-08-22";
@@ -123,8 +125,9 @@ export async function runFinalV1Certification({ reportRoot = null, repoRoot = RE
   const definitions = gateDefinitions({ repoRoot: path.resolve(repoRoot), dashboardRoot: resolvedDashboardRoot });
   const gates = executeGates ? normalizeGateResults(null, definitions) : normalizeGateResults(gateResults, definitions);
   const sourceCommit = repoCommit(repoRoot);
-  const backupRoot = path.resolve(path.dirname(resolvedReportRoot), "external-backups");
-  const manifest = createReleaseManifest({ sourceRoot: repoRoot, dashboardRoot: resolvedDashboardRoot, vaultRoot: path.resolve(process.env.ORCHESTRATOR_VAULT ?? path.join(path.dirname(resolvedReportRoot), "vault")), runsRoot: resolvedReportRoot, backupRoot, releaseVersion, sourceCommit, now });
+  const registeredBackup = readBackupStatus(resolvedReportRoot);
+  const backupRoot = path.resolve(process.env.ORCHESTRATOR_BACKUP_ROOT ?? (registeredBackup?.backupPath ? path.dirname(registeredBackup.backupPath) : path.join(path.dirname(resolvedReportRoot), "external-backups")));
+  const manifest = createReleaseManifest({ sourceRoot: repoRoot, dashboardRoot: resolvedDashboardRoot, vaultRoot: path.resolve(process.env.ORCHESTRATOR_VAULT ?? DEFAULT_VAULT), runsRoot: resolvedReportRoot, backupRoot, releaseVersion, sourceCommit, now });
   const manifestPath = path.join(resolvedReportRoot, "runtime", "release-manifest", `v${releaseVersion}.json`);
   const manifestPersisted = writePrivateJson(manifestPath, manifest);
   const manifestVerification = verifyReleaseManifestFile({ manifestPath });
