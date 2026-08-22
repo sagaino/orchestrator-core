@@ -65,6 +65,16 @@ provenance, then writes a per-file `checksums.sha256` inventory. Verification
 rejects altered, incomplete, symlinked, or partial candidates before any later
 activation step.
 
+P6.2 adds [`src/release-supervisor.mjs`](./src/release-supervisor.mjs) and a
+durable admission freeze. While the external supervisor owns the global
+`release-admission` lease, new jobs cannot be admitted. It stops the daemon,
+rejects queued/running work, active runs, corrupt ledgers, and uncertain
+invocations, then delegates the guarded backup/update/health path. The
+candidate cannot provide the human gate: the supervisor requires a separately
+supplied OS-derived operator identity, session, nonce hash, and explicit
+confirmation. `start.sh release-supervisor ...` is only a launcher; it does not
+grant approval by itself.
+
 ## 4. Explicit non-goals for P6.0
 
 - no updater behavior is changed;
@@ -80,3 +90,18 @@ activation step.
 - incompatible API fixture is rejected before activation;
 - all four compatibility matrix outcomes are represented and tested;
 - `npm test` and `graphify update .` pass.
+
+## 6. P6.2 supervisor evidence
+
+- `release-admission` is a durable global gate shared with job admission;
+  concurrent admission callers wait or fail while the supervisor owns it.
+- The drain inspector rejects queued/running jobs, active run states, corrupt
+  job/run ledgers, and `RUNNING`, `INTERRUPTED`, or unknown invocations.
+- The external supervisor stops the daemon before rechecking drain state,
+  delegates backup/update/health verification, and always releases the freeze
+  only after the guarded result is returned.
+- A candidate cannot provide the human gate. The supervisor requires explicit
+  confirmation, an OS-derived operator identity, operator session, and action
+  nonce hash supplied outside the candidate manifest.
+- `npm test`, `bash -n start.sh`, and the dedicated release-supervisor suite
+  pass. A real candidate remains stored separately from the stable runtime.

@@ -347,3 +347,8 @@ export function durableRuntimeStatus(runsRoot) {
     },
   };
 }
+
+export function listDurableInvocations(runsRoot) {
+  const invocationsRoot = path.join(runsRoot, "runtime", "invocations");
+  return jsonFiles(invocationsRoot).map(readJson).filter(Boolean);
+}

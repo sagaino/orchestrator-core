@@ -94,6 +94,7 @@ export async function performGuardedUpdate({
   sourceRoot,
   releaseCandidateRoot,
   runsRoot,
+  vaultRoot = null,
   cliPath = path.join(sourceRoot, "src", "orchestrator.mjs"),
   timeoutMs = 30000,
   onProgress = () => {},
@@ -120,7 +121,7 @@ export async function performGuardedUpdate({
     updateApplied = true;
 
     onProgress({ stage: "STARTING_NEW_DAEMON" });
-    await daemonOps.startDaemon({ runsRoot, cliPath });
+    await daemonOps.startDaemon({ runsRoot, cliPath, vaultRoot });
 
     onProgress({ stage: "VERIFYING_HEALTH" });
     const healthResult = await daemonOps.verifyHealth({ runsRoot, timeoutMs });
@@ -143,7 +144,7 @@ export async function performGuardedUpdate({
           await daemonOps.stopDaemon({ runsRoot });
         } catch {}
         restoreRuntimeSource({ backupDir: backup.backupDir, sourceRoot });
-        await daemonOps.startDaemon({ runsRoot, cliPath });
+        await daemonOps.startDaemon({ runsRoot, cliPath, vaultRoot });
         await daemonOps.verifyHealth({ runsRoot, timeoutMs });
       } catch (rollbackErr) {
         return {

@@ -12,6 +12,7 @@ import {
 } from "./durable-runtime.mjs";
 import { redactSensitive } from "./redaction.mjs";
 import { injectFault } from "./fault-injection.mjs";
+import { assertReleaseAdmissionOpen } from "./release-admission.mjs";
 
 export const JOB_STATES = Object.freeze({
   QUEUED: "QUEUED",
@@ -129,46 +130,58 @@ export function enqueueTaskJob({
   requestedBy = "user",
   intakeTelemetry = null,
 }) {
+  assertReleaseAdmissionOpen(runsRoot);
   return withDurableLease({
     runsRoot,
-    namespace: "job-admission",
-    key: `${projectId}:${taskId}`,
-    purpose: `job admission ${projectId}/${taskId}`,
+    namespace: "release-admission",
+    key: "global",
+    purpose: "release admission gate",
     ttlMs: 60_000,
-    waitTimeoutMs: 2_000,
+    waitTimeoutMs: 5_000,
   }, () => {
-    const duplicate = listJobs(runsRoot).find((job) => (
-      job.projectId === projectId
-      && job.taskId === taskId
-      && [JOB_STATES.QUEUED, JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state)
-    ));
-    if (duplicate) return { created: false, job: duplicate };
+    assertReleaseAdmissionOpen(runsRoot);
+    return withDurableLease({
+      runsRoot,
+      namespace: "job-admission",
+      key: `${projectId}:${taskId}`,
+      purpose: `job admission ${projectId}/${taskId}`,
+      ttlMs: 60_000,
+      waitTimeoutMs: 2_000,
+    }, () => {
+      assertReleaseAdmissionOpen(runsRoot);
+      const duplicate = listJobs(runsRoot).find((job) => (
+        job.projectId === projectId
+        && job.taskId === taskId
+        && [JOB_STATES.QUEUED, JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state)
+      ));
+      if (duplicate) return { created: false, job: duplicate };
 
-    const now = new Date();
-    const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-    const jobId = `${String(taskId).toLowerCase()}-${stamp}-${randomUUID().slice(0, 8)}`;
-    const job = {
-      schemaVersion: 2,
-      revision: 0,
-      jobId,
-      state: JOB_STATES.QUEUED,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      projectId,
-      taskId,
-      taskPath,
-      requestedBy: String(requestedBy).trim() || "user",
-      intakeTelemetry,
-      runId: null,
-      runState: null,
-      error: null,
-      claim: null,
-    };
-    const filePath = jobPath(runsRoot, jobId);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    injectFault("queue.admission.before-create", { filePath, projectId, taskId, jobId });
-    fs.writeFileSync(filePath, `${JSON.stringify(job, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
-    return { created: true, job };
+      const now = new Date();
+      const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+      const jobId = `${String(taskId).toLowerCase()}-${stamp}-${randomUUID().slice(0, 8)}`;
+      const job = {
+        schemaVersion: 2,
+        revision: 0,
+        jobId,
+        state: JOB_STATES.QUEUED,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        projectId,
+        taskId,
+        taskPath,
+        requestedBy: String(requestedBy).trim() || "user",
+        intakeTelemetry,
+        runId: null,
+        runState: null,
+        error: null,
+        claim: null,
+      };
+      const filePath = jobPath(runsRoot, jobId);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      injectFault("queue.admission.before-create", { filePath, projectId, taskId, jobId });
+      fs.writeFileSync(filePath, `${JSON.stringify(job, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+      return { created: true, job };
+    });
   });
 }
 
