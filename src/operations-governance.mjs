@@ -10,6 +10,21 @@ const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
 const RETENTION_ROOTS = ["workspace-artifacts", "workspace-backups"];
 const PLAN_TTL_MS = 60 * 60 * 1000;
+const ALERT_HISTORY_SCHEMA_VERSION = 2;
+const DEFAULT_ALERT_DEDUPE_WINDOW_MINUTES = 60;
+const DEFAULT_ALERT_SNOOZE_MAX_HOURS = 24 * 7;
+
+const ALERT_RUNBOOKS = Object.freeze({
+  OPS_DISK: { ownerRole: "operations", steps: ["Periksa free disk pada volume runtime.", "Buat retention preview.", "Pindahkan artefak ke trash hanya setelah konfirmasi operator."] },
+  OPS_BACKUP: { ownerRole: "recovery-operator", steps: ["Jalankan dr-backup saat daemon quiescent.", "Verifikasi backup.", "Register backup terverifikasi sebelum admission dibuka."] },
+  OPS_RUNTIME_STORAGE: { ownerRole: "operations", steps: ["Buat retention preview.", "Review kandidat dan ukuran artefak.", "Pulihkan dari trash bila perubahan tidak sesuai."] },
+  OPS_ARTIFACT_GROWTH: { ownerRole: "operations", steps: ["Tinjau tren pertumbuhan artefak.", "Buat retention preview.", "Catat keputusan retensi."] },
+  OPS_EVIDENCE_INTEGRITY: { ownerRole: "security-operator", steps: ["Hentikan eksekusi baru.", "Verifikasi audit chain.", "Ikuti evidence recovery runbook sebelum resume."] },
+  OPS_QUEUE_AGE: { ownerRole: "operations", steps: ["Periksa blocker readiness.", "Tinjau worker dan job gagal.", "Dokumentasikan drain atau recovery action."] },
+  OPS_DEADLINE_FAILURES: { ownerRole: "task-operator", steps: ["Tinjau run yang timeout.", "Periksa context/output limit.", "Jalankan retry hanya setelah evidence lengkap."] },
+  OPS_PROVIDER_FAILURES: { ownerRole: "provider-operator", steps: ["Periksa provider/model error.", "Validasi rate limit dan routing.", "Catat evidence provider sebelum retry."] },
+  OPS_DAEMON: { ownerRole: "runtime-operator", steps: ["Periksa heartbeat dan log daemon.", "Restart daemon melalui runbook.", "Verifikasi health sebelum resume."] },
+});
 
 function configuredInteger(name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
   const raw = process.env[name];
@@ -30,6 +45,8 @@ export function operationsConfig() {
     maxQueueAgeMinutes: configuredInteger("ORCHESTRATOR_MAX_QUEUE_AGE_MINUTES", 240, { min: 1, max: 60 * 24 * 365 }),
     signalWindowHours: configuredInteger("ORCHESTRATOR_SIGNAL_WINDOW_HOURS", 24, { min: 1, max: 24 * 365 }),
     alertTtlHours: configuredInteger("ORCHESTRATOR_ALERT_TTL_HOURS", 24, { min: 1, max: 24 * 365 }),
+    alertDeduplicationWindowMinutes: configuredInteger("ORCHESTRATOR_ALERT_DEDUPE_WINDOW_MINUTES", DEFAULT_ALERT_DEDUPE_WINDOW_MINUTES, { min: 1, max: 24 * 365 * 60 }),
+    alertSnoozeMaxHours: configuredInteger("ORCHESTRATOR_ALERT_SNOOZE_MAX_HOURS", DEFAULT_ALERT_SNOOZE_MAX_HOURS, { min: 1, max: 24 * 365 }),
   };
 }
 
@@ -58,13 +75,79 @@ function operationsAlertHistoryPath(runsRoot) { return runtimePath(runsRoot, "al
 
 function readAlertHistory(runsRoot) {
   const value = readJson(operationsAlertHistoryPath(runsRoot));
-  return value?.schemaVersion === 1 && Array.isArray(value.entries) ? value : { schemaVersion: 1, entries: [] };
+  if (![1, ALERT_HISTORY_SCHEMA_VERSION].includes(value?.schemaVersion) || !Array.isArray(value.entries)) return { schemaVersion: ALERT_HISTORY_SCHEMA_VERSION, entries: [] };
+  return {
+    schemaVersion: ALERT_HISTORY_SCHEMA_VERSION,
+    entries: value.entries.map((entry) => ({
+      ...entry,
+      kind: entry.kind ?? "ACKNOWLEDGEMENT",
+      owner: entry.owner ?? entry.acknowledgedBy ?? null,
+      dedupeKey: entry.dedupeKey ?? entry.alertId ?? null,
+    })),
+  };
 }
 
-export function acknowledgeOperationsAlert({ runsRoot, alertId, acknowledgedBy, now = new Date(), note = null } = {}) {
+function alertRunbook(alertId, fallback = null) {
+  return ALERT_RUNBOOKS[alertId] ?? { ownerRole: "operations", steps: fallback ? [fallback] : ["Tinjau alert dan ikuti runbook terkait."] };
+}
+
+function parseSnoozeUntil({ now, snoozeUntil = null, snoozeMinutes = null, maxHours = DEFAULT_ALERT_SNOOZE_MAX_HOURS } = {}) {
+  if (snoozeUntil && Number.isFinite(Date.parse(String(snoozeUntil)))) {
+    const value = new Date(String(snoozeUntil));
+    if (value.getTime() <= now.getTime()) throw new Error("snoozeUntil harus berada di masa depan.");
+    if (value.getTime() > now.getTime() + maxHours * 60 * 60 * 1000) throw new Error(`Snooze tidak boleh lebih dari ${maxHours} jam.`);
+    return value.toISOString();
+  }
+  if (snoozeMinutes !== null && snoozeMinutes !== undefined) {
+    const minutes = Number(snoozeMinutes);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > maxHours * 60) throw new Error(`snoozeMinutes harus integer 1-${maxHours * 60}.`);
+    return new Date(now.getTime() + minutes * 60 * 1000).toISOString();
+  }
+  return null;
+}
+
+export function acknowledgeOperationsAlert({ runsRoot, alertId, acknowledgedBy, owner = null, dedupeKey = null, now = new Date(), note = null, snoozeUntil = null, snoozeMinutes = null, config = operationsConfig() } = {}) {
   if (!String(alertId ?? "").trim() || !String(acknowledgedBy ?? "").trim()) throw new Error("Acknowledgement membutuhkan alertId dan operator teridentifikasi.");
   const history = readAlertHistory(runsRoot);
-  const entry = { alertId: String(alertId), acknowledgedBy: String(acknowledgedBy), acknowledgedAt: now.toISOString(), ...(note ? { note: String(note) } : {}) };
+  const normalizedAlertId = String(alertId).trim();
+  const normalizedDedupeKey = String(dedupeKey ?? normalizedAlertId).trim() || normalizedAlertId;
+  const windowMs = config.alertDeduplicationWindowMinutes * 60 * 1000;
+  const recent = [...history.entries].reverse().find((item) => item.kind === "ACKNOWLEDGEMENT" && item.alertId === normalizedAlertId && item.dedupeKey === normalizedDedupeKey && now.getTime() - Date.parse(item.acknowledgedAt) < windowMs);
+  if (recent) return { ...recent, deduplicated: true, history: history.entries.filter((item) => item.alertId === normalizedAlertId) };
+  const resolvedSnooze = parseSnoozeUntil({ now, snoozeUntil, snoozeMinutes, maxHours: config.alertSnoozeMaxHours });
+  const runbook = alertRunbook(normalizedAlertId);
+  const entry = {
+    kind: "ACKNOWLEDGEMENT",
+    alertId: normalizedAlertId,
+    dedupeKey: normalizedDedupeKey,
+    acknowledgedBy: String(acknowledgedBy).trim(),
+    owner: String(owner ?? acknowledgedBy).trim() || String(acknowledgedBy).trim(),
+    acknowledgedAt: now.toISOString(),
+    dedupeWindowMinutes: config.alertDeduplicationWindowMinutes,
+    snoozeUntil: resolvedSnooze,
+    runbookOwnerRole: runbook.ownerRole,
+    ...(note ? { note: String(note).slice(0, 2000) } : {}),
+  };
+  history.entries.push(entry);
+  writePrivateJson(operationsAlertHistoryPath(runsRoot), history);
+  return { ...entry, history: history.entries.filter((item) => item.alertId === entry.alertId) };
+}
+
+export function resolveOperationsAlert({ runsRoot, alertId, resolvedBy, evidence, note = null, now = new Date() } = {}) {
+  if (!String(alertId ?? "").trim() || !String(resolvedBy ?? "").trim()) throw new Error("Resolution membutuhkan alertId dan operator teridentifikasi.");
+  const normalizedEvidence = typeof evidence === "string" ? { summary: evidence.trim() } : evidence;
+  if (!normalizedEvidence || typeof normalizedEvidence !== "object" || (!String(normalizedEvidence.summary ?? "").trim() && !String(normalizedEvidence.reference ?? normalizedEvidence.path ?? normalizedEvidence.runId ?? "").trim())) {
+    throw new Error("Resolution membutuhkan evidence summary, reference, path, atau runId.");
+  }
+  const history = readAlertHistory(runsRoot);
+  const entry = {
+    kind: "RESOLUTION",
+    alertId: String(alertId).trim(),
+    resolvedBy: String(resolvedBy).trim(),
+    resolvedAt: now.toISOString(),
+    evidence: normalizedEvidence,
+    ...(note ? { note: String(note).slice(0, 2000) } : {}),
+  };
   history.entries.push(entry);
   writePrivateJson(operationsAlertHistoryPath(runsRoot), history);
   return { ...entry, history: history.entries.filter((item) => item.alertId === entry.alertId) };
@@ -72,6 +155,12 @@ export function acknowledgeOperationsAlert({ runsRoot, alertId, acknowledgedBy, 
 
 export function listOperationsAlertAcknowledgements({ runsRoot, alertId = null } = {}) {
   const entries = readAlertHistory(runsRoot).entries;
+  const filtered = alertId ? entries.filter((entry) => entry.alertId === alertId) : entries;
+  return filtered.filter((entry) => entry.kind === "ACKNOWLEDGEMENT");
+}
+
+export function listOperationsAlertResolutions({ runsRoot, alertId = null } = {}) {
+  const entries = readAlertHistory(runsRoot).entries.filter((entry) => entry.kind === "RESOLUTION");
   return alertId ? entries.filter((entry) => entry.alertId === alertId) : entries;
 }
 
@@ -187,7 +276,27 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
     if (deadlineFailures) signals.push({ ...alert, alertId: "OPS_DEADLINE_FAILURES", dedupeKey: "deadline-failures" });
     if (providerFailures) signals.push({ ...alert, alertId: "OPS_PROVIDER_FAILURES", dedupeKey: "provider-failures" });
     return signals;
-  }).map((alert) => ({ ...alert, observedAt: checkedAt, expiresAt, acknowledgementHistory: history.entries.filter((entry) => entry.alertId === alert.alertId) }));
+  }).map((alert) => {
+    const alertHistory = history.entries.filter((entry) => entry.alertId === alert.alertId);
+    const acknowledgement = [...alertHistory].reverse().find((entry) => entry.kind === "ACKNOWLEDGEMENT" && entry.dedupeKey === alert.dedupeKey) ?? [...alertHistory].reverse().find((entry) => entry.kind === "ACKNOWLEDGEMENT");
+    const resolution = [...alertHistory].reverse().find((entry) => entry.kind === "RESOLUTION");
+    const snoozed = Boolean(acknowledgement?.snoozeUntil && Date.parse(acknowledgement.snoozeUntil) > now.getTime());
+    const runbook = alertRunbook(alert.alertId, alert.runbook);
+    return {
+      ...alert,
+      observedAt: checkedAt,
+      expiresAt,
+      owner: acknowledgement?.owner ?? null,
+      ownerRole: acknowledgement?.runbookOwnerRole ?? runbook.ownerRole,
+      runbookSteps: runbook.steps,
+      acknowledgementState: snoozed ? "SNOOZED" : acknowledgement ? "ACKNOWLEDGED" : "UNACKNOWLEDGED",
+      acknowledgementHistory: alertHistory.filter((entry) => entry.kind === "ACKNOWLEDGEMENT"),
+      acknowledgement,
+      snoozeUntil: acknowledgement?.snoozeUntil ?? null,
+      resolution: resolution ?? null,
+      resolutionEvidenceRequired: true,
+    };
+  });
   return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, runtime, artifacts, queue: { queued: queued.length, oldestAgeMs: queueAgeMs }, failures: { deadlineFailures, providerFailures } } };
 }
 

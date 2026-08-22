@@ -1,8 +1,8 @@
 # Phase 8 — Knowledge and Long-Running Operations Contract
 
-Status: **P8.1 IMPLEMENTED — HUMAN-ACCEPTED**
-Contract version: **p8.1-2026-08-22**
-Boundary: **durable provenance, deterministic duplicate/staleness review, explicit reversible merge; no automatic content deletion or silent merge**
+Status: **P8.2 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Contract version: **p8.2-2026-08-22**
+Boundary: **durable knowledge provenance, reversible maintenance, owned/deduplicated/snoozable operations alerts, and evidence-backed resolution; no silent admission override**
 
 ## P8.0 Knowledge Provenance and Quality Contract
 
@@ -62,3 +62,29 @@ merge preview confirmation flow. No merge path deletes a source page.
 - backend full suite and smoke test pass;
 - dashboard typecheck, lint, and production build pass;
 - Graphify updated both repositories after implementation.
+
+## P8.2 Alert Ownership and Runbooks
+
+Operations alerts now use a durable schema-versioned lifecycle store. An
+acknowledgement records the accountable owner, owner role, deduplication key and
+window, optional snooze expiry, operator note, and the acknowledgement time.
+Repeated observations with the same alert and dedupe key inside the configured
+window are returned as deduplicated and do not create duplicate history rows.
+
+Each alert exposes a bounded runbook step list. Resolution is a separate,
+explicit action requiring an identified operator and evidence (summary,
+reference, path, or run ID). Resolution evidence is retained alongside the
+acknowledgement history; it never opens admission or suppresses a still-failing
+readiness check. Snooze and acknowledgement likewise never change admission.
+
+The Operations Center UI exposes ownership, snooze, runbook steps, and evidence
+capture for resolution. API and CLI callers share the same durable contract.
+
+## P8.2 Evidence
+
+- `test/operations-alerts.test.mjs` covers owner persistence, snooze bounds,
+  deduplication, resolution evidence, runbook metadata, and admission safety;
+- `test/operations-alerts-api.test.mjs` covers authenticated acknowledge,
+  resolve, and resolution history routes;
+- existing operations governance/API suites remain green;
+- dashboard typecheck, lint, build, security, and browser gates remain green.
