@@ -138,3 +138,28 @@ Response and artifact caps are validated before a run can pass.
 - CLI `soak-harness` exposes bounded duration/capacity controls and returns a
   machine-readable report with no provider invocation or automatic approval;
 - backend full suite and smoke test remain the release gate.
+
+## P8.5 Operations Certification
+
+`src/operations-certification.mjs` assembles a tamper-evident certification
+bundle from the P8.4 soak report, current RPO backup evidence, recovery-drill
+RTO, Operations alert ownership/action, knowledge health, audit integrity, and
+resource capacity checks. A bundle cannot become a production approval by
+itself: successful automated checks produce `CERTIFICATION_READY` with an
+explicit human gate still unconfirmed; failed checks produce `CONDITIONAL`
+with named blockers.
+
+The certification verifies the backup contents again, requires an independent
+target and fresh RPO, requires a current passing drill with measured RTO, and
+rejects active alerts without an accountable owner and runbook action. It does
+not repair knowledge, acknowledge alerts, promote a restore, or activate any
+runtime.
+
+## P8.5 Evidence
+
+- `test/operations-certification.test.mjs` covers the all-pass certification
+  path, bundle checksum verification, human-gate preservation, and alert
+  ownership blocking;
+- CLI `operations-certification` consumes an explicit P8.4 report and writes a
+  private checksum sidecar under runtime certifications;
+- backend full suite and smoke test remain the release gate.
