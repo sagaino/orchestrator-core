@@ -77,6 +77,7 @@
     "test:recovery-rehearsal": "node test/operator-recovery-rehearsal.test.mjs",
     "final:certification": "node src/orchestrator.mjs final-certification",
     "test:final-certification": "node test/final-v1-certification.test.mjs",
+    "final:certification-verify": "node src/orchestrator.mjs final-certification-verify",
     "test:routing": "node test/agent-routing.test.mjs",
     "test:context": "node test/context-compactor.test.mjs",
     "knowledge-health": "node src/orchestrator.mjs knowledge-health",
