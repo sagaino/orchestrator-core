@@ -27,7 +27,7 @@ import { buildRunEvidence } from "./interaction.mjs";
 import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
-import { RequestRateLimiter, operationsReadiness, previewRetention, applyRetentionPlan, listRetentionTrash, restoreRetentionTrash } from "./operations-governance.mjs";
+import { RequestRateLimiter, operationsReadiness, previewRetention, applyRetentionPlan, listRetentionTrash, restoreRetentionTrash, acknowledgeOperationsAlert, listOperationsAlertAcknowledgements } from "./operations-governance.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 
@@ -81,6 +81,17 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services }) {
   router.get("/api/operations/readiness", async (req, res) => {
     const readiness = operationsReadiness({ runsRoot });
     sendJson(res, 200, { success: readiness.admission.allowed, data: readiness });
+  });
+
+  router.get("/api/operations/alerts/acknowledgements", async (req, res) => {
+    const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+    sendJson(res, 200, { success: true, data: listOperationsAlertAcknowledgements({ runsRoot, alertId: parsedUrl.searchParams.get("alertId") }) });
+  });
+
+  router.post("/api/operations/alerts/acknowledge", async (req, res) => {
+    const body = await parseJsonBody(req);
+    const result = acknowledgeOperationsAlert({ runsRoot, alertId: body.alertId, acknowledgedBy: body.acknowledgedBy ?? body.readBy, note: body.note });
+    sendJson(res, 200, { success: true, data: result });
   });
 
   router.post("/api/operations/retention/preview", async (req, res) => {
