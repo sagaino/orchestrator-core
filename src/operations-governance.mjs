@@ -252,15 +252,37 @@ export function readBackupStatus(runsRoot) {
   return { ...record, independentTarget: outsideRuntime ? true : null, independentTargetDerived: outsideRuntime ? "legacy-backup-path-outside-runtime" : null };
 }
 
+function isTransientTreeRace(error) {
+  return error?.code === "ENOENT" || error?.code === "ENOTDIR";
+}
+
 function measureTree(root) {
-  if (!fs.existsSync(root)) return { bytes: 0, files: 0, directories: 0 };
   let bytes = 0; let files = 0; let directories = 0;
   const walk = (directory) => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    let entries;
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch (error) {
+      // Worktrees and retention candidates may be removed while Operations
+      // Readiness is scanning them. Treat a disappeared directory as an
+      // empty subtree; other filesystem errors remain actionable.
+      if (isTransientTreeRace(error)) return;
+      throw error;
+    }
+
+    for (const entry of entries) {
       const absolute = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) { directories += 1; walk(absolute); }
-      else if (entry.isFile()) { files += 1; bytes += fs.statSync(absolute).size; }
+      try {
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) { directories += 1; walk(absolute); }
+        else if (entry.isFile()) { bytes += fs.statSync(absolute).size; files += 1; }
+      } catch (error) {
+        // A child can disappear between readdir/stat during worktree cleanup.
+        // Skipping only these expected races keeps permission and I/O errors
+        // visible to the Operations Center without taking down the daemon.
+        if (isTransientTreeRace(error)) continue;
+        throw error;
+      }
     }
   };
   walk(root);
