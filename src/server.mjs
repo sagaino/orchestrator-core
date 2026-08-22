@@ -25,6 +25,7 @@ import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvest
 import { saveUploadedAsset, deleteUploadedAsset, resolveMockupAssetPath } from "./asset-manager.mjs";
 import { buildRunEvidence } from "./interaction.mjs";
 import { createVisualEvidence, getVisualEvidence, listVisualEvidence, persistVisualEvidence } from "./visual-evidence.mjs";
+import { captureVisualEvidence, listCaptureReports } from "./visual-qa.mjs";
 import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
@@ -576,6 +577,15 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
     }
   });
 
+  router.get("/api/runs/:id/visual-evidence/captures", async (req, res, { params }) => {
+    try {
+      getRun(runsRoot, params.id);
+      sendJson(res, 200, { success: true, data: listCaptureReports({ runsRoot, runId: params.id }) });
+    } catch (err) {
+      sendError(res, 404, err.message);
+    }
+  });
+
   router.get("/api/runs/:id/visual-evidence/:evidenceId", async (req, res, { params }) => {
     try {
       const evidence = getVisualEvidence({ runsRoot, runId: params.id, evidenceId: params.evidenceId });
@@ -593,6 +603,28 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       const persisted = persistVisualEvidence({ runsRoot, evidence });
       eventHub.broadcast("VISUAL_EVIDENCE_RECORDED", { runId: params.id, evidenceId: evidence.evidenceId, comparison: evidence.comparison.status });
       sendJson(res, 201, { success: true, data: persisted });
+    } catch (err) {
+      sendError(res, err.statusCode || 400, err.message, err.details);
+    }
+  });
+
+  router.post("/api/runs/:id/visual-evidence/capture", async (req, res, { params }) => {
+    try {
+      getRun(runsRoot, params.id);
+      const body = await parseJsonBody(req);
+      const capture = services?.captureVisualEvidence ?? captureVisualEvidence;
+      const devServer = globalDevServerManager.getDevServerStatus(params.id);
+      const captureInput = {
+        ...body,
+        runsRoot,
+        runId: params.id,
+        baseUrl: body?.baseUrl ?? devServer.url,
+        route: body?.route ?? "/",
+      };
+      if (!captureInput.baseUrl) throw new Error("Dev server untuk run ini belum aktif.");
+      const report = await capture(captureInput);
+      eventHub.broadcast("VISUAL_CAPTURE_COMPLETED", { runId: params.id, captureId: report.captureId, status: report.status });
+      sendJson(res, 201, { success: true, data: report });
     } catch (err) {
       sendError(res, err.statusCode || 400, err.message, err.details);
     }

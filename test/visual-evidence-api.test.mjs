@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createOrchestratorServer } from "../src/server.mjs";
+import { captureVisualEvidence } from "../src/visual-qa.mjs";
 
 console.log("Running visual-evidence-api.test.mjs...");
 
@@ -27,12 +28,40 @@ fs.writeFileSync(path.join(runsRoot, `${runId}.json`), JSON.stringify({
 
 let server;
 try {
-  server = createOrchestratorServer({ vaultRoot, runsRoot, port: 0, host: "127.0.0.1", apiToken: "v".repeat(64) });
+  server = createOrchestratorServer({
+    vaultRoot,
+    runsRoot,
+    port: 0,
+    host: "127.0.0.1",
+    apiToken: "v".repeat(64),
+    services: {
+      captureVisualEvidence: (input) => captureVisualEvidence({
+        ...input,
+        baseUrl: "http://127.0.0.1:4173",
+        route: "/operations",
+        viewportNames: ["desktop", "tablet", "mobile"],
+        timeoutMs: 500,
+        captureViewport: async ({ outputPath }) => {
+          fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+          fs.writeFileSync(outputPath, "api-capture-png-fixture");
+          return { status: "CAPTURED", processTree: { strategy: "fixture", bounded: true } };
+        },
+      }),
+    },
+  });
   await server.start();
   const port = server.server.address().port;
   const auth = { Authorization: `Bearer ${"v".repeat(64)}` };
   const sessionResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, { headers: auth });
   const session = (await sessionResponse.json()).data;
+  const capture = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence/capture`, { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Operator-Session": session.sessionId, "X-Action-Nonce": session.actionNonce }, body: JSON.stringify({ baseUrl: "http://127.0.0.1:4173", route: "/operations" }) });
+  assert.equal(capture.status, 201);
+  const captureBody = (await capture.json()).data;
+  assert.equal(captureBody.status, "PASS");
+  session.actionNonce = capture.headers.get("x-action-nonce");
+  const captures = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence/captures`, { headers: auth });
+  assert.equal(captures.status, 200);
+  assert.equal((await captures.json()).data.length, 1);
   const body = {
     evidenceId: "visual-api-1",
     route: "/operations",
@@ -51,7 +80,9 @@ try {
   assert.equal(posted.artifact.exists, true);
   const list = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence`, { headers: auth });
   assert.equal(list.status, 200);
-  assert.equal((await list.json()).data.length, 1);
+  const visualEvidence = (await list.json()).data;
+  assert.equal(visualEvidence.length, 4);
+  assert.deepEqual(new Set(visualEvidence.map((item) => item.evidenceId)).size, 4);
   const detail = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence/visual-api-1`, { headers: auth });
   assert.equal(detail.status, 200);
   assert.equal((await detail.json()).data.route, "/operations");
@@ -61,4 +92,3 @@ try {
 }
 
 console.log("visual-evidence-api.test.mjs: All tests passed!");
-
