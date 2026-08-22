@@ -1,6 +1,6 @@
 # Phase 5 to v1.0 Execution Plan
 
-Status: **IMPLEMENTED — P5.0–P9.4 HUMAN-ACCEPTED; v1.0.4 CERTIFICATE HUMAN GATE REQUIRED**  
+Status: **IMPLEMENTED — P5.0–P9.4 HUMAN-ACCEPTED; v1.0.4 CERTIFICATE ACCEPTED**
 Plan date: **2026-08-22 (Asia/Jakarta)**  
 Starting point: **Phase 4 production-certified**  
 Final target: **Personal AI OS v1.0 GA, local-first, single-user, supervised macOS**
@@ -332,7 +332,7 @@ recoverable, documented, and reproducibly certified as v1.0.
 
 ### P9.0 — Release Manifest and Installation Contract
 
-Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
+Implementation status: **HUMAN-ACCEPTED (2026-08-22); v1.0.4 CERTIFIED**
 
 - Model: ECONOMY + STRONG REVIEW
 - Model: `ECONOMY + STRONG REVIEW`
@@ -389,15 +389,16 @@ Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
   audit head and release provenance in a checksummed certificate.
 - Final gate: no CRITICAL/HIGH risk; MEDIUM risks have owner, control, expiry,
   and explicit human acceptance; repositories are clean; documentation and
-  bundle checksums verify; human assigns version `v1.0.0`.
+  bundle checksums verify; human assigns version `v1.0.4`.
 - Evidence: `P9_4_THREAT_MODEL.md`, `src/final-v1-certification.mjs`,
   `test/final-v1-certification.test.mjs`, and the checksummed
   `runs/runtime/certifications/v1.0-final-certificate.json`.
 
 ## 9. Final Definition of Done
 
-The roadmap is complete now that P9.4 is human-accepted and all statements
-below are true:
+The roadmap was completed and v1.0.4 was human-accepted on 2026-08-22. The
+post-certificate remediation work is tracked separately and requires a fresh
+certificate before promotion. The statements below remain the GA contract:
 
 - normal task flow, review, visual QA, knowledge decision, and operations can be
   completed from the dashboard;

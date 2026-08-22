@@ -17,6 +17,7 @@ import { operationsReadiness } from "./operations-governance.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
+const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 30_000;
 export const ACTIVE_POLL_INTERVAL_MS = 1_000;
 export const IDLE_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_PARALLEL_WORKERS = 2;
@@ -571,6 +572,7 @@ export function daemonStatus({ runsRoot }) {
       jobsFailed: 0,
       errors: 0,
     },
+    restartReconciliation: healthMatchesProcess ? health?.restartReconciliation ?? null : null,
     lastEvent: healthMatchesProcess ? health?.lastEvent ?? null : null,
     parallel: parallelQueueStatus(jobs, maxWorkers, runs),
     durability: durableRuntimeStatus(runsRoot),
@@ -743,6 +745,14 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
       jobsFailed: 0,
       errors: 0,
     },
+    restartReconciliation: {
+      status: "PENDING",
+      startedAt,
+      completedAt: null,
+      runs: 0,
+      jobs: 0,
+      error: null,
+    },
     lastEvent: { event: "DAEMON_STARTED", at: startedAt },
   };
   appendLog(paths.log, { event: "DAEMON_STARTED", pid: process.pid, vaultRoot, runsRoot });
@@ -783,39 +793,56 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
     errors: health.counters.errors + 1,
   });
 
-  const reconciledRuns = reconcileInterruptedRuns({ vaultRoot, runsRoot });
-  if (reconciledRuns.length) {
-    record({ event: "RUNS_RECONCILED", count: reconciledRuns.length, runs: reconciledRuns });
-  }
-  const reconciledJobs = reconcileJobs(runsRoot, listRuns(runsRoot));
-  if (reconciledJobs.length) {
-    record({
-      event: "JOBS_RECONCILED",
-      count: reconciledJobs.length,
-      jobs: reconciledJobs.map((job) => ({ jobId: job.jobId, state: job.state, recovery: job.recovery })),
-    });
-    const runsById = new Map(listRuns(runsRoot).map((run) => [run.runId, run]));
-    for (const job of reconciledJobs.filter((item) => [JOB_STATES.REVIEW, JOB_STATES.FAILED].includes(item.state))) {
-      try {
-        const notification = await notifyTaskOutcome({
-          runsRoot,
-          job,
-          manifest: job.runId ? runsById.get(job.runId) ?? null : null,
-          error: job.error ? new Error(job.error) : null,
-        });
-        record({
-          event: "RECONCILED_NOTIFICATION_EMITTED",
-          jobId: job.jobId,
-          notificationId: notification.notification?.notificationId ?? null,
-          created: notification.created,
-        });
-      } catch (error) {
-        record({ event: "RECONCILED_NOTIFICATION_FAILED", jobId: job.jobId, error: error.message }, {
-          errors: health.counters.errors + 1,
-        });
+  let reconciledRuns = [];
+  let reconciledJobs = [];
+  let reconciliationError = null;
+  try {
+    reconciledRuns = reconcileInterruptedRuns({ vaultRoot, runsRoot });
+    if (reconciledRuns.length) {
+      record({ event: "RUNS_RECONCILED", count: reconciledRuns.length, runs: reconciledRuns });
+    }
+    reconciledJobs = reconcileJobs(runsRoot, listRuns(runsRoot));
+    if (reconciledJobs.length) {
+      record({
+        event: "JOBS_RECONCILED",
+        count: reconciledJobs.length,
+        jobs: reconciledJobs.map((job) => ({ jobId: job.jobId, state: job.state, recovery: job.recovery })),
+      });
+      const runsById = new Map(listRuns(runsRoot).map((run) => [run.runId, run]));
+      for (const job of reconciledJobs.filter((item) => [JOB_STATES.REVIEW, JOB_STATES.FAILED].includes(item.state))) {
+        try {
+          const notification = await notifyTaskOutcome({
+            runsRoot,
+            job,
+            manifest: job.runId ? runsById.get(job.runId) ?? null : null,
+            error: job.error ? new Error(job.error) : null,
+          });
+          record({
+            event: "RECONCILED_NOTIFICATION_EMITTED",
+            jobId: job.jobId,
+            notificationId: notification.notification?.notificationId ?? null,
+            created: notification.created,
+          });
+        } catch (error) {
+          record({ event: "RECONCILED_NOTIFICATION_FAILED", jobId: job.jobId, error: error.message }, {
+            errors: health.counters.errors + 1,
+          });
+        }
       }
     }
+  } catch (error) {
+    reconciliationError = error;
   }
+  health.restartReconciliation = {
+    status: reconciliationError ? "FAILED" : "COMPLETE",
+    startedAt,
+    completedAt: new Date().toISOString(),
+    runs: reconciledRuns.length,
+    jobs: reconciledJobs.length,
+    error: reconciliationError?.message ?? null,
+  };
+  persistHealth();
+  if (reconciliationError) throw reconciliationError;
 
   const processJobEvent = (event) => {
     const patch = event.event === "JOB_STARTED"
@@ -899,6 +926,16 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
     if (jobPollerTimeout) clearTimeout(jobPollerTimeout);
     if (apiServer) await apiServer.stop();
     workerPool.stop();
+    const shutdownTimeoutMs = Number(process.env.ORCHESTRATOR_SHUTDOWN_DRAIN_TIMEOUT_MS ?? DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS);
+    const deadline = Date.now() + (Number.isFinite(shutdownTimeoutMs) && shutdownTimeoutMs >= 0 ? shutdownTimeoutMs : DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS);
+    while (workerPool.snapshot().activeWorkers > 0 && Date.now() < deadline) {
+      await delay(100);
+    }
+    if (workerPool.snapshot().activeWorkers > 0) {
+      appendLog(paths.log, { event: "SHUTDOWN_DRAIN_TIMEOUT", activeJobs: workerPool.snapshot().activeJobs, timeoutMs: shutdownTimeoutMs });
+    } else {
+      appendLog(paths.log, { event: "SHUTDOWN_DRAINED", timeoutMs: shutdownTimeoutMs });
+    }
     if (heartbeat) clearInterval(heartbeat);
     if (watcher) await watcher.close();
     const stoppedAt = new Date().toISOString();

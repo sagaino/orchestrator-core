@@ -47,6 +47,22 @@ data/runs/
 
 Only a backup with `status: READY` and a valid completion marker is usable.
 
+## Scheduled Backup and Freshness
+
+The scheduler is intentionally split into two operator steps. First create and
+review a schedule artifact with `backup-schedule <absolute-backup-root>`; only
+with explicit confirmation may it be installed. The generated plist remains
+inactive until the operator separately reviews and bootstraps it with launchd.
+The dashboard never activates launchd, restores data, promotes a recovery
+target, or deletes backups.
+
+Operations readiness reports a non-blocking `OPS_BACKUP_SCHEDULE` warning when
+no schedule artifact exists or when the artifact is installed but not marked
+active. It also raises a freshness reminder when the latest verified backup is
+within 25% of the 24-hour RPO limit. A backup past the RPO remains a critical
+admission blocker. After activation or a new backup, recheck Operations
+readiness and retain the resulting evidence.
+
 ## Verify Before Every Restore
 
 ```text

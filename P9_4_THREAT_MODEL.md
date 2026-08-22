@@ -1,7 +1,12 @@
 # P9.4 Final Threat Model — v1.0 Local-First GA
 
-Status: **P9.4 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P9.4 IMPLEMENTED — v1.0.4 HUMAN-ACCEPTED; POST-CERT REMEDIATION REQUIRES RECERTIFICATION**
 Contract: `p9.4-2026-08-22`
+
+The v1.0.4 certificate was accepted by `local:sagaino` on 2026-08-22 and is
+valid until 2026-08-29. Changes made after that certificate (including backup
+schedule reminders, graceful shutdown, and browser evidence coverage) must
+produce a fresh certificate before release promotion.
 
 ## Boundary
 
@@ -37,7 +42,9 @@ documentation presence, and Phase 9 report sidecar checksums.
 
 ## Human release gate
 
-The certificate status can become `CERTIFIED_HUMAN_GATE_REQUIRED`, but its
-`humanGate.approved` field remains false. A human must review the threat model,
-gate results, repository cleanliness, provenance, and checksums before assigning
-`v1.0.0` or activating a production release.
+The accepted v1.0.4 certificate has `status: CERTIFIED` and
+`humanGate.approved: true`; the certificate checksum is recorded in its sidecar
+at `runs/runtime/certifications/v1.0.4-final-certificate.json.sha256`. This
+acceptance assigns the release version but never activates production. Any
+post-certificate source change returns the working tree to a release-candidate
+state and requires a new human certificate acceptance.
