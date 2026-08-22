@@ -1,8 +1,8 @@
 # Phase 7 — Visual QA Contract
 
-Status: **P7.2 IMPLEMENTED — HUMAN-ACCEPTED**
-Contract version: **p7.2-2026-08-22**
-Boundary: **bounded capture, deterministic comparison, and layout diagnostics; accessibility scanning remains deferred**
+Status: **P7.3 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Contract version: **p7.3-2026-08-22**
+Boundary: **bounded capture, deterministic comparison, layout diagnostics, and accessibility evidence; no source rewrite**
 
 ## P7.0 Visual Evidence Contract
 
@@ -50,8 +50,8 @@ The API surface is:
 The default runner uses headless Playwright and closes the browser in a
 `finally` path. Tests inject a deterministic capture fixture so timeout,
 partial-success, artifact checksum, and report persistence behavior can be
-verified without requiring browser binaries in CI. Pixel comparison is
-implemented below; accessibility scanning remains deferred to P7.3.
+verified without requiring browser binaries in CI. Pixel comparison and
+accessibility evidence are implemented below.
 
 ## P7.2 Comparison and Layout Diagnostics
 
@@ -71,7 +71,25 @@ evidence can be re-compared through:
 - `POST /api/runs/:id/visual-evidence/:evidenceId/compare`
 
 Comparison never rewrites source code and does not infer accessibility
-results; those remain evidence for the later P7.3 packet.
+results; accessibility findings are recorded separately below.
+
+## P7.3 Accessibility Evidence
+
+`src/visual-accessibility.mjs` runs a bounded, dependency-free audit during
+each Playwright capture. It checks interactive accessible names, image alt
+text, focusability, heading order, contrast when computed colors are
+available, and a bounded Tab flow. Findings are structured evidence with
+`ERROR`, `WARN`, or `INFO` severity; they do not rewrite source code and do
+not block execution automatically.
+
+The persisted evidence includes the audit schema version, status, findings,
+bounded check counts, and explicit unavailable states. Existing evidence can
+be re-audited through:
+
+- `POST /api/runs/:id/visual-evidence/:evidenceId/accessibility`
+
+The endpoint requires an explicit HTTP(S) `baseUrl` for the run-owned preview
+and fails closed when the target cannot be reached within the timeout.
 
 ## Evidence
 
@@ -83,6 +101,8 @@ results; those remain evidence for the later P7.3 packet.
 - deterministic comparison tests cover pass, pixel mismatch, unavailable
   reference, side-by-side/overlay artifacts, route/overflow/clipping findings,
   and the comparison API;
+- accessibility tests cover passing and failing deterministic snapshots,
+  bounded finding limits, capture persistence, and the audit API;
 - dashboard types and Run Inspector expose route, viewport, comparison,
   accessibility status, revision, and artifact checksum;
 - dashboard typecheck, lint, build, and five browser tests pass.
