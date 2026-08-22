@@ -593,6 +593,47 @@ try {
   assert.equal(healthReadOnly.data.data.mode, "read-only");
   assert.equal(healthReadOnly.data.data.summary.safeFixesAvailable >= 1, true);
 
+  // Test 16b: provenance migration is previewed, confirmation-gated, and reversible.
+  const provenancePreview = await request({
+    method: "POST",
+    path: "/api/knowledge/provenance/migration/preview",
+    port,
+    token,
+    body: { reviewDays: 180, now: "2026-08-22T00:00:00.000Z" },
+  });
+  assert.equal(provenancePreview.status, 201);
+  assert.equal(provenancePreview.data.success, true);
+  assert.equal(provenancePreview.data.data.summary.candidateCount, 1);
+  assert.equal(provenancePreview.data.data.confirmation.phrase, "MIGRATE_PROVENANCE");
+  const provenancePlanId = provenancePreview.data.data.planId;
+  const rejectedApply = await request({
+    method: "POST",
+    path: "/api/knowledge/provenance/migration/apply",
+    port,
+    token,
+    body: { planId: provenancePlanId, confirmed: false },
+  });
+  assert.equal(rejectedApply.status, 400);
+  const provenanceApply = await request({
+    method: "POST",
+    path: "/api/knowledge/provenance/migration/apply",
+    port,
+    token,
+    body: { planId: provenancePlanId, confirmed: true },
+  });
+  assert.equal(provenanceApply.status, 200);
+  assert.equal(provenanceApply.data.data.status, "APPLIED");
+  assert.match(fs.readFileSync(path.join(conceptsDir, "sample-concept.md"), "utf8"), /provenance_schema: 1/);
+  const provenanceRollback = await request({
+    method: "POST",
+    path: "/api/knowledge/provenance/migration/rollback",
+    port,
+    token,
+    body: { planId: provenancePlanId, confirmed: true },
+  });
+  assert.equal(provenanceRollback.status, 200);
+  assert.equal(provenanceRollback.data.data.status, "ROLLED_BACK");
+
   // Listen to SSE events for KNOWLEDGE_HEALTH_UPDATED
   let sseEventData = null;
   const sseHealthPromise = new Promise((resolve, reject) => {

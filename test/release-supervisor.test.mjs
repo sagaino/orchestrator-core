@@ -41,6 +41,14 @@ try {
 
   const empty = inspectReleaseDrain({ runsRoot, daemonStatusFn: () => ({ running: false }) });
   assert.equal(empty.drained, true);
+  assert.deepEqual(empty.pending, { jobs: 0, runs: 0, invocations: 0, total: 0 });
+  assert.equal(empty.activation.state, "READY");
+
+  const daemonOnly = inspectReleaseDrain({ runsRoot, daemonStatusFn: () => ({ running: true, pid: 123 }) });
+  assert.equal(daemonOnly.drained, false);
+  assert.equal(daemonOnly.pending.total, 0);
+  assert.equal(daemonOnly.activation.state, "STOP_DAEMON_REQUIRED");
+  assert.equal(daemonOnly.activation.daemonStopOnly, true);
 
   const freeze = createReleaseAdmissionFreeze({ runsRoot, supervisorId: "freeze-test", operatorIdentity });
   assert.throws(() => enqueueTaskJob({ runsRoot, projectId: "p", taskId: "T-1", taskPath: "task.md" }), /dibekukan/);
@@ -49,6 +57,8 @@ try {
 
   const queued = inspectReleaseDrain({ runsRoot, daemonStatusFn: () => ({ running: false }) });
   assert.equal(queued.drained, false);
+  assert.equal(queued.pending.jobs, 1);
+  assert.equal(queued.activation.state, "PENDING_WORK");
   assert.ok(queued.blockers.some((item) => item.code === "QUEUE_NOT_DRAINED"));
 
   const queueFile = fs.readdirSync(path.join(runsRoot, "jobs")).find((entry) => entry.endsWith(".json"));
@@ -57,6 +67,8 @@ try {
   assert.equal(invocation.started, true);
   const uncertain = inspectReleaseDrain({ runsRoot, daemonStatusFn: () => ({ running: false }) });
   assert.equal(uncertain.drained, false);
+  assert.equal(uncertain.pending.invocations, 1);
+  assert.equal(uncertain.activation.state, "PENDING_WORK");
   assert.ok(uncertain.blockers.some((item) => item.code === "UNCERTAIN_INVOCATION"));
   fs.unlinkSync(invocation.filePath);
 
