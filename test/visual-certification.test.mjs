@@ -89,6 +89,7 @@ try {
   assert.equal(certified.status, "CERTIFIED");
   assert.equal(certified.checks.cleanup.status, "PASS");
   assert.equal(getVisualQACertification({ runsRoot, runId }).status, "CERTIFIED");
+  assert.equal(getVisualQACertification({ runsRoot, runId: "missing-visual-certification" }), null);
 
   const runManifestPath = path.join(runsRoot, `${runId}.json`);
   const cleanManifest = fs.readFileSync(runManifestPath, "utf8");

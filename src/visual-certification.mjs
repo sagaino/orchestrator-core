@@ -191,6 +191,7 @@ export function createVisualQACertification({
 export function getVisualQACertification({ runsRoot, runId } = {}) {
   if (!runsRoot || !SAFE_ID.test(runId)) throw new Error("Visual QA certification identifier tidak valid.");
   const filePath = certificationPath(runsRoot, runId);
+  if (!fs.existsSync(filePath)) return null;
   const record = readPrivateJson(filePath);
   if (!record) throw new Error("Visual QA certification tidak ditemukan atau rusak.");
   return validateCertification(record);

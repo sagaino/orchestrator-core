@@ -337,6 +337,37 @@ function appendRetryLog(vaultRoot, manifest, requestedBy, safeInfrastructureFail
   fs.appendFileSync(filePath, `\n\n${entry}\n`, "utf8");
 }
 
+function isGeneratedVerificationArtifact(relativePath) {
+  return /^(?:test-results|playwright-report|blob-report)(?:[\\/]|$)/i.test(String(relativePath ?? ""));
+}
+
+function pathWithinAllowed(candidate, allowedPaths) {
+  const normalizedCandidate = String(candidate ?? "").replaceAll("\\", "/");
+  return allowedPaths.some((allowed) => {
+    const normalizedAllowed = String(allowed ?? "").replaceAll("\\", "/").replace(/\/$/, "");
+    return normalizedCandidate === normalizedAllowed || normalizedCandidate.startsWith(`${normalizedAllowed}/`);
+  });
+}
+
+export function isSafeInfrastructureFailure({ rawError = "", manifest = {} } = {}) {
+  const scopeAudit = manifest.execution?.scopeAudit ?? {};
+  const allowedPaths = scopeAudit.effectiveAllowedPaths ?? scopeAudit.allowedPaths ?? manifest.task?.allowedPaths ?? [];
+  const agentChangedPaths = scopeAudit.agentChangedPaths ?? [];
+  const deniedPaths = scopeAudit.deniedPaths ?? [];
+  const artifactScopeFailure = /Scope guard menolak automatic recovery di luar allowed_paths:/i.test(rawError)
+    && Array.isArray(scopeAudit.outOfScopePaths)
+    && scopeAudit.outOfScopePaths.length > 0
+    && scopeAudit.outOfScopePaths.every(isGeneratedVerificationArtifact)
+    && agentChangedPaths.every((candidate) => pathWithinAllowed(candidate, allowedPaths))
+    && deniedPaths.length === 0;
+  const loopbackSandboxFailure = /listen EPERM: operation not permitted\s+127\.0\.0\.1:/i.test(rawError)
+    && Object.values(manifest.execution?.frozenVerificationScripts ?? {}).some((command) => /playwright|cypress/i.test(String(command)));
+  const legacySafeFailure = /\bENOENT\b|executable.*not found|command not found/i.test(rawError)
+    && !manifest.execution?.agent
+    && !(manifest.execution?.scopeAudit?.changedPaths?.length > 0);
+  return legacySafeFailure || artifactScopeFailure || loopbackSandboxFailure;
+}
+
 async function discardWorkspace({ runsRoot, manifest }) {
   if (!manifest.execution?.workspace?.path) return manifest;
   const result = await cleanupIsolatedWorkspace({
@@ -389,9 +420,7 @@ export async function retryTaskRun({
   }
   const rawError = String(manifest.execution?.result?.error ?? "Unknown failure");
   const error = cleanErrorTail(rawError);
-  const safeInfrastructureFailure = /\bENOENT\b|executable.*not found|command not found/i.test(rawError)
-    && !manifest.execution?.agent
-    && !(manifest.execution?.scopeAudit?.changedPaths?.length > 0);
+  const safeInfrastructureFailure = isSafeInfrastructureFailure({ rawError, manifest });
   if (!safeInfrastructureFailure && !force) {
     throw new Error("Retry otomatis ditolak karena failure mungkin terjadi setelah project berubah. Review worktree lalu gunakan --force jika aman.");
   }
