@@ -298,7 +298,7 @@ Implementation status: **IMPLEMENTED — HUMAN-ACCEPTED (2026-08-22)**
 
 ### P8.3 — Backup Rotation and Recovery Review
 
-Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+Implementation status: **IMPLEMENTED — HUMAN-ACCEPTED (2026-08-22)**
 
 - Model: `ECONOMY + STRONG REVIEW`; purge/promotion is `HUMAN GATE`.
 - Scope: launchd-compatible reminder/schedule, independent-target status,
