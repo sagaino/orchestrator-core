@@ -218,6 +218,7 @@ Disaster recovery:
   certification-verify <absolute-bundle-path>
   migration-matrix [--runs <absolute-runs-root>]
   pilot-cohort [--runs <absolute-runs-root>]
+  recovery-rehearsal [--runs <absolute-runs-root>]
 
 Conversational flow:
   request-task <project-id> <request> [--start] [--by <name>]
@@ -420,6 +421,10 @@ export async function main(argv = process.argv.slice(2)) {
     } else if (command === "pilot-cohort") {
       const { runFinalPilotCohort } = await import("./final-pilot-cohort.mjs");
       result = runFinalPilotCohort({ reportRoot: options.runs });
+      if (result.status !== "PASS") process.exitCode = 1;
+    } else if (command === "recovery-rehearsal") {
+      const { runOperatorRecoveryRehearsal } = await import("./operator-recovery-rehearsal.mjs");
+      result = runOperatorRecoveryRehearsal({ reportRoot: options.runs });
       if (result.status !== "PASS") process.exitCode = 1;
     } else if (command === "operations-readiness") {
       const { operationsReadiness } = await import("./operations-governance.mjs");

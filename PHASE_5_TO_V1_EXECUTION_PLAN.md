@@ -368,11 +368,16 @@ Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 ### P9.3 — Operator Documentation and Recovery Rehearsal
 
+Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+
 - Model: `ECONOMY`
 - Scope: install, start/stop, task lifecycle, review, update, alert, backup,
   restore, rollback, and emergency recovery documentation using UI-first steps.
 - Exit gate: a clean recovery target reconstructs system state by following the
   runbook alone and remains quarantined until human promotion.
+- Evidence: `P9_3_OPERATOR_RUNBOOK.md`, `src/operator-recovery-rehearsal.mjs`,
+  `test/operator-recovery-rehearsal.test.mjs`, and the checksummed
+  `runs/runtime/recovery-rehearsal/p9.3-report.json`.
 
 ### P9.4 — Final Threat Model and v1.0 Certificate
 

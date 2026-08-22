@@ -1,6 +1,6 @@
 # Phase 9 — v1.0 GA Certification Contract
 
-Status: **P9.0–P9.2 HUMAN-ACCEPTED**
+Status: **P9.0–P9.2 HUMAN-ACCEPTED; P9.3 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
 Contract version: **p9.1-2026-08-22**
 Boundary: **reproducible local-first release packaging, installation, upgrade, recovery, documentation, and final human-gated v1.0 certification**
 
@@ -87,3 +87,28 @@ CLI:
 P9.2 exit gate: ten tasks across three projects PASS all checks above. P9.2 is
 human-accepted and may be used as GA certification evidence; production
 mutation and release activation remain separately gated.
+
+## P9.3 Operator Documentation and Recovery Rehearsal
+
+`P9_3_OPERATOR_RUNBOOK.md` is the UI-first operator path for clean install,
+start/stop, task lifecycle, review and request-changes, accept/reject, guarded
+update, alert ownership, backup, restore, rollback, and emergency recovery.
+The runbook calls out the CLI fallback without making it the primary user
+experience and explicitly forbids self-approval, secret handling in evidence,
+and quarantine bypass.
+
+The recovery rehearsal creates an isolated source fixture, takes and verifies a
+quiescent external backup, restores it to a new clean target, checks that the
+project registry, task, and audit state are reconstructed, and proves that
+`assertExecutionAllowed` still fails with `RECOVERY_MODE_BLOCKED`. Promotion is
+never performed by the rehearsal.
+
+CLI:
+
+- `recovery-rehearsal` runs the documentation and restore rehearsal and writes
+  `runs/runtime/recovery-rehearsal/p9.3-report.json` plus its checksum;
+- `test:recovery-rehearsal` verifies runbook coverage, backup integrity,
+  reconstruction, quarantine, mutation blocking, and report tamper detection.
+
+P9.3 exit gate: the clean recovery target is reconstructable from the runbook,
+remains execution-blocked, and requires an explicit human promotion action.
