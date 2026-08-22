@@ -16,7 +16,7 @@ import { readBackupStatus } from "./operations-governance.mjs";
 export const FINAL_CERTIFICATION_SCHEMA_VERSION = 2;
 export const FINAL_CERTIFICATION_CONTRACT_VERSION = "p9.4-ga-remediation-2026-08-22";
 export const FINAL_CERTIFICATION_KIND = "personal-ai-os-v1-final-certification";
-export const FINAL_CERTIFICATION_VERSION = "1.0.0";
+export const FINAL_CERTIFICATION_VERSION = "1.0.1";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const DEFAULT_DASHBOARD_ROOT = path.resolve(REPO_ROOT, "../../ciniru/orchestrator-dashboard");
@@ -137,7 +137,7 @@ export async function runFinalV1Certification({ reportRoot = null, repoRoot = RE
     "runtime/migration-matrix/p9.1-report.json",
     "runtime/pilot-cohort/p9.2-report.json",
     "runtime/recovery-rehearsal/p9.3-report.json",
-    "runtime/release-manifest/v1.0.0.json",
+    `runtime/release-manifest/v${releaseVersion}.json`,
   ]);
   const durableEvidence = {
     migration: safeEvidenceVerification(verifyMigrationMatrixReport, path.join(resolvedReportRoot, "runtime", "migration-matrix", "p9.1-report.json")),
@@ -171,15 +171,15 @@ export async function runFinalV1Certification({ reportRoot = null, repoRoot = RE
     createdAt: now.toISOString(),
     validUntil: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     status: Object.values(checks).every(Boolean) ? "CERTIFIED_HUMAN_GATE_REQUIRED" : "CONDITIONAL",
-    humanGate: { required: true, approved: false, approvedBy: null, approvedAt: null, instruction: "Human must review this certificate and explicitly assign v1.0.0; certificate never self-approves." },
+    humanGate: { required: true, approved: false, approvedBy: null, approvedAt: null, instruction: `Human must review this certificate and explicitly assign v${releaseVersion}; certificate never self-approves.` },
     checks,
     gates,
     threatModel: risk,
     provenance: { sourceCommit, dashboardCommit: repoCommit(resolvedDashboardRoot), manifestPath, manifestChecksum: manifestPersisted.checksum, manifestVerification, auditHead: audit.head ?? null, auditEntries: audit.entries ?? 0 },
     evidence: { documentation, bundleChecksums, durableEvidence: Object.fromEntries(Object.entries(durableEvidence).map(([key, value]) => [key, { valid: value.valid, status: value.status, checksum: value.checksum }])), releaseArtifact: { valid: releaseArtifact.valid, manifestPath: path.join(resolvedReportRoot, "runtime", "release-artifacts", `v${releaseVersion}`, "release-artifact.json"), checksum: releaseArtifact.valid ? sha256(fs.readFileSync(path.join(resolvedReportRoot, "runtime", "release-artifacts", `v${releaseVersion}`, "release-artifact.json"), "utf8")) : null }, reportRoots: { backend: path.resolve(repoRoot), dashboard: resolvedDashboardRoot, runs: resolvedReportRoot } },
-    nextAction: "Human gate remains required before v1.0.0 is assigned or production activation occurs.",
+    nextAction: `Human gate remains required before v${releaseVersion} is assigned or production activation occurs.`,
   };
-  const reportPath = path.join(resolvedReportRoot, "runtime", "certifications", "v1.0-final-certificate.json");
+  const reportPath = path.join(resolvedReportRoot, "runtime", "certifications", `v${releaseVersion}-final-certificate.json`);
   const persisted = writePrivateJson(reportPath, report);
   return { ...report, reportPath: persisted.filePath, checksum: persisted.checksum };
 }

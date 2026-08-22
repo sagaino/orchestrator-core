@@ -10,6 +10,7 @@ console.log("Running operations-api.test.mjs...");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "orchestrator-operations-api-"));
 const runsRoot = path.join(root, "runs");
 const vaultRoot = path.join(root, "vault");
+const runtimeVersion = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8")).version;
 let service;
 try {
   fs.mkdirSync(runsRoot, { recursive: true });
@@ -38,7 +39,7 @@ try {
   assert.equal(releaseResponse.status, 200);
   const releaseBody = await releaseResponse.json();
   assert.equal(releaseBody.data.schemaVersion, 1);
-  assert.equal(releaseBody.data.current.runtimeVersion, "1.0.0");
+  assert.equal(releaseBody.data.current.runtimeVersion, runtimeVersion);
   assert.equal(releaseBody.data.candidate.status, "NOT_CONFIGURED");
   assert.equal(releaseBody.data.activation.requiresHumanConfirmation, true);
   assert.equal(releaseBody.data.activation.selfAcceptAllowed, false);

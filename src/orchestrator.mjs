@@ -437,7 +437,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (result.status !== "PASS") process.exitCode = 1;
     } else if (command === "final-certification") {
       const { runFinalV1Certification } = await import("./final-v1-certification.mjs");
-      result = await runFinalV1Certification({ reportRoot: options.runs });
+      result = await runFinalV1Certification({ reportRoot: options.runs, releaseVersion: options.releaseVersion ?? undefined });
       if (result.status !== "CERTIFIED_HUMAN_GATE_REQUIRED") process.exitCode = 1;
     } else if (command === "final-certification-verify") {
       const [certificatePath] = options.positional;
