@@ -368,7 +368,7 @@ Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 ### P9.3 — Operator Documentation and Recovery Rehearsal
 
-Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 - Model: `ECONOMY`
 - Scope: install, start/stop, task lifecycle, review, update, alert, backup,
