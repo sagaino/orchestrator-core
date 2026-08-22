@@ -1,6 +1,6 @@
 # Phase 7 — Visual QA Contract
 
-Status: **P7.1 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P7.1 IMPLEMENTED — HUMAN-ACCEPTED**
 Contract version: **p7.1-2026-08-22**
 Boundary: **bounded multi-viewport capture; comparison and scanners remain deferred**
 
