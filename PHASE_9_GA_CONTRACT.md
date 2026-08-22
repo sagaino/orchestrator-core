@@ -1,6 +1,6 @@
 # Phase 9 — v1.0 GA Certification Contract
 
-Status: **P9.0–P9.3 HUMAN-ACCEPTED**
+Status: **P9.0–P9.3 HUMAN-ACCEPTED; P9.4 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
 Contract version: **p9.1-2026-08-22**
 Boundary: **reproducible local-first release packaging, installation, upgrade, recovery, documentation, and final human-gated v1.0 certification**
 
@@ -113,3 +113,26 @@ CLI:
 P9.3 exit gate: the clean recovery target is reconstructable from the runbook,
 remains execution-blocked, and requires an explicit human promotion action.
 P9.3 is human-accepted; this acceptance does not promote the recovery target.
+
+## P9.4 Final Threat Model and v1.0 Certificate
+
+`P9_4_THREAT_MODEL.md` records the final local-first boundary, residual risk
+register, controls, owners, expiry, and strong-review acceptance. The final
+certification runner reruns adversarial, reliability, recovery, operations,
+browser, benchmark, self-update, visual QA, soak, install, and migration gates.
+It anchors the current source commit, release manifest checksum, audit-chain
+head, documentation presence, and checksums for the P9.1–P9.3 reports.
+
+CLI:
+
+- `final-certification` runs the gate matrix and writes
+  `runs/runtime/certifications/v1.0-final-certificate.json` plus its checksum;
+- `final-certification-verify <absolute-certificate-path>` verifies the
+  certificate schema and checksum.
+
+The certificate can report `CERTIFIED_HUMAN_GATE_REQUIRED`, but
+`humanGate.approved` remains false. It never assigns v1.0.0, promotes a
+recovery target, or activates a production release. P9.4 exit requires no
+residual CRITICAL/HIGH risk, controlled MEDIUM risk, clean repositories,
+passing gate reruns, valid documentation and bundle checksums, and explicit
+human assignment of `v1.0.0`.

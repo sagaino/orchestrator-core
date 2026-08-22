@@ -381,6 +381,8 @@ Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 ### P9.4 — Final Threat Model and v1.0 Certificate
 
+Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+
 - Model: `ECONOMY + STRONG REVIEW`; release is `HUMAN GATE`.
 - Scope: rerun adversarial, reliability, recovery, operations, browser,
   benchmark, self-update, visual QA, soak, install, and migration gates; anchor
@@ -388,6 +390,9 @@ Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 - Final gate: no CRITICAL/HIGH risk; MEDIUM risks have owner, control, expiry,
   and explicit human acceptance; repositories are clean; documentation and
   bundle checksums verify; human assigns version `v1.0.0`.
+- Evidence: `P9_4_THREAT_MODEL.md`, `src/final-v1-certification.mjs`,
+  `test/final-v1-certification.test.mjs`, and the checksummed
+  `runs/runtime/certifications/v1.0-final-certificate.json`.
 
 ## 9. Final Definition of Done
 
