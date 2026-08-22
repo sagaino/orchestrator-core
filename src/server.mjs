@@ -25,7 +25,7 @@ import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvest
 import { saveUploadedAsset, deleteUploadedAsset, resolveMockupAssetPath } from "./asset-manager.mjs";
 import { buildRunEvidence } from "./interaction.mjs";
 import { createVisualEvidence, getVisualEvidence, listVisualEvidence, persistVisualEvidence } from "./visual-evidence.mjs";
-import { captureVisualEvidence, listCaptureReports } from "./visual-qa.mjs";
+import { captureVisualEvidence, comparePersistedVisualEvidence, listCaptureReports } from "./visual-qa.mjs";
 import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
@@ -625,6 +625,18 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       const report = await capture(captureInput);
       eventHub.broadcast("VISUAL_CAPTURE_COMPLETED", { runId: params.id, captureId: report.captureId, status: report.status });
       sendJson(res, 201, { success: true, data: report });
+    } catch (err) {
+      sendError(res, err.statusCode || 400, err.message, err.details);
+    }
+  });
+
+  router.post("/api/runs/:id/visual-evidence/:evidenceId/compare", async (req, res, { params }) => {
+    try {
+      const evidence = getVisualEvidence({ runsRoot, runId: params.id, evidenceId: params.evidenceId });
+      const body = await parseJsonBody(req);
+      const compared = comparePersistedVisualEvidence({ runsRoot, evidence, reference: body?.reference ?? evidence.reference, pixelThreshold: body?.pixelThreshold ?? 16, maxMismatchRatio: body?.maxMismatchRatio ?? 0.01 });
+      eventHub.broadcast("VISUAL_COMPARISON_COMPLETED", { runId: params.id, evidenceId: params.evidenceId, status: compared.comparison.status });
+      sendJson(res, 200, { success: true, data: compared });
     } catch (err) {
       sendError(res, err.statusCode || 400, err.message, err.details);
     }

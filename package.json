@@ -48,6 +48,7 @@
     "test:release-certification": "node test/release-certification.test.mjs",
     "test:visual-evidence": "node test/visual-evidence.test.mjs && node test/visual-evidence-api.test.mjs",
     "test:visual-qa": "node test/visual-qa.test.mjs",
+    "test:visual-comparison": "node test/visual-comparison.test.mjs",
     "test:routing": "node test/agent-routing.test.mjs",
     "test:context": "node test/context-compactor.test.mjs",
     "knowledge-health": "node src/orchestrator.mjs knowledge-health",
@@ -77,7 +78,7 @@
     "daemon:status": "node src/orchestrator.mjs daemon status",
     "daemon:stop": "node src/orchestrator.mjs daemon stop",
     "daemon:uninstall": "node src/orchestrator.mjs daemon uninstall",
-    "test:unit": "node test/security.test.mjs && node test/phase-4-2-security.test.mjs && node test/reliability-faults.test.mjs && node test/schema.test.mjs && node test/telemetry-dedup.test.mjs && node test/token-benchmark.test.mjs && node test/efficiency-certification.test.mjs && node test/release-contract.test.mjs && node test/release-candidate.test.mjs && node test/release-supervisor.test.mjs && node test/release-drills.test.mjs && node test/release-certification.test.mjs && node test/visual-evidence.test.mjs && node test/visual-evidence-api.test.mjs && node test/visual-qa.test.mjs && node test/agent-routing.test.mjs && node test/context-compactor.test.mjs && node test/task-lifecycle.test.mjs && node test/git-finalization.test.mjs && node test/evidence.test.mjs && node test/transaction.test.mjs && node test/durability.test.mjs && node test/run-diff.test.mjs && node test/disaster-recovery.test.mjs && node test/operations-governance.test.mjs && node test/operations-api.test.mjs && node test/production-certification.test.mjs && node test/api.test.mjs && node test/updater-rollback.test.mjs",
+    "test:unit": "node test/security.test.mjs && node test/phase-4-2-security.test.mjs && node test/reliability-faults.test.mjs && node test/schema.test.mjs && node test/telemetry-dedup.test.mjs && node test/token-benchmark.test.mjs && node test/efficiency-certification.test.mjs && node test/release-contract.test.mjs && node test/release-candidate.test.mjs && node test/release-supervisor.test.mjs && node test/release-drills.test.mjs && node test/release-certification.test.mjs && node test/visual-evidence.test.mjs && node test/visual-evidence-api.test.mjs && node test/visual-qa.test.mjs && node test/visual-comparison.test.mjs && node test/agent-routing.test.mjs && node test/context-compactor.test.mjs && node test/task-lifecycle.test.mjs && node test/git-finalization.test.mjs && node test/evidence.test.mjs && node test/transaction.test.mjs && node test/durability.test.mjs && node test/run-diff.test.mjs && node test/disaster-recovery.test.mjs && node test/operations-governance.test.mjs && node test/operations-api.test.mjs && node test/production-certification.test.mjs && node test/api.test.mjs && node test/updater-rollback.test.mjs",
     "test:reliability": "RELIABILITY_STRESS_ROUNDS=25 node test/reliability-faults.test.mjs",
     "test:smoke": "node test/smoke.mjs",
     "test": "npm run test:unit && npm run test:smoke"

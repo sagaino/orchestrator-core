@@ -78,6 +78,10 @@ try {
   const posted = (await post.json()).data;
   assert.equal(posted.evidenceId, "visual-api-1");
   assert.equal(posted.artifact.exists, true);
+  session.actionNonce = post.headers.get("x-action-nonce");
+  const compare = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence/visual-api-1/compare`, { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Operator-Session": session.sessionId, "X-Action-Nonce": session.actionNonce }, body: JSON.stringify({ reference: { kind: "path", path: path.join(root, "missing-reference.png") } }) });
+  assert.equal(compare.status, 200);
+  assert.equal((await compare.json()).data.comparison.status, "UNKNOWN");
   const list = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}/visual-evidence`, { headers: auth });
   assert.equal(list.status, 200);
   const visualEvidence = (await list.json()).data;

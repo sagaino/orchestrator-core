@@ -1,8 +1,8 @@
 # Phase 7 — Visual QA Contract
 
-Status: **P7.1 IMPLEMENTED — HUMAN-ACCEPTED**
-Contract version: **p7.1-2026-08-22**
-Boundary: **bounded multi-viewport capture; comparison and scanners remain deferred**
+Status: **P7.2 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Contract version: **p7.2-2026-08-22**
+Boundary: **bounded capture, deterministic comparison, and layout diagnostics; accessibility scanning remains deferred**
 
 ## P7.0 Visual Evidence Contract
 
@@ -51,7 +51,27 @@ The default runner uses headless Playwright and closes the browser in a
 `finally` path. Tests inject a deterministic capture fixture so timeout,
 partial-success, artifact checksum, and report persistence behavior can be
 verified without requiring browser binaries in CI. Pixel comparison is
-deferred to P7.2 and accessibility scanning to P7.3.
+implemented below; accessibility scanning remains deferred to P7.3.
+
+## P7.2 Comparison and Layout Diagnostics
+
+`src/visual-comparison.mjs` provides deterministic 8-bit PNG comparison with
+configurable per-channel threshold and mismatch ratio. When a reference is
+available, each capture records `PASS` or `FAIL`, mismatch count and score,
+and persists side-by-side and 50/50 overlay PNG artifacts. A missing or
+checksum-invalid reference remains explicit `UNKNOWN` rather than becoming a
+false pass.
+
+The Playwright capture also records bounded diagnostics for missing target
+routes, horizontal overflow, clipped fixed/sticky elements, and screenshot
+dimension mismatch against the requested viewport. These findings are folded
+into the comparison evidence and surfaced by the Runs inspector. Existing
+evidence can be re-compared through:
+
+- `POST /api/runs/:id/visual-evidence/:evidenceId/compare`
+
+Comparison never rewrites source code and does not infer accessibility
+results; those remain evidence for the later P7.3 packet.
 
 ## Evidence
 
@@ -60,6 +80,9 @@ deferred to P7.2 and accessibility scanning to P7.3.
 - API test covers authenticated create/list/detail behavior;
 - multi-viewport capture tests cover partial success, timeout isolation,
   artifact checksums, capture report persistence, and the capture API;
+- deterministic comparison tests cover pass, pixel mismatch, unavailable
+  reference, side-by-side/overlay artifacts, route/overflow/clipping findings,
+  and the comparison API;
 - dashboard types and Run Inspector expose route, viewport, comparison,
   accessibility status, revision, and artifact checksum;
 - dashboard typecheck, lint, build, and five browser tests pass.
