@@ -24,6 +24,7 @@ import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
 import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvester.mjs";
 import { saveUploadedAsset, deleteUploadedAsset, resolveMockupAssetPath } from "./asset-manager.mjs";
 import { buildRunEvidence } from "./interaction.mjs";
+import { createVisualEvidence, getVisualEvidence, listVisualEvidence, persistVisualEvidence } from "./visual-evidence.mjs";
 import { readRecoveryMode } from "./recovery-mode.mjs";
 import { OperatorSessionStore } from "./api/operator-session.mjs";
 import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
@@ -33,7 +34,7 @@ import { getReleaseOperations } from "./release-operations.mjs";
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 
 function validateRouteIdentifiers(params) {
-  for (const name of ["id", "projectId"]) {
+  for (const name of ["id", "projectId", "evidenceId"]) {
     if (!Object.hasOwn(params, name)) continue;
     const value = String(params[name] ?? "");
     if (!value || !/^[A-Za-z0-9._-]+$/.test(value) || [".", ".."].includes(value)) {
@@ -563,6 +564,37 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       sendJson(res, 200, { success: true, data: buildRunEvidence(run, { runsRoot }) });
     } catch (err) {
       sendError(res, 404, err.message);
+    }
+  });
+
+  router.get("/api/runs/:id/visual-evidence", async (req, res, { params }) => {
+    try {
+      getRun(runsRoot, params.id);
+      sendJson(res, 200, { success: true, data: listVisualEvidence({ runsRoot, runId: params.id }) });
+    } catch (err) {
+      sendError(res, 404, err.message);
+    }
+  });
+
+  router.get("/api/runs/:id/visual-evidence/:evidenceId", async (req, res, { params }) => {
+    try {
+      const evidence = getVisualEvidence({ runsRoot, runId: params.id, evidenceId: params.evidenceId });
+      sendJson(res, 200, { success: true, data: evidence });
+    } catch (err) {
+      sendError(res, 404, err.message);
+    }
+  });
+
+  router.post("/api/runs/:id/visual-evidence", async (req, res, { params }) => {
+    try {
+      getRun(runsRoot, params.id);
+      const body = await parseJsonBody(req);
+      const evidence = createVisualEvidence({ ...body, runId: params.id });
+      const persisted = persistVisualEvidence({ runsRoot, evidence });
+      eventHub.broadcast("VISUAL_EVIDENCE_RECORDED", { runId: params.id, evidenceId: evidence.evidenceId, comparison: evidence.comparison.status });
+      sendJson(res, 201, { success: true, data: persisted });
+    } catch (err) {
+      sendError(res, err.statusCode || 400, err.message, err.details);
     }
   });
 
