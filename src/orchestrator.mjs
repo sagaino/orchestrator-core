@@ -88,6 +88,8 @@ function parseArguments(args) {
     restartEvery: null,
     soakReport: null,
     maxRtoMinutes: null,
+    dashboardRoot: null,
+    releaseVersion: null,
     fixSafe: false,
     once: false,
     autoCommit: true,
@@ -169,6 +171,12 @@ function parseArguments(args) {
     } else if (args[index] === "--max-rto-minutes") {
       options.maxRtoMinutes = Number(args[index + 1]);
       index += 1;
+    } else if (args[index] === "--dashboard") {
+      options.dashboardRoot = path.resolve(args[index + 1]);
+      index += 1;
+    } else if (args[index] === "--release-version") {
+      options.releaseVersion = args[index + 1];
+      index += 1;
     } else if (args[index] === "--fix-safe") {
       options.fixSafe = true;
     } else if (args[index] === "--once") {
@@ -205,6 +213,8 @@ Disaster recovery:
   recovery-drill-record --reason <evidence> [--decision PASS|FAIL] [--by <name>]
   soak-harness [<duration-hours>] [--soak-root <absolute-path>]
   operations-certification [--soak-report <absolute-report-path>]
+  release-manifest [<version>] [--dashboard <absolute-path>]
+  release-manifest-verify <absolute-manifest-path>
   certification-verify <absolute-bundle-path>
 
 Conversational flow:
@@ -281,6 +291,8 @@ Options:
   --restart-every <n>   Restart deterministik setiap N langkah
   --soak-report <path>  Report P8.4 yang dipakai untuk certification
   --max-rto-minutes <n> Batas RTO recovery drill (default 15)
+  --dashboard <path>    Root dashboard untuk release manifest
+  --release-version <v> Versi release manifest (default 1.0.0)
   --fix-safe            Perbaiki index saja dan catat lint; tidak mengubah isi knowledge
   --by <name>           Record requester atau approver identity
   --reason <text>       Record rejection atau request-changes feedback
@@ -387,6 +399,18 @@ export async function main(argv = process.argv.slice(2)) {
       const soakReportPath = options.soakReport ?? path.join(options.runs, "runtime", "soak", "last-report.json");
       result = createOperationsCertification({ runsRoot: options.runs, vaultRoot: options.vault, soakReportPath, maxRecoveryRtoMinutes: options.maxRtoMinutes ?? 15 });
       if (result.status !== "CERTIFICATION_READY") process.exitCode = 1;
+    } else if (command === "release-manifest") {
+      const [releaseVersion = "1.0.0"] = options.positional;
+      const { writeReleaseManifest } = await import("./release-manifest.mjs");
+      const dashboardRoot = options.dashboardRoot ?? process.env.ORCHESTRATOR_DASHBOARD_PATH ?? path.resolve(process.cwd(), "../orchestrator-dashboard");
+      const backupRoot = path.resolve(process.env.ORCHESTRATOR_BACKUP_ROOT ?? path.join(path.dirname(options.runs), "external-backups"));
+      result = writeReleaseManifest({ sourceRoot: process.cwd(), dashboardRoot, vaultRoot: options.vault, runsRoot: options.runs, backupRoot, releaseVersion: options.releaseVersion ?? releaseVersion });
+    } else if (command === "release-manifest-verify") {
+      const [manifestPath] = options.positional;
+      if (!manifestPath || !path.isAbsolute(manifestPath)) fail("release-manifest-verify membutuhkan absolute manifest path.");
+      const { verifyReleaseManifestFile } = await import("./release-manifest.mjs");
+      result = verifyReleaseManifestFile({ manifestPath });
+      if (!result.valid) process.exitCode = 1;
     } else if (command === "operations-readiness") {
       const { operationsReadiness } = await import("./operations-governance.mjs");
       result = operationsReadiness({ runsRoot: options.runs });
