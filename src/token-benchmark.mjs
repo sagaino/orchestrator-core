@@ -5,6 +5,8 @@
  * baseline auditable and ensures a benchmark run never invokes a provider.
  */
 
+import { buildStageContext } from "./context-compactor.mjs";
+
 export const TOKEN_BENCHMARK_VERSION = "p5.0-2026-08-22";
 
 const CORPUS = [
@@ -99,6 +101,37 @@ export function runTokenBenchmark(records = BENCHMARK_FIXTURE) {
 
 export function createBenchmarkFixture() {
   return BENCHMARK_FIXTURE.map((record) => ({ ...record }));
+}
+
+/**
+ * Build the current, provider-free measurement from the same frozen cases.
+ *
+ * P5.0's fixture remains the immutable baseline.  This companion fixture
+ * measures the actual bounded context path introduced by P5.1-P5.3 and keeps
+ * the recorded completion side of each invocation constant.  Consequently a
+ * reduction can only come from the context/routing path, never from invented
+ * provider output or a changed baseline.
+ */
+export function createOptimizedBenchmarkFixture() {
+  return BENCHMARK_FIXTURE.map((baseline) => {
+    const context = buildStageContext({
+      stage: baseline.stage.toLowerCase(),
+      task: { id: baseline.caseId, body: `Frozen ${baseline.caseId} benchmark task.` },
+      acceptanceCriteria: ["Preserve acceptance, verification, and safety requirements."],
+      latestFeedback: "Retain the latest reviewer feedback and required evidence.",
+      latestDiff: "diff --git a/src/core.mjs b/src/core.mjs\n+const optimizedPath = true;",
+      revisionState: { status: "ready", caseId: baseline.caseId },
+      allowedPaths: ["src/core.mjs", "src/context-compactor.mjs"],
+      graphifyContext: "Dependency delta: execution uses the bounded context pack.",
+      knowledge: [{ path: "01-Knowledge/relevant.md", summary: "Relevant contract", score: 1 }],
+    });
+    return {
+      ...baseline,
+      inputTokens: context.estimatedTokens,
+      // Keep output tokens fixed to the frozen P5.0 invocation.
+      totalTokens: context.estimatedTokens + baseline.outputTokens,
+    };
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

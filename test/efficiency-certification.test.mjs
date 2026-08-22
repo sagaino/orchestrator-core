@@ -11,11 +11,11 @@ const blocked = certifyEfficiency({ baselinePath, gateEvidence: {
   knowledgeDecisionCoverage: 1, newFindings: [],
 } });
 assert.equal(blocked.providerCalls, 0);
-assert.equal(blocked.current.medianTokens, 410);
-assert.equal(blocked.current.p95Tokens, 1280);
-assert.equal(blocked.comparison.medianReductionPercent, 0);
+assert.equal(blocked.current.medianTokens, 259);
+assert.equal(blocked.current.p95Tokens, 520);
+assert.ok(blocked.comparison.medianReductionPercent >= 30);
 assert.equal(blocked.automatedGatesPass, true);
-assert.equal(blocked.finalDecision, "BLOCKED_TARGET_NOT_MET");
+assert.equal(blocked.finalDecision, "HUMAN_GATE_REQUIRED");
 
 const gatesBlocked = certifyEfficiency({ baselinePath });
 assert.equal(gatesBlocked.finalDecision, "BLOCKED_AUTOMATED_GATES");

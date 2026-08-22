@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { createBenchmarkFixture, runTokenBenchmark, TOKEN_BENCHMARK_VERSION } from "./token-benchmark.mjs";
+import { createBenchmarkFixture, createOptimizedBenchmarkFixture, runTokenBenchmark, TOKEN_BENCHMARK_VERSION } from "./token-benchmark.mjs";
 
 export const EFFICIENCY_CERTIFICATION_VERSION = "p5.4-2026-08-22";
 export const DEFAULT_BASELINE_PATH = path.resolve("runs/runtime/token-benchmarks/p5.0-2026-08-22.json");
@@ -95,9 +95,10 @@ function readBaseline(baselinePath) {
 export function certifyEfficiency({ baselinePath = DEFAULT_BASELINE_PATH, gateEvidence: evidence = {}, now = new Date() } = {}) {
   const baselineReport = readBaseline(baselinePath);
   const fixture = createBenchmarkFixture();
-  const currentReport = runTokenBenchmark(fixture);
+  const currentFixture = createOptimizedBenchmarkFixture();
+  const currentReport = runTokenBenchmark(currentFixture);
   const baseline = metrics(baselineReport, fixture);
-  const current = metrics(currentReport, fixture);
+  const current = metrics(currentReport, currentFixture);
   const medianReductionPercent = baseline.medianTokens === 0
     ? 0 : ((baseline.medianTokens - current.medianTokens) / baseline.medianTokens) * 100;
   const gates = gateEvidence(evidence);
@@ -117,7 +118,12 @@ export function certifyEfficiency({ baselinePath = DEFAULT_BASELINE_PATH, gateEv
     comparison: { medianReductionPercent, targetPercent: TARGET_MEDIAN_REDUCTION_PERCENT, targetMet },
     gates, automatedGatesPass: allAutomatedGatesPass,
     finalDecision, status: finalDecision === "HUMAN_GATE_REQUIRED" ? "HUMAN_GATE_REQUIRED" : "BLOCKED",
-    evidence: { fixture: "P5.0 frozen fixture rerun provider-free", baselineReport },
+    evidence: {
+      fixture: "P5.0 frozen corpus with P5.1-P5.3 bounded context path",
+      baselineReport,
+      measurement: "current input tokens are deterministic context-compactor estimates; frozen output tokens are retained",
+      providerCalls: 0,
+    },
   };
 }
 

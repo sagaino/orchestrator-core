@@ -3,6 +3,7 @@ import {
   BENCHMARK_CORPUS,
   TOKEN_BENCHMARK_VERSION,
   createBenchmarkFixture,
+  createOptimizedBenchmarkFixture,
   normalizeBenchmarkRecords,
   runTokenBenchmark,
 } from "../src/token-benchmark.mjs";
@@ -19,6 +20,10 @@ assert.equal(first.stages.IMPLEMENTATION.invocations, 3);
 assert.equal(first.stages.IMPLEMENTATION.totalTokens, 2840);
 assert.equal(first.stages.IMPLEMENTATION.medianTokens, 940);
 assert.equal(first.stages.IMPLEMENTATION.medianLatencyMs, 420);
+const optimized = createOptimizedBenchmarkFixture();
+assert.equal(optimized.length, first.invocationCount);
+assert.ok(optimized.every((item) => item.totalTokens === item.inputTokens + item.outputTokens));
+assert.ok(runTokenBenchmark(optimized).totalTokens < first.totalTokens);
 
 const duplicate = createBenchmarkFixture();
 duplicate.push({ ...duplicate[0], caseId: "copy", invocationId: duplicate[0].invocationId });
