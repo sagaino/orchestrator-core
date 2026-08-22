@@ -332,7 +332,7 @@ recoverable, documented, and reproducibly certified as v1.0.
 
 ### P9.0 — Release Manifest and Installation Contract
 
-Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 - Model: ECONOMY + STRONG REVIEW
 - Model: `ECONOMY + STRONG REVIEW`
@@ -343,7 +343,7 @@ Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
 
 ### P9.1 — Migration and Upgrade Matrix
 
-Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 - Model: `ECONOMY + STRONG REVIEW`; activation is `HUMAN GATE`.
 - Scope: latest Phase 4 runtime to v1.0, clean install, restore then upgrade,
