@@ -1,11 +1,11 @@
 # Phase 6 — Release Compatibility Contract
 
-Status: **P6.0 IMPLEMENTED — HUMAN GATE REQUIRED**  
+Status: **P6.4 IMPLEMENTED — HUMAN-ACCEPTED; ACTIVATION HUMAN GATE REQUIRED**  
 Contract version: **p6.0-2026-08-22**  
 Deployment model: **local-first, single-user macOS host**
 
 This contract defines what a release candidate must prove before a later
-external supervisor may activate it. P6.0 does not build, activate, migrate,
+external supervisor may activate it. P6.4 does not build, activate, migrate,
 or accept a candidate. Those are separate, guarded phases.
 
 ## 1. Versioned compatibility surface
