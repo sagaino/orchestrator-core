@@ -169,7 +169,9 @@ function similarity(left, right) {
 }
 
 function documentScope(document) {
-  return document.path.startsWith("01-Knowledge/") ? "GLOBAL" : "CANDIDATE";
+  if (document.path.startsWith("01-Knowledge/")) return "GLOBAL";
+  if (document.path.startsWith("02-Projects/")) return "PROJECT_ONLY";
+  return "CANDIDATE";
 }
 
 function stripCode(content) {
@@ -296,7 +298,7 @@ function metadataFindings(documents) {
 function provenanceFindings(documents) {
   const findings = [];
   for (const document of documents.filter((item) => !item.template)) {
-    const scope = document.path.startsWith("01-Knowledge/") ? "GLOBAL" : "CANDIDATE";
+    const scope = documentScope(document);
     const validation = validateKnowledgeProvenance(document.metadata, { scope });
     if (validation.valid) continue;
     const missing = validation.missing ?? [];
