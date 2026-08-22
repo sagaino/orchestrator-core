@@ -9,7 +9,7 @@ import { assertExecutionAllowed, readRecoveryMode } from "./recovery-mode.mjs";
 export const RECOVERY_REHEARSAL_SCHEMA_VERSION = 1;
 export const RECOVERY_REHEARSAL_CONTRACT_VERSION = "p9.3-2026-08-22";
 export const RECOVERY_REHEARSAL_KIND = "personal-ai-os-operator-recovery-rehearsal";
-export const DEFAULT_OPERATOR_RUNBOOK_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../P9_3_OPERATOR_RUNBOOK.md");
+export const DEFAULT_OPERATOR_RUNBOOK_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../docs/P9_3_OPERATOR_RUNBOOK.md");
 
 const REQUIRED_SECTIONS = [
   "Safety boundary",

@@ -2,15 +2,15 @@
 
 Sistem Autonomous AI Software Engineering & Knowledge Layer terintegrasi yang menghubungkan **AI Orchestrator (Backend Daemon)**, **Web Dashboard (React + Vite)**, dan **Obsidian Knowledge Wiki**.
 
-Orchestrator ini juga menjadi control plane untuk **Personal AI OS**, yaitu agentic operating layer local-first yang berjalan di atas macOS. Batas produk, non-goals, safety properties, dan quality gate MVP ditetapkan dalam [AI OS MVP Scope Contract](./AI_OS_MVP_SCOPE.md).
+Orchestrator ini juga menjadi control plane untuk **Personal AI OS**, yaitu agentic operating layer local-first yang berjalan di atas macOS. Batas produk, non-goals, safety properties, dan quality gate MVP ditetapkan dalam [AI OS MVP Scope Contract](./docs/AI_OS_MVP_SCOPE.md).
 
-Implementasi durability, exactly-once invocation, dan restart reconciliation dijelaskan dalam [Phase 2 Runtime Durability Contract](./PHASE_2_DURABILITY.md).
+Implementasi durability, exactly-once invocation, dan restart reconciliation dijelaskan dalam [Phase 2 Runtime Durability Contract](./docs/PHASE_2_DURABILITY.md).
 
-Kontrak integrasi dashboard, evidence, browser lifecycle testing, dan sertifikasi pilot dijelaskan dalam [Phase 3 AI OS Shell and Pilot Contract](./PHASE_3_SHELL_PILOT.md).
+Kontrak integrasi dashboard, evidence, browser lifecycle testing, dan sertifikasi pilot dijelaskan dalam [Phase 3 AI OS Shell and Pilot Contract](./docs/PHASE_3_SHELL_PILOT.md).
 
 Roadmap pasca-sertifikasi sampai Personal AI OS v1.0 GA, termasuk paket kerja
 yang dapat dieksekusi model economy, tersedia di
-[Phase 5 to v1.0 Execution Plan](./PHASE_5_TO_V1_EXECUTION_PLAN.md).
+[Phase 5 to v1.0 Execution Plan](./docs/PHASE_5_TO_V1_EXECUTION_PLAN.md).
 
 ---
 

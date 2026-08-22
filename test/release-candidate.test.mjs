@@ -16,7 +16,9 @@ try {
   fs.mkdirSync(path.join(sourceRoot, "src"), { recursive: true });
   fs.mkdirSync(path.join(sourceRoot, "schemas"), { recursive: true });
   fs.mkdirSync(path.join(sourceRoot, "templates"), { recursive: true });
-  for (const file of ["start.sh", "stop.sh", "README.md", "PHASE_6_RELEASE_CONTRACT.md"]) fs.writeFileSync(path.join(sourceRoot, file), `fixture:${file}\n`);
+  fs.mkdirSync(path.join(sourceRoot, "docs"), { recursive: true });
+  for (const file of ["start.sh", "stop.sh", "README.md"]) fs.writeFileSync(path.join(sourceRoot, file), `fixture:${file}\n`);
+  fs.writeFileSync(path.join(sourceRoot, "docs", "PHASE_6_RELEASE_CONTRACT.md"), "fixture:docs/PHASE_6_RELEASE_CONTRACT.md\n");
   fs.writeFileSync(path.join(sourceRoot, "src", "index.mjs"), "export const stable = true;\n");
   fs.writeFileSync(path.join(sourceRoot, "schemas", "fixture.json"), "{}\n");
   fs.writeFileSync(path.join(sourceRoot, "templates", "manifest.json"), "{}\n");

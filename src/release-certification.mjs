@@ -68,7 +68,8 @@ function writeFixtureSource(root, value) {
   fs.writeFileSync(path.join(root, "docs", "release.md"), `fixture ${value}\n`);
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "p65-fixture", version: value === "stable" ? "1.0.0" : "1.1.0" }));
   fs.writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({ name: "p65-fixture", lockfileVersion: 3 }));
-  for (const file of ["start.sh", "stop.sh", "README.md", "PHASE_6_RELEASE_CONTRACT.md"]) fs.writeFileSync(path.join(root, file), `fixture ${value}: ${file}\n`);
+  fs.writeFileSync(path.join(root, "README.md"), `fixture ${value}: README.md\n`);
+  fs.writeFileSync(path.join(root, "docs", "PHASE_6_RELEASE_CONTRACT.md"), `fixture ${value}: docs/PHASE_6_RELEASE_CONTRACT.md\n`);
 }
 
 function humanGate(operatorIdentity, label) {

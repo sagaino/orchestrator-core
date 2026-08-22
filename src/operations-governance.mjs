@@ -314,70 +314,70 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
   const checks = [];
   const freeBytes = safeDiskFreeBytes(runsRoot);
   checks.push(freeBytes === null
-    ? check({ id: "disk", status: "WARN", severity: "WARNING", message: "Kapasitas disk tidak dapat dibaca.", action: "Periksa volume runtime.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#operations-center" })
+    ? check({ id: "disk", status: "WARN", severity: "WARNING", message: "Kapasitas disk tidak dapat dibaca.", action: "Periksa volume runtime.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#operations-center" })
     : freeBytes < config.minFreeDiskBytes
-      ? check({ id: "disk", status: "FAIL", severity: "CRITICAL", message: "Ruang disk di bawah batas operasi aman.", action: "Kosongkan ruang atau pindahkan artefak melalui retention preview.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { freeBytes, minimumBytes: config.minFreeDiskBytes } })
-      : check({ id: "disk", status: "PASS", severity: "INFO", message: "Ruang disk memenuhi batas operasi.", action: "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { freeBytes, minimumBytes: config.minFreeDiskBytes } }));
+      ? check({ id: "disk", status: "FAIL", severity: "CRITICAL", message: "Ruang disk di bawah batas operasi aman.", action: "Kosongkan ruang atau pindahkan artefak melalui retention preview.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { freeBytes, minimumBytes: config.minFreeDiskBytes } })
+      : check({ id: "disk", status: "PASS", severity: "INFO", message: "Ruang disk memenuhi batas operasi.", action: "Tidak ada tindakan.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { freeBytes, minimumBytes: config.minFreeDiskBytes } }));
 
   const backup = readBackupStatus(runsRoot);
   const backupAgeMs = backup?.verifiedAt ? Math.max(0, now.getTime() - Date.parse(backup.verifiedAt)) : null;
   const backupMaxAgeMs = config.maxBackupAgeHours * 60 * 60 * 1000;
   checks.push(!backup || !Number.isFinite(backupAgeMs)
-    ? check({ id: "backup", status: "FAIL", severity: "CRITICAL", message: "Belum ada disaster-recovery backup yang terverifikasi.", action: "Jalankan dr-backup ketika daemon quiescent, lalu dr-register-verified.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore" })
+    ? check({ id: "backup", status: "FAIL", severity: "CRITICAL", message: "Belum ada disaster-recovery backup yang terverifikasi.", action: "Jalankan dr-backup ketika daemon quiescent, lalu dr-register-verified.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore" })
     : backupAgeMs > backupMaxAgeMs
-      ? check({ id: "backup", status: "FAIL", severity: "CRITICAL", message: "Backup terverifikasi sudah melewati target RPO.", action: "Buat dan verifikasi backup baru sebelum menerima pekerjaan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } })
+      ? check({ id: "backup", status: "FAIL", severity: "CRITICAL", message: "Backup terverifikasi sudah melewati target RPO.", action: "Buat dan verifikasi backup baru sebelum menerima pekerjaan.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } })
       : backupAgeMs > backupMaxAgeMs * 0.75
-        ? check({ id: "backup", status: "WARN", severity: "WARNING", message: "Backup terverifikasi mendekati batas target RPO.", action: "Jadwalkan backup berikutnya dan verifikasi sebelum batas RPO terlewati.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } })
-        : check({ id: "backup", status: "PASS", severity: "INFO", message: "Backup terverifikasi masih memenuhi target RPO.", action: "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } }));
+        ? check({ id: "backup", status: "WARN", severity: "WARNING", message: "Backup terverifikasi mendekati batas target RPO.", action: "Jadwalkan backup berikutnya dan verifikasi sebelum batas RPO terlewati.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } })
+        : check({ id: "backup", status: "PASS", severity: "INFO", message: "Backup terverifikasi masih memenuhi target RPO.", action: "Tidak ada tindakan.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#backup-and-restore", metrics: { ageMs: backupAgeMs, maximumAgeMs: backupMaxAgeMs, backupId: backup.backupId } }));
 
   checks.push(backup?.independentTarget === true
-    ? check({ id: "backup-target", status: "PASS", severity: "INFO", message: "Backup target berada di luar Vault dan runtime roots.", action: "Tidak ada tindakan.", runbook: "PHASE_4_DR_RUNBOOK.md#independent-media" })
+    ? check({ id: "backup-target", status: "PASS", severity: "INFO", message: "Backup target berada di luar Vault dan runtime roots.", action: "Tidak ada tindakan.", runbook: "docs/PHASE_4_DR_RUNBOOK.md#independent-media" })
     : backup?.independentTarget === false
-      ? check({ id: "backup-target", status: "FAIL", severity: "CRITICAL", message: "Backup target tidak independen dari source dataset.", action: "Pindahkan backup ke target di luar Vault dan runtime roots, lalu verifikasi ulang.", runbook: "PHASE_4_DR_RUNBOOK.md#independent-media" })
-      : check({ id: "backup-target", status: "WARN", severity: "WARNING", message: "Status independent backup target belum diketahui.", action: "Daftarkan backup baru melalui P8.3 dengan target eksternal yang eksplisit.", runbook: "PHASE_4_DR_RUNBOOK.md#independent-media" }));
+      ? check({ id: "backup-target", status: "FAIL", severity: "CRITICAL", message: "Backup target tidak independen dari source dataset.", action: "Pindahkan backup ke target di luar Vault dan runtime roots, lalu verifikasi ulang.", runbook: "docs/PHASE_4_DR_RUNBOOK.md#independent-media" })
+      : check({ id: "backup-target", status: "WARN", severity: "WARNING", message: "Status independent backup target belum diketahui.", action: "Daftarkan backup baru melalui P8.3 dengan target eksternal yang eksplisit.", runbook: "docs/PHASE_4_DR_RUNBOOK.md#independent-media" }));
 
   const backupSchedule = readBackupScheduleArtifact(runsRoot);
   checks.push(!backupSchedule
-    ? check({ id: "backup-schedule", status: "WARN", severity: "WARNING", message: "Backup schedule belum dipasang; freshness masih bergantung pada backup manual.", action: "Buat dan review schedule artifact, lalu aktifkan launchd secara terpisah jika disetujui.", runbook: "PHASE_4_DR_RUNBOOK.md#scheduled-backup", metrics: { configured: false, launchctlActivated: false } })
+    ? check({ id: "backup-schedule", status: "WARN", severity: "WARNING", message: "Backup schedule belum dipasang; freshness masih bergantung pada backup manual.", action: "Buat dan review schedule artifact, lalu aktifkan launchd secara terpisah jika disetujui.", runbook: "docs/PHASE_4_DR_RUNBOOK.md#scheduled-backup", metrics: { configured: false, launchctlActivated: false } })
     : backupSchedule.launchctlActivated === true
-      ? check({ id: "backup-schedule", status: "PASS", severity: "INFO", message: "Backup schedule terpasang dan ditandai aktif.", action: "Tidak ada tindakan.", runbook: "PHASE_4_DR_RUNBOOK.md#scheduled-backup", metrics: { configured: true, launchctlActivated: true, intervalHours: backupSchedule.intervalHours ?? null } })
-      : check({ id: "backup-schedule", status: "WARN", severity: "WARNING", message: "Backup schedule artifact tersedia tetapi launchd belum aktif.", action: "Review plist lalu aktifkan launchd secara eksplisit; dashboard tidak mengaktifkannya otomatis.", runbook: "PHASE_4_DR_RUNBOOK.md#scheduled-backup", metrics: { configured: true, launchctlActivated: false, intervalHours: backupSchedule.intervalHours ?? null } }));
+      ? check({ id: "backup-schedule", status: "PASS", severity: "INFO", message: "Backup schedule terpasang dan ditandai aktif.", action: "Tidak ada tindakan.", runbook: "docs/PHASE_4_DR_RUNBOOK.md#scheduled-backup", metrics: { configured: true, launchctlActivated: true, intervalHours: backupSchedule.intervalHours ?? null } })
+      : check({ id: "backup-schedule", status: "WARN", severity: "WARNING", message: "Backup schedule artifact tersedia tetapi launchd belum aktif.", action: "Review plist lalu aktifkan launchd secara eksplisit; dashboard tidak mengaktifkannya otomatis.", runbook: "docs/PHASE_4_DR_RUNBOOK.md#scheduled-backup", metrics: { configured: true, launchctlActivated: false, intervalHours: backupSchedule.intervalHours ?? null } }));
 
   const drill = recoveryDrillStatus({ runsRoot, now, config });
   checks.push(drill.status === "CURRENT"
-    ? check({ id: "recovery-drill", status: "PASS", severity: "INFO", message: "Recovery drill masih dalam jadwal.", action: "Tidak ada tindakan.", runbook: "PHASE_4_DR_RUNBOOK.md#recovery-drill", metrics: { dueAt: drill.dueAt } })
-    : check({ id: "recovery-drill", status: "WARN", severity: "WARNING", message: drill.status === "FAILED" ? "Recovery drill terakhir gagal." : drill.status === "MISSING" ? "Belum ada recovery drill terdaftar." : "Recovery drill sudah melewati jadwal.", action: "Jalankan recovery drill terkontrol dan catat evidence; scheduler tidak melakukan restore otomatis.", runbook: "PHASE_4_DR_RUNBOOK.md#recovery-drill", metrics: { dueAt: drill.dueAt, overdueByMs: drill.overdueByMs } }));
+    ? check({ id: "recovery-drill", status: "PASS", severity: "INFO", message: "Recovery drill masih dalam jadwal.", action: "Tidak ada tindakan.", runbook: "docs/PHASE_4_DR_RUNBOOK.md#recovery-drill", metrics: { dueAt: drill.dueAt } })
+    : check({ id: "recovery-drill", status: "WARN", severity: "WARNING", message: drill.status === "FAILED" ? "Recovery drill terakhir gagal." : drill.status === "MISSING" ? "Belum ada recovery drill terdaftar." : "Recovery drill sudah melewati jadwal.", action: "Jalankan recovery drill terkontrol dan catat evidence; scheduler tidak melakukan restore otomatis.", runbook: "docs/PHASE_4_DR_RUNBOOK.md#recovery-drill", metrics: { dueAt: drill.dueAt, overdueByMs: drill.overdueByMs } }));
 
   const runtime = measureTree(runsRoot);
   const artifacts = measureTree(path.join(runsRoot, "workspace-artifacts"));
   checks.push(runtime.bytes > config.maxRuntimeBytes
-    ? check({ id: "runtime-storage", status: "FAIL", severity: "CRITICAL", message: "Ukuran runtime melewati kuota operasi.", action: "Buat retention preview dan pindahkan artefak yang disetujui ke trash.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#retention", metrics: { bytes: runtime.bytes, maximumBytes: config.maxRuntimeBytes } })
+    ? check({ id: "runtime-storage", status: "FAIL", severity: "CRITICAL", message: "Ukuran runtime melewati kuota operasi.", action: "Buat retention preview dan pindahkan artefak yang disetujui ke trash.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#retention", metrics: { bytes: runtime.bytes, maximumBytes: config.maxRuntimeBytes } })
     : artifacts.bytes > config.maxArtifactBytes
-      ? check({ id: "artifact-growth", status: "WARN", severity: "WARNING", message: "Artefak tumbuh melewati ambang observasi.", action: "Tinjau retention preview; data belum akan dihapus otomatis.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#retention", metrics: { bytes: artifacts.bytes, maximumBytes: config.maxArtifactBytes } })
-      : check({ id: "runtime-storage", status: "PASS", severity: "INFO", message: "Ukuran runtime dan artefak dalam batas.", action: "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#retention", metrics: { runtimeBytes: runtime.bytes, artifactBytes: artifacts.bytes } }));
+      ? check({ id: "artifact-growth", status: "WARN", severity: "WARNING", message: "Artefak tumbuh melewati ambang observasi.", action: "Tinjau retention preview; data belum akan dihapus otomatis.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#retention", metrics: { bytes: artifacts.bytes, maximumBytes: config.maxArtifactBytes } })
+      : check({ id: "runtime-storage", status: "PASS", severity: "INFO", message: "Ukuran runtime dan artefak dalam batas.", action: "Tidak ada tindakan.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#retention", metrics: { runtimeBytes: runtime.bytes, artifactBytes: artifacts.bytes } }));
 
   const audit = verifyAuditChain(runsRoot);
   checks.push(audit.valid
-    ? check({ id: "evidence-integrity", status: "PASS", severity: "INFO", message: "Rantai audit dan evidence valid.", action: "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#evidence-contract" })
-    : check({ id: "evidence-integrity", status: "FAIL", severity: "CRITICAL", message: "Rantai audit/evidence tidak valid.", action: "Hentikan eksekusi dan ikuti runbook investigasi evidence.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#evidence-contract", metrics: { errors: audit.errors ?? [] } }));
+    ? check({ id: "evidence-integrity", status: "PASS", severity: "INFO", message: "Rantai audit dan evidence valid.", action: "Tidak ada tindakan.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#evidence-contract" })
+    : check({ id: "evidence-integrity", status: "FAIL", severity: "CRITICAL", message: "Rantai audit/evidence tidak valid.", action: "Hentikan eksekusi dan ikuti runbook investigasi evidence.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#evidence-contract", metrics: { errors: audit.errors ?? [] } }));
 
   const jobs = listJobs(runsRoot);
   const queued = jobs.filter((job) => job.state === JOB_STATES.QUEUED);
   const oldestQueuedAt = queued.map((job) => Date.parse(job.queuedAt ?? job.createdAt ?? "")).filter(Number.isFinite).sort((a, b) => a - b)[0];
   const queueAgeMs = oldestQueuedAt ? Math.max(0, now.getTime() - oldestQueuedAt) : 0;
   checks.push(queueAgeMs > config.maxQueueAgeMinutes * 60 * 1000
-    ? check({ id: "queue-age", status: "WARN", severity: "WARNING", message: "Antrian pekerjaan melebihi target waktu tunggu.", action: "Tinjau blocker readiness, kapasitas worker, dan job gagal.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { queued: queued.length, oldestAgeMs: queueAgeMs } })
-    : check({ id: "queue-age", status: "PASS", severity: "INFO", message: "Usia antrian dalam target.", action: "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { queued: queued.length, oldestAgeMs: queueAgeMs } }));
+    ? check({ id: "queue-age", status: "WARN", severity: "WARNING", message: "Antrian pekerjaan melebihi target waktu tunggu.", action: "Tinjau blocker readiness, kapasitas worker, dan job gagal.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { queued: queued.length, oldestAgeMs: queueAgeMs } })
+    : check({ id: "queue-age", status: "PASS", severity: "INFO", message: "Usia antrian dalam target.", action: "Tidak ada tindakan.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { queued: queued.length, oldestAgeMs: queueAgeMs } }));
 
   const signalWindowMs = config.signalWindowHours * 60 * 60 * 1000;
   const recentRuns = listRuns(runsRoot).filter((run) => Date.parse(run.updatedAt ?? run.createdAt ?? "") > now.getTime() - signalWindowMs);
   const unresolvedFailureText = (run) => run.state === "FAILED" ? JSON.stringify({ error: run.error ?? null, resultError: run.execution?.result?.error ?? null, recoveryError: run.execution?.automaticRecovery?.lastError ?? run.execution?.restartRecovery?.error ?? null }) : "";
   const deadlineFailures = recentRuns.filter((run) => /deadline|timeout|output limit/i.test(unresolvedFailureText(run))).length;
   const providerFailures = recentRuns.filter((run) => /provider|model|rate limit|429/i.test(unresolvedFailureText(run))).length;
-  checks.push(check({ id: "failure-signals", status: deadlineFailures || providerFailures ? "WARN" : "PASS", severity: deadlineFailures || providerFailures ? "WARNING" : "INFO", message: deadlineFailures || providerFailures ? "Kegagalan deadline/provider terdeteksi dalam 24 jam terakhir." : "Tidak ada kegagalan deadline/provider terbaru.", action: deadlineFailures || providerFailures ? "Tinjau run gagal dan jalankan runbook reliability." : "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#reliability", metrics: { deadlineFailures, providerFailures } }));
+  checks.push(check({ id: "failure-signals", status: deadlineFailures || providerFailures ? "WARN" : "PASS", severity: deadlineFailures || providerFailures ? "WARNING" : "INFO", message: deadlineFailures || providerFailures ? "Kegagalan deadline/provider terdeteksi dalam 24 jam terakhir." : "Tidak ada kegagalan deadline/provider terbaru.", action: deadlineFailures || providerFailures ? "Tinjau run gagal dan jalankan runbook reliability." : "Tidak ada tindakan.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#reliability", metrics: { deadlineFailures, providerFailures } }));
 
   const daemonState = daemon ?? daemonStatus({ runsRoot });
-  checks.push(check({ id: "daemon", status: daemonState.running || !daemonState.heartbeatAt ? "PASS" : "WARN", severity: daemonState.running || !daemonState.heartbeatAt ? "INFO" : "WARNING", message: daemonState.running || !daemonState.heartbeatAt ? "Status daemon dapat diinspeksi." : "Daemon heartbeat tidak sehat.", action: daemonState.running || !daemonState.heartbeatAt ? "Tidak ada tindakan." : "Restart daemon setelah memeriksa log.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { running: Boolean(daemonState.running), heartbeatAt: daemonState.heartbeatAt ?? null } }));
+  checks.push(check({ id: "daemon", status: daemonState.running || !daemonState.heartbeatAt ? "PASS" : "WARN", severity: daemonState.running || !daemonState.heartbeatAt ? "INFO" : "WARNING", message: daemonState.running || !daemonState.heartbeatAt ? "Status daemon dapat diinspeksi." : "Daemon heartbeat tidak sehat.", action: daemonState.running || !daemonState.heartbeatAt ? "Tidak ada tindakan." : "Restart daemon setelah memeriksa log.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { running: Boolean(daemonState.running), heartbeatAt: daemonState.heartbeatAt ?? null } }));
 
   const blockers = checks.filter((item) => item.status === "FAIL");
   const warnings = checks.filter((item) => item.status === "WARN");

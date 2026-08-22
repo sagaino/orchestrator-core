@@ -145,7 +145,7 @@ export async function runFinalV1Certification({ reportRoot = null, repoRoot = RE
     recovery: safeEvidenceVerification(verifyRecoveryRehearsalReport, path.join(resolvedReportRoot, "runtime", "recovery-rehearsal", "p9.3-report.json")),
   };
   const releaseArtifact = verifyReleaseArtifact({ manifestPath: path.join(resolvedReportRoot, "runtime", "release-artifacts", `v${releaseVersion}`, "release-artifact.json") });
-  const documentationPaths = ["P9_3_OPERATOR_RUNBOOK.md", "P9_4_THREAT_MODEL.md", "PHASE_9_GA_CONTRACT.md", "PHASE_5_TO_V1_EXECUTION_PLAN.md", "AI_OS_MVP_SCOPE.md"];
+  const documentationPaths = ["docs/P9_3_OPERATOR_RUNBOOK.md", "docs/P9_4_THREAT_MODEL.md", "docs/PHASE_9_GA_CONTRACT.md", "docs/PHASE_5_TO_V1_EXECUTION_PLAN.md", "docs/AI_OS_MVP_SCOPE.md"];
   const documentation = { valid: documentationPaths.every((item) => fs.existsSync(path.join(repoRoot, item))), paths: documentationPaths.map((item) => path.join(repoRoot, item)) };
   const checks = {
     allRequiredGatesPass: FINAL_GATE_IDS.every((id) => gates.find((gate) => gate.id === id)?.status === "PASS"),
