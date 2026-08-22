@@ -1,14 +1,15 @@
 /**
- * P7.1: bounded multi-viewport capture jobs.
+ * P7.1/P7.2: bounded multi-viewport capture jobs and visual diagnostics.
  *
  * Capture owns only the screenshot job and evidence persistence. Pixel
- * comparison and accessibility scanning remain UNKNOWN until P7.2/P7.3.
+ * accessibility scanning remains UNKNOWN until P7.3.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { createVisualEvidence, persistVisualEvidence, VISUAL_EVIDENCE_SCHEMA_VERSION } from "./visual-evidence.mjs";
+import { compareVisualArtifacts, readPng } from "./visual-comparison.mjs";
 
 export const VISUAL_CAPTURE_SCHEMA_VERSION = 1;
 export const VISUAL_CAPTURE_VIEWPORTS = Object.freeze({
@@ -63,14 +64,31 @@ async function defaultCaptureViewport({ url, viewport, outputPath, timeoutMs, si
     }
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: viewport.deviceScaleFactor ?? 1 });
-    await page.goto(url, { waitUntil: "networkidle", timeout: timeoutMs });
+    const response = await page.goto(url, { waitUntil: "networkidle", timeout: timeoutMs });
     if (signal?.aborted) {
       const error = new Error("Viewport capture dibatalkan setelah timeout.");
       error.code = "VISUAL_CAPTURE_ABORTED";
       throw error;
     }
+    const diagnostics = await page.evaluate(({ width, height, responseStatus }) => {
+      const documentElement = document.documentElement;
+      const body = document.body;
+      const scrollWidth = Math.max(documentElement?.scrollWidth ?? width, body?.scrollWidth ?? width);
+      const clientWidth = documentElement?.clientWidth ?? width;
+      const candidates = [];
+      for (const element of Array.from(document.querySelectorAll("*"))) {
+        if (candidates.length >= 20) break;
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && rect.left < width;
+        const horizontallyClipped = visible && (rect.left < -1 || rect.right > width + 1);
+        const fixedVerticallyClipped = visible && ["fixed", "sticky"].includes(style.position) && (rect.top < -1 || rect.bottom > height + 1);
+        if (horizontallyClipped || fixedVerticallyClipped) candidates.push({ tag: element.tagName.toLowerCase(), id: element.id || null, className: typeof element.className === "string" ? element.className.slice(0, 120) : null, rect: { left: Math.round(rect.left), top: Math.round(rect.top), right: Math.round(rect.right), bottom: Math.round(rect.bottom) }, reason: horizontallyClipped ? "HORIZONTAL_CLIP" : "VIEWPORT_CLIP" });
+      }
+      return { route: { status: responseStatus === null || responseStatus >= 400 ? "MISSING_ROUTE" : "RENDERED", httpStatus: responseStatus, title: document.title || null }, layout: { horizontalOverflow: scrollWidth > clientWidth + 1, scrollWidth, clientWidth, clippedElements: candidates }, viewport: { width, height } };
+    }, { width: viewport.width, height: viewport.height, responseStatus: response?.status() ?? null });
     await page.screenshot({ path: outputPath, fullPage: false, animations: "disabled" });
-    return { status: "CAPTURED", processTree: { strategy: "playwright-browser-close", bounded: true } };
+    return { status: "CAPTURED", diagnostics, processTree: { strategy: "playwright-browser-close", bounded: true } };
   } finally {
     signal?.removeEventListener("abort", onAbort);
     await closeBrowser();
@@ -110,6 +128,48 @@ function persistCaptureReport({ runsRoot, report }) {
   return writePrivateJson(captureReportPath(runsRoot, report.runId, report.captureId), report);
 }
 
+function resolveReferencePath({ runsRoot, referencePath }) {
+  if (!referencePath || typeof referencePath !== "string") return null;
+  if (path.isAbsolute(referencePath)) return referencePath;
+  const fromWorkingDirectory = path.resolve(referencePath);
+  if (fs.existsSync(fromWorkingDirectory)) return fromWorkingDirectory;
+  return path.resolve(runsRoot, referencePath);
+}
+
+function checksumFile(filePath) {
+  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function layoutIssues(captureDiagnostics) {
+  const issues = [];
+  if (captureDiagnostics?.route?.status === "MISSING_ROUTE") issues.push("TARGET_ROUTE_MISSING");
+  if (captureDiagnostics?.layout?.horizontalOverflow) issues.push("HORIZONTAL_OVERFLOW");
+  if ((captureDiagnostics?.layout?.clippedElements?.length ?? 0) > 0) issues.push("CLIPPED_ELEMENTS");
+  return issues;
+}
+
+function compareCapture({ runsRoot, evidenceId, actualPath, reference, comparisonRoot, captureDiagnostics, pixelThreshold, maxMismatchRatio }) {
+  const issues = layoutIssues(captureDiagnostics);
+  if (actualPath && fs.existsSync(actualPath) && captureDiagnostics?.viewport) {
+    try {
+      const actualDimensions = readPng(actualPath);
+      if (actualDimensions.width !== captureDiagnostics.viewport.width || actualDimensions.height !== captureDiagnostics.viewport.height) issues.push("VIEWPORT_CAPTURE_MISMATCH");
+    } catch {}
+  }
+  const referencePath = resolveReferencePath({ runsRoot, referencePath: reference?.path });
+  if (reference?.kind === "NONE" || !referencePath) {
+    return { status: issues.length > 0 ? "FAIL" : "UNKNOWN", method: issues.length > 0 ? "layout-diagnostics-v1" : "pixel-diff-v1", score: null, mismatchPixels: null, notes: [...issues.map((issue) => `Diagnostic: ${issue}`), "Reference screenshot unavailable; pixel comparison remains UNKNOWN."], diagnostics: { reason: "REFERENCE_UNAVAILABLE", issues, layout: captureDiagnostics?.layout ?? null, route: captureDiagnostics?.route ?? null, viewport: captureDiagnostics?.viewport ?? null, artifacts: null } };
+  }
+  if (!fs.existsSync(referencePath)) {
+    return { status: issues.length > 0 ? "FAIL" : "UNKNOWN", method: issues.length > 0 ? "layout-diagnostics-v1" : "pixel-diff-v1", score: null, mismatchPixels: null, notes: [...issues.map((issue) => `Diagnostic: ${issue}`), "Reference screenshot tidak ditemukan."], diagnostics: { reason: "REFERENCE_UNAVAILABLE", referencePath, issues, layout: captureDiagnostics?.layout ?? null, route: captureDiagnostics?.route ?? null, viewport: captureDiagnostics?.viewport ?? null, artifacts: null } };
+  }
+  if (reference?.checksum && /^[a-f0-9]{64}$/.test(reference.checksum) && checksumFile(referencePath) !== reference.checksum) {
+    return { status: issues.length > 0 ? "FAIL" : "UNKNOWN", method: issues.length > 0 ? "layout-diagnostics-v1" : "pixel-diff-v1", score: null, mismatchPixels: null, notes: [...issues.map((issue) => `Diagnostic: ${issue}`), "Checksum reference tidak cocok; comparison ditahan."], diagnostics: { reason: "REFERENCE_CHECKSUM_MISMATCH", referencePath, issues, layout: captureDiagnostics?.layout ?? null, route: captureDiagnostics?.route ?? null, viewport: captureDiagnostics?.viewport ?? null, artifacts: null } };
+  }
+  const result = compareVisualArtifacts({ actualPath, referencePath, comparisonRoot, evidenceId, pixelThreshold, maxMismatchRatio });
+  return { ...result.comparison, status: issues.length > 0 ? "FAIL" : result.comparison.status, method: issues.length > 0 ? "pixel-diff-and-layout-v1" : result.comparison.method, notes: [...issues.map((issue) => `Diagnostic: ${issue}`), ...result.comparison.notes], diagnostics: { ...result.comparison.diagnostics, issues, layout: captureDiagnostics?.layout ?? null, route: captureDiagnostics?.route ?? null, viewport: captureDiagnostics?.viewport ?? result.dimensions?.actual ?? null } };
+}
+
 export async function captureVisualEvidence({
   runsRoot,
   runId,
@@ -120,6 +180,8 @@ export async function captureVisualEvidence({
   viewportNames = Object.keys(VISUAL_CAPTURE_VIEWPORTS),
   timeoutMs = 30_000,
   captureViewport = defaultCaptureViewport,
+  pixelThreshold = 16,
+  maxMismatchRatio = 0.01,
   now = new Date(),
 } = {}) {
   assertCaptureInput({ runsRoot, runId, baseUrl, route });
@@ -142,14 +204,15 @@ export async function captureVisualEvidence({
     const captured = !result.error && result.result?.status === "CAPTURED" && fs.existsSync(outputPath);
     if (!captured && fs.existsSync(outputPath)) fs.rmSync(outputPath, { force: true });
     const errorMessage = result.error?.message ?? (captured ? null : "Capture tidak menghasilkan screenshot artifact.");
+    const comparison = captured ? compareCapture({ runsRoot, evidenceId: `${captureId}-${name}`, actualPath: outputPath, reference, comparisonRoot: path.join(path.dirname(root), "comparisons"), captureDiagnostics: result.result?.diagnostics ?? null, pixelThreshold, maxMismatchRatio }) : { status: "UNKNOWN", method: "pixel-diff-v1", score: null, mismatchPixels: null, notes: ["Comparison skipped because screenshot capture failed."], diagnostics: { reason: "ACTUAL_CAPTURE_UNAVAILABLE", layout: result.result?.diagnostics?.layout ?? null, route: result.result?.diagnostics?.route ?? null, viewport: result.result?.diagnostics?.viewport ?? viewport, artifacts: null } };
     const evidence = createVisualEvidence({
       evidenceId: `${captureId}-${name}`,
       runId,
       route,
       viewport,
       reference,
-      actual: { status: captured ? "CAPTURED" : "UNAVAILABLE", path: captured ? outputPath : null, capturedAt: captured ? new Date().toISOString() : null },
-      comparison: { status: "UNKNOWN", method: "DEFERRED_TO_P7.2", score: null, mismatchPixels: null, notes: errorMessage ? [errorMessage] : ["Comparison deferred to P7.2."] },
+      actual: { status: captured ? "CAPTURED" : "UNAVAILABLE", path: captured ? outputPath : null, capturedAt: captured ? new Date().toISOString() : null, diagnostics: result.result?.diagnostics ?? null },
+      comparison: errorMessage && comparison.status === "UNKNOWN" ? { ...comparison, notes: [errorMessage, ...comparison.notes] } : comparison,
       accessibility: { status: "UNKNOWN", findings: [{ id: "SCANNER_DEFERRED", severity: "INFO", message: "Accessibility scanning deferred to P7.3." }] },
       revision,
       artifactPath: captured ? outputPath : null,
@@ -164,6 +227,7 @@ export async function captureVisualEvidence({
       error: errorMessage,
       evidenceId: evidence.evidenceId,
       evidence: persisted,
+      comparisonStatus: evidence.comparison.status,
       processTree: result.result?.processTree ?? { strategy: "capture-runner", bounded: true },
     });
   }
@@ -178,11 +242,20 @@ export async function captureVisualEvidence({
     completedAt: new Date().toISOString(),
     timeoutMs,
     status: viewports.every((item) => item.status === "PASS") ? "PASS" : "PARTIAL",
+    comparisonStatus: viewports.some((item) => item.comparisonStatus === "FAIL") ? "FAIL" : (viewports.every((item) => item.comparisonStatus === "PASS") ? "PASS" : "UNKNOWN"),
     viewports,
     evidenceContract: { schemaVersion: VISUAL_EVIDENCE_SCHEMA_VERSION, comparison: "P7.2", accessibility: "P7.3" },
   };
   const persisted = persistCaptureReport({ runsRoot, report });
   return { ...report, persistence: persisted };
+}
+
+export function comparePersistedVisualEvidence({ runsRoot, evidence, reference = evidence?.reference, pixelThreshold = 16, maxMismatchRatio = 0.01 } = {}) {
+  if (!evidence?.evidenceId || !evidence?.runId) throw new Error("Visual evidence tidak lengkap untuk comparison.");
+  const actualPath = evidence.actual?.path ?? evidence.artifact?.path;
+  const comparison = compareCapture({ runsRoot, evidenceId: evidence.evidenceId, actualPath, reference, comparisonRoot: path.join(runsRoot, "runtime", "visual-evidence", evidence.runId, "comparisons"), captureDiagnostics: evidence.actual?.diagnostics ?? null, pixelThreshold, maxMismatchRatio });
+  const updated = createVisualEvidence({ ...evidence, reference, actual: { ...evidence.actual, diagnostics: evidence.actual?.diagnostics ?? null }, comparison, artifactPath: actualPath, createdAt: evidence.createdAt });
+  return persistVisualEvidence({ runsRoot, evidence: updated });
 }
 
 export function listCaptureReports({ runsRoot, runId } = {}) {
