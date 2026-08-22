@@ -332,6 +332,9 @@ recoverable, documented, and reproducibly certified as v1.0.
 
 ### P9.0 — Release Manifest and Installation Contract
 
+Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+
+- Model: ECONOMY + STRONG REVIEW
 - Model: `ECONOMY + STRONG REVIEW`
 - Scope: versioned release manifest, supported macOS/Node versions, dependency
   verification, absolute data roots, uninstall behavior, and rollback steps.
