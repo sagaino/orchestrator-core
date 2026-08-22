@@ -1,6 +1,6 @@
 # Phase 6 — Release Compatibility Contract
 
-Status: **P6.4 IMPLEMENTED — HUMAN-ACCEPTED; ACTIVATION HUMAN GATE REQUIRED**  
+Status: **P6.5 CERTIFIED — HUMAN-ACCEPTED; PRODUCTION ACTIVATION HUMAN GATE REQUIRED**  
 Contract version: **p6.0-2026-08-22**  
 Deployment model: **local-first, single-user macOS host**
 
