@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://personal-ai-os.local/schemas/release-manifest.schema.json",
+  "title": "Personal AI OS Release Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "releaseId", "contractVersion", "runtime", "api", "dashboard", "vault", "rollback", "activation"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "personal-ai-os-release-manifest" },
+    "releaseId": { "type": "string", "minLength": 1 },
+    "contractVersion": { "const": "p6.0-2026-08-22" },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "compatibilityVersion"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "compatibilityVersion": { "const": "1.0" }
+      }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compatibilityVersion"],
+      "properties": { "compatibilityVersion": { "const": "1.0" } }
+    },
+    "dashboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compatibilityVersion"],
+      "properties": { "compatibilityVersion": { "const": "1.0" } }
+    },
+    "vault": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion"],
+      "properties": { "schemaVersion": { "const": 1 } }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "backupRequired"],
+      "properties": {
+        "protocolVersion": { "const": 1 },
+        "backupRequired": { "const": true }
+      }
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activationAuthority", "requiresHumanGate", "selfAcceptAllowed", "inProcessActivationAllowed", "rollbackAuthority"],
+      "properties": {
+        "activationAuthority": { "const": "EXTERNAL_SUPERVISOR" },
+        "requiresHumanGate": { "const": true },
+        "selfAcceptAllowed": { "const": false },
+        "inProcessActivationAllowed": { "const": false },
+        "rollbackAuthority": { "const": "EXTERNAL_SUPERVISOR" }
+      }
+    },
+    "provenance": { "type": "object" }
+  }
+}

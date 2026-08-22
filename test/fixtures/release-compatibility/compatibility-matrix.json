@@ -1,0 +1,9 @@
+{
+  "contractVersion": "p6.0-2026-08-22",
+  "cases": [
+    { "id": "same-runtime-and-data", "outcome": "ACTIVATION_ELIGIBLE" },
+    { "id": "old-runtime-new-data", "outcome": "BLOCKED_UNTIL_COMPATIBILITY_PROVEN" },
+    { "id": "new-runtime-old-data", "outcome": "READ_COMPATIBLE_MIGRATION_REQUIRED" },
+    { "id": "incompatible-components", "outcome": "REJECT_BEFORE_ACTIVATION" }
+  ]
+}

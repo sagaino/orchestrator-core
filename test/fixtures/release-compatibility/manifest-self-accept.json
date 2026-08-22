@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "personal-ai-os-release-manifest",
+  "releaseId": "candidate-self-accept",
+  "contractVersion": "p6.0-2026-08-22",
+  "runtime": { "version": "0.1.0", "compatibilityVersion": "1.0" },
+  "api": { "compatibilityVersion": "1.0" },
+  "dashboard": { "compatibilityVersion": "1.0" },
+  "vault": { "schemaVersion": 1 },
+  "rollback": { "protocolVersion": 1, "backupRequired": true },
+  "activation": {
+    "activationAuthority": "CANDIDATE",
+    "requiresHumanGate": false,
+    "selfAcceptAllowed": true,
+    "inProcessActivationAllowed": true,
+    "rollbackAuthority": "CANDIDATE"
+  }
+}
