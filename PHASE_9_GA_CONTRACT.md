@@ -1,6 +1,6 @@
 # Phase 9 — v1.0 GA Certification Contract
 
-Status: **P9.0–P9.2 HUMAN-ACCEPTED; P9.3 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P9.0–P9.3 HUMAN-ACCEPTED**
 Contract version: **p9.1-2026-08-22**
 Boundary: **reproducible local-first release packaging, installation, upgrade, recovery, documentation, and final human-gated v1.0 certification**
 
@@ -112,3 +112,4 @@ CLI:
 
 P9.3 exit gate: the clean recovery target is reconstructable from the runbook,
 remains execution-blocked, and requires an explicit human promotion action.
+P9.3 is human-accepted; this acceptance does not promote the recovery target.
