@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { validateKnowledgeProvenance } from "./knowledge-provenance.mjs";
 
 const REQUIRED_FIELDS = ["title", "type", "tags", "created", "updated", "sources"];
 const VALID_TYPES = new Set([
@@ -105,7 +106,7 @@ function loadDocument(vaultRoot, absolute) {
     metadata: parsed.metadata,
     hasFrontmatter: parsed.hasFrontmatter,
     title: String(parsed.metadata.title ?? heading ?? path.basename(absolute, ".md")),
-    template: path.basename(absolute).startsWith("_Template"),
+    template: path.basename(absolute).startsWith("_Template") || absolute.split(path.sep).some((segment) => segment.toLowerCase() === "_templates"),
   };
 }
 
@@ -284,6 +285,26 @@ function metadataFindings(documents) {
         findings.push(finding("ERROR", "FRONTMATTER", document.path, `${field} harus berupa array.`));
       }
     }
+  }
+  return findings;
+}
+
+function provenanceFindings(documents) {
+  const findings = [];
+  for (const document of documents.filter((item) => !item.template)) {
+    const scope = document.path.startsWith("01-Knowledge/") ? "GLOBAL" : "CANDIDATE";
+    const validation = validateKnowledgeProvenance(document.metadata, { scope });
+    if (validation.valid) continue;
+    const missing = validation.missing ?? [];
+    const invalid = validation.invalid ?? [];
+    const legacy = missing.length > 0;
+    findings.push(finding(
+      legacy ? "WARNING" : "ERROR",
+      "PROVENANCE",
+      document.path,
+      legacy ? "Knowledge belum memiliki provenance P8.0 lengkap; migrasi terarah diperlukan." : "Metadata provenance P8.0 tidak valid.",
+      { scope, missing, invalid, legacy },
+    ));
   }
   return findings;
 }
@@ -486,6 +507,7 @@ export function knowledgeHealth({ vaultRoot, fixSafe = false, fixedBy = "user" }
     .map((absolute) => loadDocument(vaultRoot, absolute));
   const findings = [
     ...metadataFindings(managed),
+    ...provenanceFindings(managed),
     ...linkFindings(linkedDocuments, resolver),
     ...indexFindings(vaultRoot, managed, resolver),
     ...candidateFindings(managed, resolver),
