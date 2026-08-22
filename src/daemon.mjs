@@ -840,8 +840,17 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
     onEvent: processJobEvent,
   });
   const fillWorkerPool = () => {
-    workerPool.fill();
-    persistHealth();
+    try {
+      workerPool.fill();
+      persistHealth();
+    } catch (error) {
+      // A readiness scan can observe a transient filesystem race while a
+      // completed worktree is being removed. Keep the daemon alive and make
+      // the failure visible in health/evidence instead of taking down the API.
+      record({ event: "WORKER_POOL_ERROR", error: error.message }, {
+        errors: health.counters.errors + 1,
+      });
+    }
   };
 
   let watcher;
