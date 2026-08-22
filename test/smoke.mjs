@@ -586,7 +586,7 @@ assert.throws(
 assert.deepEqual(resolveAgyConfig({
   ORCHESTRATOR_AGY_MODEL: "gemini-3.7-flash-medium",
   ORCHESTRATOR_AGY_EFFORT: "medium",
-}), { model: "gemini-3.7-flash-medium", effort: "medium" });
+}), { model: "gemini-3.7-flash-high", effort: "high" });
 assert.throws(() => resolveAgyConfig({ ORCHESTRATOR_AGY_EFFORT: "maximum" }), /tidak valid/);
 assert.equal(configuredNotificationDelivery({}), "inbox");
 assert.equal(configuredNotificationDelivery({ ORCHESTRATOR_NOTIFICATION_DELIVERY: "auto" }), "auto");
@@ -1481,7 +1481,9 @@ try {
   assert.equal(intake.confirmation.readiness.ready, true);
   assert.equal(intake.job.intakeTelemetry.stage, "TASK_INTAKE");
   const simplifiedTaskPath = path.join(vault, intake.task.path);
-  assert.equal(readMarkdown(simplifiedTaskPath, vault).metadata.status, "BACKLOG");
+  const simplifiedTask = readMarkdown(simplifiedTaskPath, vault);
+  assert.equal(simplifiedTask.metadata.status, "BACKLOG");
+  assert.equal(simplifiedTask.metadata.complexity, "MEDIUM");
   assert.ok(fs.readFileSync(path.join(vault, "index.md"), "utf8").includes(intake.task.id));
   assert.equal(interactionStatus({ runsRoot, selector: intake.task.id }).state, JOB_STATES.QUEUED);
 

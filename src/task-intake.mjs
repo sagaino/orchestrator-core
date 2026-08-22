@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { agyConfigArgs, resolveAgyConfig } from "./agent-config.mjs";
+import { agyConfigArgs, detectTaskComplexity, resolveAgyConfig } from "./agent-config.mjs";
 import { runProcess } from "./executor.mjs";
 import { enqueueTaskJob } from "./job-queue.mjs";
 import { createAgentTelemetryRecord, persistIntakeTelemetry } from "./telemetry.mjs";
@@ -34,6 +34,7 @@ function taskDraftSchema() {
       allowedPaths: { type: "array", items: { type: "string" } },
       requiresChanges: { type: "boolean" },
       risk: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] },
+      complexity: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] },
       clarificationNeeded: { type: "boolean" },
       clarificationQuestion: { type: ["string", "null"] },
     },
@@ -210,7 +211,9 @@ export async function planTaskWithAgy({
     }).join("\n");
   }
 
-  const agentConfig = resolveAgyConfig(process.env, "task-intake");
+  const agentConfig = resolveAgyConfig(process.env, "task-intake", {
+    complexity: detectTaskComplexity(request),
+  });
   const prompt = [
     "=== ATURAN INTAKE & TASK PLANNER ===",
     "1. Susun draft task software engineering dari permintaan user. Jangan mengubah file apa pun.",
@@ -280,7 +283,16 @@ function normalizePath(value) {
   return normalized;
 }
 
-function normalizeDraft(raw, project) {
+export function resolveTaskComplexity(rawComplexity, request = "") {
+  const supplied = String(rawComplexity ?? "").trim().toUpperCase();
+  if (supplied && !["LOW", "MEDIUM", "HIGH"].includes(supplied)) return "UNKNOWN";
+  const detected = request ? detectTaskComplexity(request).toUpperCase() : "UNKNOWN";
+  if (!supplied) return detected;
+  const rank = { LOW: 0, MEDIUM: 1, HIGH: 2, UNKNOWN: 3 };
+  return rank[supplied] >= rank[detected] ? supplied : detected;
+}
+
+function normalizeDraft(raw, project, request = "") {
   const scripts = packageScripts(project.repository);
   const configuredDefaults = (project.verificationDefaults ?? []).map(String).filter((name) => scripts[name]);
   const verification = configuredDefaults.length
@@ -300,7 +312,8 @@ function normalizeDraft(raw, project) {
     verification,
     allowedPaths: [...new Set((raw.allowedPaths ?? []).map(normalizePath))],
     requiresChanges: raw.requiresChanges !== false,
-    risk: ["LOW", "MEDIUM", "HIGH"].includes(String(raw.risk).toUpperCase()) ? String(raw.risk).toUpperCase() : "MEDIUM",
+    risk: ["LOW", "MEDIUM", "HIGH"].includes(String(raw.risk).toUpperCase()) ? String(raw.risk).toUpperCase() : "UNKNOWN",
+    complexity: resolveTaskComplexity(raw.complexity, request),
     clarificationNeeded: raw.clarificationNeeded === true,
     clarificationQuestion: raw.clarificationQuestion ? String(raw.clarificationQuestion).trim() : null,
   };
@@ -381,6 +394,7 @@ function taskDocument({ taskId, projectId, request, draft, requestedBy, attached
     `allowed_paths: ${yamlArray(draft.allowedPaths)}`,
     `requires_changes: ${draft.requiresChanges}`,
     `risk: ${draft.risk}`,
+    `complexity: ${draft.complexity}`,
     `sources: ${yamlArray(sources)}`,
     "---",
     "",
@@ -489,7 +503,7 @@ export async function requestTask({
   } else {
     // 2. Normal Path: Call AI Planner with Graphify & Knowledge Context
     planned = await planner({ vaultRoot, runsRoot, project, request: text, attachedAssets, readMarkdown });
-    draft = normalizeDraft(planned.draft ?? planned, project);
+    draft = normalizeDraft(planned.draft ?? planned, project, text);
   }
 
   if (draft.clarificationNeeded) {
