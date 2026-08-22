@@ -1,6 +1,6 @@
 # Phase 9 — v1.0 GA Certification Contract
 
-Status: **P9.0–P9.1 HUMAN-ACCEPTED; P9.2 IMPLEMENTED — HUMAN ACCEPTANCE PENDING**
+Status: **P9.0–P9.2 HUMAN-ACCEPTED**
 Contract version: **p9.1-2026-08-22**
 Boundary: **reproducible local-first release packaging, installation, upgrade, recovery, documentation, and final human-gated v1.0 certification**
 
@@ -84,5 +84,6 @@ CLI:
   evidence completeness, duplicate invocation, secret scanning, safe failure,
   and report tamper detection.
 
-P9.2 exit gate: ten tasks across three projects PASS all checks above. Human
-acceptance is required before this cohort is used as GA certification evidence.
+P9.2 exit gate: ten tasks across three projects PASS all checks above. P9.2 is
+human-accepted and may be used as GA certification evidence; production
+mutation and release activation remain separately gated.

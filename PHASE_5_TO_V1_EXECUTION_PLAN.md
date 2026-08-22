@@ -354,7 +354,7 @@ Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 ### P9.2 — Final Pilot Cohort
 
-Implementation status: **IMPLEMENTED — HUMAN ACCEPTANCE PENDING (2026-08-22)**
+Implementation status: **HUMAN-ACCEPTED (2026-08-22)**
 
 - Model: `ECONOMY` for ordinary implementation; acceptance is `HUMAN GATE`.
 - Scope: at least ten real scoped tasks across at least three clean registered
