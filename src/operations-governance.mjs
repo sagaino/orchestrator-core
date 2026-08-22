@@ -28,6 +28,8 @@ export function operationsConfig() {
     maxArtifactBytes: configuredInteger("ORCHESTRATOR_MAX_ARTIFACT_BYTES", 2 * GiB, { min: 100 * MiB }),
     maxBackupAgeHours: configuredInteger("ORCHESTRATOR_MAX_BACKUP_AGE_HOURS", 24, { min: 1, max: 24 * 365 }),
     maxQueueAgeMinutes: configuredInteger("ORCHESTRATOR_MAX_QUEUE_AGE_MINUTES", 240, { min: 1, max: 60 * 24 * 365 }),
+    signalWindowHours: configuredInteger("ORCHESTRATOR_SIGNAL_WINDOW_HOURS", 24, { min: 1, max: 24 * 365 }),
+    alertTtlHours: configuredInteger("ORCHESTRATOR_ALERT_TTL_HOURS", 24, { min: 1, max: 24 * 365 }),
   };
 }
 
@@ -50,6 +52,27 @@ function writePrivateJson(filePath, data) {
 
 function readJson(filePath) {
   try { return JSON.parse(fs.readFileSync(filePath, "utf8")); } catch { return null; }
+}
+
+function operationsAlertHistoryPath(runsRoot) { return runtimePath(runsRoot, "alert-acknowledgements.json"); }
+
+function readAlertHistory(runsRoot) {
+  const value = readJson(operationsAlertHistoryPath(runsRoot));
+  return value?.schemaVersion === 1 && Array.isArray(value.entries) ? value : { schemaVersion: 1, entries: [] };
+}
+
+export function acknowledgeOperationsAlert({ runsRoot, alertId, acknowledgedBy, now = new Date(), note = null } = {}) {
+  if (!String(alertId ?? "").trim() || !String(acknowledgedBy ?? "").trim()) throw new Error("Acknowledgement membutuhkan alertId dan operator teridentifikasi.");
+  const history = readAlertHistory(runsRoot);
+  const entry = { alertId: String(alertId), acknowledgedBy: String(acknowledgedBy), acknowledgedAt: now.toISOString(), ...(note ? { note: String(note) } : {}) };
+  history.entries.push(entry);
+  writePrivateJson(operationsAlertHistoryPath(runsRoot), history);
+  return { ...entry, history: history.entries.filter((item) => item.alertId === entry.alertId) };
+}
+
+export function listOperationsAlertAcknowledgements({ runsRoot, alertId = null } = {}) {
+  const entries = readAlertHistory(runsRoot).entries;
+  return alertId ? entries.filter((entry) => entry.alertId === alertId) : entries;
 }
 
 export function backupStatusPath(runsRoot) {
@@ -144,7 +167,8 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
     ? check({ id: "queue-age", status: "WARN", severity: "WARNING", message: "Antrian pekerjaan melebihi target waktu tunggu.", action: "Tinjau blocker readiness, kapasitas worker, dan job gagal.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { queued: queued.length, oldestAgeMs: queueAgeMs } })
     : check({ id: "queue-age", status: "PASS", severity: "INFO", message: "Usia antrian dalam target.", action: "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { queued: queued.length, oldestAgeMs: queueAgeMs } }));
 
-  const recentRuns = listRuns(runsRoot).filter((run) => Date.parse(run.updatedAt ?? run.createdAt ?? "") > now.getTime() - 24 * 60 * 60 * 1000);
+  const signalWindowMs = config.signalWindowHours * 60 * 60 * 1000;
+  const recentRuns = listRuns(runsRoot).filter((run) => Date.parse(run.updatedAt ?? run.createdAt ?? "") > now.getTime() - signalWindowMs);
   const deadlineFailures = recentRuns.filter((run) => /deadline|timeout|output limit/i.test(JSON.stringify(run.execution ?? run.error ?? ""))).length;
   const providerFailures = recentRuns.filter((run) => /provider|model|rate limit|429/i.test(JSON.stringify(run.execution ?? run.error ?? ""))).length;
   checks.push(check({ id: "failure-signals", status: deadlineFailures || providerFailures ? "WARN" : "PASS", severity: deadlineFailures || providerFailures ? "WARNING" : "INFO", message: deadlineFailures || providerFailures ? "Kegagalan deadline/provider terdeteksi dalam 24 jam terakhir." : "Tidak ada kegagalan deadline/provider terbaru.", action: deadlineFailures || providerFailures ? "Tinjau run gagal dan jalankan runbook reliability." : "Tidak ada tindakan.", runbook: "PHASE_4_PRODUCTION_HARDENING.md#reliability", metrics: { deadlineFailures, providerFailures } }));
@@ -154,7 +178,16 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
 
   const blockers = checks.filter((item) => item.status === "FAIL");
   const warnings = checks.filter((item) => item.status === "WARN");
-  const alerts = [...blockers, ...warnings].map((item) => ({ alertId: `OPS_${item.id.replace(/-/g, "_").toUpperCase()}`, severity: item.severity, dedupeKey: `${item.id}:${item.status}`, acknowledgement: "Acknowledgement hanya mencatat kepemilikan; tidak membuka admission yang diblokir.", runbook: item.runbook, message: item.message }));
+  const history = readAlertHistory(runsRoot);
+  const expiresAt = new Date(now.getTime() + config.alertTtlHours * 60 * 60 * 1000).toISOString();
+  const baseAlerts = [...blockers, ...warnings].map((item) => ({ alertId: `OPS_${item.id.replace(/-/g, "_").toUpperCase()}`, severity: item.severity, dedupeKey: `${item.id}:${item.status}`, acknowledgement: "Acknowledgement hanya mencatat kepemilikan; tidak membuka admission yang diblokir.", runbook: item.runbook, message: item.message }));
+  const alerts = baseAlerts.flatMap((alert) => {
+    if (alert.alertId !== "OPS_FAILURE_SIGNALS") return [alert];
+    const signals = [];
+    if (deadlineFailures) signals.push({ ...alert, alertId: "OPS_DEADLINE_FAILURES", dedupeKey: "deadline-failures" });
+    if (providerFailures) signals.push({ ...alert, alertId: "OPS_PROVIDER_FAILURES", dedupeKey: "provider-failures" });
+    return signals;
+  }).map((alert) => ({ ...alert, observedAt: checkedAt, expiresAt, acknowledgementHistory: history.entries.filter((entry) => entry.alertId === alert.alertId) }));
   return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, runtime, artifacts, queue: { queued: queued.length, oldestAgeMs: queueAgeMs }, failures: { deadlineFailures, providerFailures } } };
 }
 

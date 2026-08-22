@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { appendAuditEntry } from "../src/audit-chain.mjs";
-import { RequestRateLimiter, applyRetentionPlan, operationsReadiness, previewRetention, recordVerifiedBackup, restoreRetentionTrash } from "../src/operations-governance.mjs";
+import { RequestRateLimiter, acknowledgeOperationsAlert, applyRetentionPlan, listOperationsAlertAcknowledgements, operationsReadiness, previewRetention, recordVerifiedBackup, restoreRetentionTrash } from "../src/operations-governance.mjs";
 import { createEventHub } from "../src/api/events.mjs";
 
 console.log("Running operations-governance.test.mjs...");
@@ -32,6 +32,10 @@ try {
   });
   const ready = operationsReadiness({ runsRoot, now: new Date("2026-08-22T01:00:00.000Z") });
   assert.equal(ready.admission.allowed, true);
+  const acknowledged = acknowledgeOperationsAlert({ runsRoot, alertId: "OPS_PROVIDER_FAILURES", acknowledgedBy: "operator", now: new Date("2026-08-22T01:01:00.000Z"), note: "investigating" });
+  assert.equal(acknowledged.history.length, 1);
+  assert.equal(listOperationsAlertAcknowledgements({ runsRoot, alertId: "OPS_PROVIDER_FAILURES" }).length, 1);
+  assert.equal(operationsReadiness({ runsRoot, now: new Date("2026-08-22T02:00:00.000Z") }).admission.allowed, true, "acknowledgement must never alter admission");
 
   const preview = previewRetention({ runsRoot, olderThanDays: 30, now: new Date("2026-08-22T00:00:00.000Z") });
   assert.equal(preview.summary.candidateCount, 1);
