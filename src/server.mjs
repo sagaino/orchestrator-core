@@ -1141,7 +1141,15 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   router.post("/api/knowledge/merge/apply", async (req, res) => {
     try {
       const body = await parseJsonBody(req);
-      const result = applyKnowledgeMerge({ vaultRoot, ...body, confirmed: body?.confirmed === true || body?.confirm === true });
+      const result = applyKnowledgeMerge({
+        vaultRoot,
+        sourcePath: body?.sourcePath,
+        targetPath: body?.targetPath,
+        approvedBy: body?.approvedBy,
+        expectedSourceChecksum: body?.expectedSourceChecksum,
+        expectedTargetChecksum: body?.expectedTargetChecksum,
+        confirmed: body?.confirmed === true || body?.confirm === true,
+      });
       eventHub.broadcast("KNOWLEDGE_MERGED", { planId: result.planId, source: result.source.path, target: result.target.path });
       sendJson(res, 200, { success: true, data: result });
     } catch (error) { sendError(res, error.statusCode || 400, error.message); }
