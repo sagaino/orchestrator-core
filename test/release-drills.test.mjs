@@ -16,7 +16,9 @@ function writeFixtureSource(root, value) {
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.mkdirSync(path.join(root, "schemas"), { recursive: true });
   fs.mkdirSync(path.join(root, "templates"), { recursive: true });
-  for (const file of ["start.sh", "stop.sh", "README.md", "PHASE_6_RELEASE_CONTRACT.md"]) fs.writeFileSync(path.join(root, file), `fixture:${file}\n`);
+  fs.mkdirSync(path.join(root, "docs"), { recursive: true });
+  for (const file of ["start.sh", "stop.sh", "README.md"]) fs.writeFileSync(path.join(root, file), `fixture:${file}\n`);
+  fs.writeFileSync(path.join(root, "docs", "PHASE_6_RELEASE_CONTRACT.md"), "fixture:docs/PHASE_6_RELEASE_CONTRACT.md\n");
   fs.writeFileSync(path.join(root, "src", "index.mjs"), `export const value = ${JSON.stringify(value)};\n`);
   fs.writeFileSync(path.join(root, "schemas", "fixture.json"), "{}\n");
   fs.writeFileSync(path.join(root, "templates", "manifest.json"), "{}\n");

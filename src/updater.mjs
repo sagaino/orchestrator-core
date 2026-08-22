@@ -14,7 +14,7 @@ export const RUNTIME_SOURCE_ITEMS = Object.freeze([
   "start.sh",
   "stop.sh",
   "README.md",
-  "PHASE_6_RELEASE_CONTRACT.md",
+  "docs/PHASE_6_RELEASE_CONTRACT.md",
 ]);
 
 export function runtimeBackupsRoot(runsRoot) {

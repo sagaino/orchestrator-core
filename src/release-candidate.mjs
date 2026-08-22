@@ -26,7 +26,7 @@ export const DEFAULT_CANDIDATE_PATHS = Object.freeze([
   "start.sh",
   "stop.sh",
   "README.md",
-  "PHASE_6_RELEASE_CONTRACT.md",
+  "docs/PHASE_6_RELEASE_CONTRACT.md",
 ]);
 
 function sha256File(filePath) {
