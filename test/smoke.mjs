@@ -1215,7 +1215,13 @@ try {
   assert.equal(synced.state, RUN_STATES.WIKI_SYNCED);
   const promotedPath = path.join(vault, "01-Knowledge", "patterns", "persistent-product-filter.md");
   assert.ok(fs.existsSync(promotedPath));
-  assert.ok(fs.readFileSync(promotedPath, "utf8").includes("orchestrator_run:"));
+  const promotedContent = fs.readFileSync(promotedPath, "utf8");
+  assert.ok(promotedContent.includes("provenance_schema: 1"));
+  assert.ok(promotedContent.includes("orchestrator_run:"));
+  assert.match(promotedContent, /^confidence: 0\.9$/m);
+  assert.match(promotedContent, /^owner: /m);
+  assert.match(promotedContent, /^review_by: \d{4}-\d{2}-\d{2}$/m);
+  assert.match(promotedContent, /^supersession: ACTIVE$/m);
   const lowConfidenceRouting = resolveKnowledgeRouting({
     vaultRoot: vault,
     manifest: {

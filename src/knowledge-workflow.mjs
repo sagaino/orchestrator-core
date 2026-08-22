@@ -10,6 +10,7 @@ import { notifyKnowledgeCandidateReady } from "./notification-service.mjs";
 import { appendRunTelemetry, createAgentTelemetryRecord } from "./telemetry.mjs";
 import { findSimilarKnowledge } from "./knowledge-quality.mjs";
 import { redactText } from "./redaction.mjs";
+import { buildKnowledgeProvenance, KNOWLEDGE_PROVENANCE_OWNER } from "./knowledge-provenance.mjs";
 
 const CLASSIFICATIONS = new Set(["NEW", "UPDATE", "PROJECT_ONLY", "IGNORE"]);
 const DESTINATIONS = new Set(["WIKI", "CANDIDATE", "PROJECT", "NONE"]);
@@ -116,6 +117,23 @@ function normalizeProposal(proposal) {
     considerations: Array.isArray(proposal.considerations) ? proposal.considerations.map(String) : [],
     relatedKnowledge: Array.isArray(proposal.relatedKnowledge) ? proposal.relatedKnowledge.map(String) : [],
   };
+}
+
+function provenanceForManifest(manifest, proposal, sourcePath, now = new Date()) {
+  return buildKnowledgeProvenance({
+    orchestratorRun: manifest.runId,
+    sources: [sourceLink(sourcePath)],
+    confidence: proposal.confidence,
+    owner: manifest.knowledge?.approval?.approvedBy ?? KNOWLEDGE_PROVENANCE_OWNER,
+    now,
+  });
+}
+
+function setFrontmatterField(content, field, value) {
+  const line = `${field}: ${value}`;
+  const pattern = new RegExp(`^${field}:.*$`, "m");
+  if (pattern.test(content)) return content.replace(pattern, line);
+  return content.replace(/^---\r?\n/, `---\n${line}\n`);
 }
 
 function unwrapProposal(payload) {
@@ -629,6 +647,7 @@ function relatedLinks(vaultRoot, items) {
 
 function newKnowledgePage({ vaultRoot, manifest, proposal, type, sourcePath }) {
   const links = relatedLinks(vaultRoot, proposal.relatedKnowledge);
+  const provenance = provenanceForManifest(manifest, proposal, sourcePath);
   return [
     "---",
     `title: ${JSON.stringify(proposal.title)}`,
@@ -636,8 +655,13 @@ function newKnowledgePage({ vaultRoot, manifest, proposal, type, sourcePath }) {
     `tags: [${type}, orchestrator-promotion]`,
     `created: ${new Date().toISOString().slice(0, 10)}`,
     `updated: ${new Date().toISOString().slice(0, 10)}`,
-    `orchestrator_run: ${manifest.runId}`,
-    `sources: ["${sourceLink(sourcePath)}"]`,
+    `provenance_schema: ${provenance.schemaVersion}`,
+    `orchestrator_run: ${provenance.orchestrator_run}`,
+    `sources: ["${provenance.sources[0]}"]`,
+    `confidence: ${provenance.confidence}`,
+    `owner: ${JSON.stringify(provenance.owner)}`,
+    `review_by: ${provenance.review_by}`,
+    `supersession: ${provenance.supersession}`,
     "---",
     "",
     `# ${proposal.title}`,
@@ -668,7 +692,14 @@ function newKnowledgePage({ vaultRoot, manifest, proposal, type, sourcePath }) {
 function updateExistingKnowledge(content, manifest, proposal, sourcePath) {
   if (content.includes(`orchestrator-run:${manifest.runId}`)) return content;
   const today = new Date().toISOString().slice(0, 10);
+  const provenance = provenanceForManifest(manifest, proposal);
   let updated = content.replace(/^updated:\s*.*$/m, `updated: ${today}`);
+  updated = setFrontmatterField(updated, "provenance_schema", provenance.schemaVersion);
+  updated = setFrontmatterField(updated, "orchestrator_run", provenance.orchestrator_run);
+  updated = setFrontmatterField(updated, "confidence", provenance.confidence);
+  updated = setFrontmatterField(updated, "owner", JSON.stringify(provenance.owner));
+  updated = setFrontmatterField(updated, "review_by", provenance.review_by);
+  updated = setFrontmatterField(updated, "supersession", provenance.supersession);
   const link = sourceLink(sourcePath);
   if (!updated.includes(link)) {
     if (/^sources:\s*\[\s*\]\s*$/m.test(updated)) {
