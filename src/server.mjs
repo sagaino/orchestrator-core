@@ -45,6 +45,7 @@ import { materializeApprovedPlan } from "./task-materializer.mjs";
 import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
 import { getIntegrationEvidence, recoverIntegration, startIntegration } from "./integration-manager.mjs";
 import { acceptObjective, buildObjectiveEvidence } from "./objective-evidence.mjs";
+import { getProjectRelationships, replaceProjectRelationships } from "./project-relations.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -805,6 +806,42 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       return sendError(res, 404, `Project not found: ${params.id}`);
     }
     sendJson(res, 200, { success: true, data: project });
+  });
+
+  router.get("/api/projects/:id/relationships", async (req, res, { params }) => {
+    try {
+      const reader = services?.getProjectRelationships ?? getProjectRelationships;
+      const result = reader({ vaultRoot, projectId: params.id });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 404, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.put("/api/projects/:id/relationships", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk mengubah project relationships.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      if (!Array.isArray(body?.relationships)) return sendError(res, 400, "Field relationships wajib berupa array.", { code: "INVALID_RELATIONSHIPS" });
+      if (body?.confirmed !== true && body?.confirm !== true) return sendError(res, 409, "Perubahan relationship membutuhkan konfirmasi human operator.", { code: "HUMAN_CONFIRMATION_REQUIRED" });
+      const writer = services?.replaceProjectRelationships ?? replaceProjectRelationships;
+      const result = writer({
+        vaultRoot,
+        runsRoot,
+        projectId: params.id,
+        relationships: body.relationships,
+        confirmed: true,
+        confirmedBy: req.operatorIdentity,
+      });
+      eventHub.broadcast(result.action, {
+        projectId: params.id,
+        relationshipCount: result.relationships.length,
+        changed: result.changed,
+      });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
   });
 
   router.delete("/api/projects/:id", async (req, res, { params }) => {

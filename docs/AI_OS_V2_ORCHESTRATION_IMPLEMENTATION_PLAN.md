@@ -886,7 +886,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 
 ### Phase V2.6 — Cross-Project Incident Orchestration
 
-#### V2-060 — Add validated project relationships
+#### ✅ V2-060 — Add validated project relationships
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: new `src/project-relations.mjs`, registry integration, API routes, tests.

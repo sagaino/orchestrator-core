@@ -361,9 +361,29 @@ function registryRows(content) {
     if (!line.trim().startsWith("|")) continue;
     const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cleanCell);
     if (cells.length < 6 || cells[0] === "project_id" || /^-+$/.test(cells[0])) continue;
-    rows.push({ index, id: cells[0], repository: cells[2] });
+    rows.push({ index, id: cells[0], repository: cells[2], relationshipCell: cells[6] ?? "[]" });
   }
   return rows;
+}
+
+function ensureRegistryRelationshipsColumn(content) {
+  const lines = content.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => {
+    if (!line.trim().startsWith("|")) return false;
+    return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cleanCell)[0] === "project_id";
+  });
+  if (headerIndex < 0) return content;
+  const headerCells = lines[headerIndex].trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+  if (headerCells.length >= 7) return content;
+  headerCells.push("relationships");
+  lines[headerIndex] = `| ${headerCells.join(" | ")} |`;
+  const separatorIndex = lines.findIndex((line, index) => index > headerIndex && /^\s*\|/.test(line) && line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").every((cell) => /^\s*-+\s*$/.test(cell)));
+  if (separatorIndex >= 0) {
+    const separatorCells = lines[separatorIndex].trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+    while (separatorCells.length < 7) separatorCells.push("---");
+    lines[separatorIndex] = `| ${separatorCells.join(" | ")} |`;
+  }
+  return lines.join("\n");
 }
 
 function safeProjectId(value) {
@@ -552,10 +572,12 @@ function updatedProjectPage(existing, input) {
 }
 
 function updatedRegistry(content, input) {
-  const rows = registryRows(content);
-  const row = `| \`${input.projectId}\` | [[02-Projects/${input.projectId}/project]] | \`${input.repository}\` | \`agy\` | \`true\` | \`${input.graphifyOutput}\` |`;
+  const migratedContent = ensureRegistryRelationshipsColumn(content);
+  const rows = registryRows(migratedContent);
   const existing = rows.find((item) => item.id === input.projectId);
-  const lines = content.split(/\r?\n/);
+  const relationshipCell = existing?.relationshipCell || "[]";
+  const row = `| \`${input.projectId}\` | [[02-Projects/${input.projectId}/project]] | \`${input.repository}\` | \`agy\` | \`true\` | \`${input.graphifyOutput}\` | \`${relationshipCell}\` |`;
+  const lines = migratedContent.split(/\r?\n/);
   if (existing) {
     lines[existing.index] = row;
   } else {
