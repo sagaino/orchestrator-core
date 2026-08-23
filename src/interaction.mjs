@@ -95,6 +95,14 @@ function aggregateStatus(results) {
   return "UNKNOWN";
 }
 
+function pathWithinAllowed(candidate, allowedPaths) {
+  const normalizedCandidate = String(candidate ?? "").replaceAll("\\", "/").replace(/^\.\//, "");
+  return allowedPaths.some((allowed) => {
+    const normalizedAllowed = String(allowed ?? "").replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
+    return normalizedCandidate === normalizedAllowed || normalizedCandidate.startsWith(`${normalizedAllowed}/`);
+  });
+}
+
 function scopeEvidence(run) {
   const audit = run.execution?.scopeAudit;
   if (!audit) {
@@ -240,6 +248,48 @@ export function buildRunEvidence(run, { runsRoot = null } = {}) {
       createdAt: run.createdAt ?? null,
       updatedAt: run.updatedAt ?? null,
     },
+  };
+}
+
+export function buildIntegrationEvidence({ objective, plan, orchestration, sourceRuns = [], verification = [], artifactPath = null } = {}) {
+  const source = sourceRuns.map((item) => {
+    const run = item.run ?? item;
+    const git = run.execution?.result?.gitCommit ?? run.execution?.workspace?.gitCommit ?? null;
+    return {
+      nodeId: item.nodeId ?? null,
+      runId: run.runId ?? null,
+      projectId: run.project?.id ?? null,
+      commitHash: git?.commitHash ?? null,
+      commitMessage: git?.commitMessage ?? null,
+      changedPaths: run.execution?.scopeAudit?.changedPaths ?? run.execution?.workspace?.appliedPaths ?? [],
+      allowedPaths: item.allowedPaths ?? run.task?.allowedPaths ?? [],
+    };
+  });
+  const allowedPaths = [...new Set(source.flatMap((item) => item.allowedPaths).map(String))].sort();
+  const changedPaths = [...new Set(source.flatMap((item) => item.changedPaths).map(String))].sort();
+  const verificationResults = normalizedVerification(verification);
+  return {
+    schemaVersion: 1,
+    mode: "integration-evidence",
+    objectiveId: objective?.objectiveId ?? orchestration?.objectiveId ?? null,
+    planId: plan?.planId ?? orchestration?.planId ?? null,
+    orchestrationId: orchestration?.orchestrationId ?? null,
+    planFingerprint: plan?.planFingerprint ?? orchestration?.planFingerprint ?? null,
+    sourceRuns: source,
+    sourceRunIds: source.map((item) => item.runId).filter(Boolean),
+    commitHashes: source.map((item) => item.commitHash).filter(Boolean),
+    scope: {
+      allowedPaths,
+      changedPaths,
+      unionOfApprovedNodeScopes: allowedPaths,
+      changedPathsWithinUnion: changedPaths.every((candidate) => pathWithinAllowed(candidate, allowedPaths)),
+    },
+    verification: {
+      status: aggregateStatus(verificationResults),
+      results: verificationResults,
+    },
+    artifactPath,
+    complete: source.length > 0 && source.every((item) => Boolean(item.runId && item.commitHash)),
   };
 }
 

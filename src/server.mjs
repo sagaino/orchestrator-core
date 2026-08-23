@@ -43,6 +43,7 @@ import { listDecisions } from "./decision-store.mjs";
 import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
 import { materializeApprovedPlan } from "./task-materializer.mjs";
 import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
+import { getIntegrationEvidence, startIntegration } from "./integration-manager.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -286,6 +287,50 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       sendJson(res, 200, { success: true, data: reader({ runsRoot, objectiveId: params.id }) });
     } catch (error) {
       sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.get("/api/objectives/:id/integration", async (req, res, { params }) => {
+    try {
+      const objective = getObjective(runsRoot, params.id);
+      const orchestrationId = objective?.activeOrchestrationId;
+      sendJson(res, 200, { success: true, data: orchestrationId ? getIntegrationEvidence({ runsRoot, orchestrationId }) : null });
+    } catch (error) {
+      sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/integration", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk memulai integration.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const integrator = services?.startIntegration ?? startIntegration;
+      const result = await integrator({
+        vaultRoot,
+        runsRoot,
+        objectiveId: params.id,
+        orchestrationId: body?.orchestrationId ?? null,
+        integrationNodeId: body?.integrationNodeId ?? null,
+        verificationRunner: services?.integrationVerificationRunner ?? services?.processRunner ?? null,
+      });
+      appendAuditEntry(runsRoot, {
+        event: result.action,
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: params.id,
+        orchestrationId: result.orchestration?.orchestrationId ?? result.evidence?.orchestrationId ?? body?.orchestrationId ?? null,
+        decisionId: result.decision?.decisionId ?? null,
+        evidencePath: result.evidence?.artifactPath ?? null,
+      });
+      eventHub.broadcast(result.action, {
+        objectiveId: params.id,
+        orchestrationId: result.orchestration?.orchestrationId ?? result.evidence?.orchestrationId ?? body?.orchestrationId ?? null,
+        decisionId: result.decision?.decisionId ?? null,
+        status: result.evidence?.status ?? result.integration?.state ?? null,
+      });
+      const status = result.action === "INTEGRATION_BLOCKED" ? 409 : result.action === "INTEGRATION_IN_PROGRESS" ? 202 : result.action === "INTEGRATION_NOT_REQUIRED" || result.action === "INTEGRATION_ALREADY_COMPLETED" ? 200 : 201;
+      sendJson(res, status, { success: status < 400, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
   });
 
@@ -2020,6 +2065,8 @@ export function createOrchestratorServer({
     resolveDecision,
     cancelOrchestration,
     listDecisions,
+    startIntegration,
+    getIntegrationEvidence,
     cancelObjective,
     approveFreshProjectGenesis,
     ...customServices,

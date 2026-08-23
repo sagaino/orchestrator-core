@@ -794,7 +794,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 
 ### Phase V2.4 — Integration Manager
 
-#### V2-040 — Add sequential integration node and aggregate evidence
+#### ✅ V2-040 — Add sequential integration node and aggregate evidence
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: new `src/integration-manager.mjs`, `src/interaction.mjs`, evidence modules, tests.
