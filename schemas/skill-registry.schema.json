@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "personal-ai-os/skill-registry/v1",
+  "title": "Personal AI OS Skill Registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "revision", "updatedAt", "agentWritable", "skills"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ai-os-skill-registry" },
+    "revision": { "type": "integer", "minimum": 0 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "agentWritable": { "const": false },
+    "skills": { "type": "array", "uniqueItems": true, "items": { "$ref": "skill.schema.json" } }
+  }
+}
