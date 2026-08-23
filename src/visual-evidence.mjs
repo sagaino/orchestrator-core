@@ -12,6 +12,8 @@ import { createHash, randomUUID } from "node:crypto";
 export const VISUAL_EVIDENCE_SCHEMA_VERSION = 1;
 export const VISUAL_EVIDENCE_MODE = "visual-evidence";
 export const VISUAL_EVIDENCE_ROOT = "visual-evidence";
+export const AGGREGATE_PREVIEW_SCHEMA_VERSION = 1;
+export const AGGREGATE_PREVIEW_MODE = "aggregate-project-preview";
 
 const ID_PATTERN = /^[A-Za-z0-9._-]{1,160}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -182,4 +184,80 @@ export function getVisualEvidence({ runsRoot, runId, evidenceId } = {}) {
   const evidence = readJson(filePath);
   if (!evidence || !validateVisualEvidence(evidence).valid) throw new Error("Visual evidence tidak ditemukan atau rusak.");
   return evidence;
+}
+
+function aggregatePreviewDirectory(runsRoot, objectiveId) {
+  return path.join(runsRoot, "runtime", VISUAL_EVIDENCE_ROOT, "objectives", objectiveId);
+}
+
+function aggregatePreviewPath(runsRoot, objectiveId, sessionId) {
+  return path.join(aggregatePreviewDirectory(runsRoot, objectiveId), `${sessionId}.json`);
+}
+
+export function validateAggregatePreviewEvidence(evidence) {
+  const errors = [];
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return { valid: false, errors: ["Aggregate preview evidence must be a non-null object"] };
+  if (evidence.schemaVersion !== AGGREGATE_PREVIEW_SCHEMA_VERSION) errors.push("Unsupported aggregate preview schemaVersion");
+  if (evidence.mode !== AGGREGATE_PREVIEW_MODE) errors.push("Invalid aggregate preview mode");
+  safeId(evidence.objectiveId, "objectiveId", errors);
+  safeId(evidence.sessionId, "sessionId", errors);
+  if (!["READY", "PARTIAL", "UNAVAILABLE"].includes(evidence.status)) errors.push("status must be READY, PARTIAL, or UNAVAILABLE");
+  if (evidence.host !== "127.0.0.1") errors.push("Aggregate preview evidence must use loopback host");
+  if (!Array.isArray(evidence.previews)) errors.push("previews must be an array");
+  if (!Array.isArray(evidence.unavailable)) errors.push("unavailable must be an array");
+  if (evidence.verification?.status !== "NOT_EVALUATED") errors.push("Aggregate preview must not report verification status");
+  nonEmpty(evidence.createdAt, "createdAt", errors);
+  if (Number.isNaN(Date.parse(evidence.createdAt))) errors.push("createdAt must be a valid timestamp");
+  return { valid: errors.length === 0, errors };
+}
+
+export function createAggregatePreviewEvidence({ preview, objectiveId, createdAt = new Date().toISOString() } = {}) {
+  const evidence = {
+    schemaVersion: AGGREGATE_PREVIEW_SCHEMA_VERSION,
+    mode: AGGREGATE_PREVIEW_MODE,
+    objectiveId,
+    sessionId: preview?.sessionId,
+    status: preview?.status ?? "UNAVAILABLE",
+    host: preview?.host ?? "127.0.0.1",
+    previews: Array.isArray(preview?.previews) ? preview.previews.map((item) => ({ ...item })) : [],
+    unavailable: Array.isArray(preview?.unavailable) ? preview.unavailable.map((item) => ({ ...item })) : [],
+    cleanup: preview?.cleanup ?? { status: "ACTIVE" },
+    expiresAt: preview?.expiresAt ?? null,
+    verification: { status: "NOT_EVALUATED", failed: false, impact: "NO_VERIFICATION_FAILURE" },
+    createdAt,
+  };
+  const validation = validateAggregatePreviewEvidence(evidence);
+  if (!validation.valid) {
+    const error = new Error(`Aggregate preview evidence tidak valid: ${validation.errors.join(", ")}`);
+    error.code = "AGGREGATE_PREVIEW_EVIDENCE_INVALID";
+    error.details = validation;
+    throw error;
+  }
+  return Object.freeze(evidence);
+}
+
+export function persistAggregatePreviewEvidence({ runsRoot, evidence } = {}) {
+  if (!runsRoot) throw new Error("runsRoot is required.");
+  const validation = validateAggregatePreviewEvidence(evidence);
+  if (!validation.valid) throw new Error(`Aggregate preview evidence tidak valid: ${validation.errors.join(", ")}`);
+  const filePath = aggregatePreviewPath(runsRoot, evidence.objectiveId, evidence.sessionId);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const text = `${JSON.stringify(evidence, null, 2)}\n`;
+  const temporary = `${filePath}.${randomUUID()}.partial`;
+  fs.writeFileSync(temporary, text, { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temporary, filePath);
+  const checksum = createHash("sha256").update(text).digest("hex");
+  fs.writeFileSync(checksumPath(filePath), `${checksum}  ${path.basename(filePath)}\n`, { encoding: "utf8", mode: 0o600 });
+  return { ...evidence, persistence: { path: filePath, checksum, checksumPath: checksumPath(filePath) } };
+}
+
+export function listAggregatePreviewEvidence({ runsRoot, objectiveId } = {}) {
+  if (!runsRoot || !objectiveId || !ID_PATTERN.test(objectiveId)) return [];
+  const directory = aggregatePreviewDirectory(runsRoot, objectiveId);
+  if (!fs.existsSync(directory)) return [];
+  return fs.readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => readJson(path.join(directory, entry.name)))
+    .filter((item) => validateAggregatePreviewEvidence(item).valid)
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
 }

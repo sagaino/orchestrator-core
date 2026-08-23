@@ -26,7 +26,7 @@ import { ingestRawKnowledge } from "./knowledge-ingest.mjs";
 import { harvestRepositoryKnowledge, listHarvestRuns } from "./knowledge-harvester.mjs";
 import { saveUploadedAsset, deleteUploadedAsset, resolveMockupAssetPath } from "./asset-manager.mjs";
 import { buildRunEvidence } from "./interaction.mjs";
-import { createVisualEvidence, getVisualEvidence, listVisualEvidence, persistVisualEvidence } from "./visual-evidence.mjs";
+import { createAggregatePreviewEvidence, createVisualEvidence, getVisualEvidence, listAggregatePreviewEvidence, listVisualEvidence, persistAggregatePreviewEvidence, persistVisualEvidence } from "./visual-evidence.mjs";
 import { auditVisualEvidence, captureVisualEvidence, comparePersistedVisualEvidence, listCaptureReports } from "./visual-qa.mjs";
 import { completeVisualRevision, getVisualRevision, listVisualRevisions } from "./visual-revision.mjs";
 import { createVisualQACertification, getVisualQACertification } from "./visual-certification.mjs";
@@ -326,6 +326,84 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   router.get("/api/objectives/:id/evidence", async (req, res, { params }) => {
     try {
       sendJson(res, 200, { success: true, data: buildObjectiveEvidence({ runsRoot, objectiveId: params.id }) });
+    } catch (error) {
+      sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/preview", async (req, res, { params }) => {
+    try {
+      const body = await parseJsonBody(req);
+      const evidence = buildObjectiveEvidence({ runsRoot, objectiveId: params.id });
+      const nodesByProject = new Map();
+      for (const node of evidence.nodes) {
+        if (node.state === "DONE" && node.runId && node.projectId) nodesByProject.set(node.projectId, node);
+      }
+      const planApproved = evidence.plan?.state === "APPROVED";
+      const candidates = (evidence.objective.projectIds ?? []).map((projectId) => {
+        const node = nodesByProject.get(projectId);
+        return {
+          projectId,
+          runId: node?.runId ?? null,
+          unavailableReason: planApproved ? (node ? null : "NO_COMPLETED_RUN_EVIDENCE") : "PLAN_NOT_APPROVED",
+          unavailableMessage: planApproved ? (node ? null : "Tidak ada run DONE dengan evidence untuk project ini.") : "Preview hanya tersedia setelah plan objective di-approve.",
+        };
+      });
+      const result = await globalDevServerManager.startAggregateProjectPreview({
+        runsRoot,
+        objectiveId: params.id,
+        candidates,
+        maxProjects: body?.maxProjects ?? 4,
+        maxServers: body?.maxServers ?? 4,
+        maxDurationMs: body?.maxDurationMs ?? undefined,
+      });
+      const evidenceRecord = persistAggregatePreviewEvidence({
+        runsRoot,
+        evidence: createAggregatePreviewEvidence({ objectiveId: params.id, preview: result }),
+      });
+      eventHub.broadcast("AGGREGATE_PREVIEW_STARTED", { objectiveId: params.id, sessionId: result.sessionId, status: result.status, previews: result.previews.length, unavailable: result.unavailable.length });
+      sendJson(res, 200, { success: true, data: { ...result, evidence: evidenceRecord, approval: { planState: evidence.plan?.state ?? null, loopbackOnly: true } } });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/preview/stop", async (req, res, { params }) => {
+    try {
+      const body = await parseJsonBody(req);
+      if (!body?.sessionId) return sendError(res, 400, "sessionId wajib diisi.", { code: "SESSION_ID_REQUIRED" });
+      const result = globalDevServerManager.stopAggregatePreview(body.sessionId, params.id);
+      if (result.reason && result.stopped === false) return sendError(res, 404, result.reason, { code: "PREVIEW_SESSION_NOT_FOUND" });
+      if (result.objectiveId) {
+        persistAggregatePreviewEvidence({
+          runsRoot,
+          evidence: createAggregatePreviewEvidence({ objectiveId: result.objectiveId, preview: result }),
+        });
+      }
+      eventHub.broadcast("AGGREGATE_PREVIEW_STOPPED", { objectiveId: params.id, sessionId: body.sessionId, status: result.cleanup?.status ?? null });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details);
+    }
+  });
+
+  router.get("/api/objectives/:id/preview/status", async (req, res, { params }) => {
+    try {
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+      const sessionId = parsedUrl.searchParams.get("sessionId");
+      if (!sessionId) return sendError(res, 400, "sessionId wajib diisi.", { code: "SESSION_ID_REQUIRED" });
+      const result = globalDevServerManager.getAggregatePreviewStatus(sessionId);
+      if (result.objectiveId && result.objectiveId !== params.id) return sendError(res, 404, "Aggregate preview session bukan milik objective ini.", { code: "PREVIEW_SESSION_NOT_FOUND" });
+      sendJson(res, result.status === "NOT_FOUND" ? 404 : 200, { success: result.status !== "NOT_FOUND", data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details);
+    }
+  });
+
+  router.get("/api/objectives/:id/preview/evidence", async (req, res, { params }) => {
+    try {
+      getObjective(runsRoot, params.id);
+      sendJson(res, 200, { success: true, data: listAggregatePreviewEvidence({ runsRoot, objectiveId: params.id }) });
     } catch (error) {
       sendError(res, error.statusCode || 404, error.message, error.details);
     }
