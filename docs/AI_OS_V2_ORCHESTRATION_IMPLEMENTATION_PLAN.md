@@ -1056,7 +1056,7 @@ No earlier phase may depend on this phase. Existing role prompts must already su
 - Model: `ECONOMY + STRONG REVIEW`.
 - Acceptance: Plan Review may select only installed/enabled compatible skills; selection creates a new plan revision; skill cannot broaden task permissions; full skill instructions are loaded only for the assigned node.
 
-#### V2-102 — Implement automatic Skill Router
+#### ✅ V2-102 — Implement automatic Skill Router
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: new `src/skill-router.mjs`, decomposer/executor integration, tests.

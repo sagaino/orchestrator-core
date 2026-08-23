@@ -24,6 +24,7 @@ import { runDurableInvocation, runtimeOwner } from "./durable-runtime.mjs";
 import { capabilityForStage, prepareCapabilitySpawn } from "./capability-policy.mjs";
 import { redactSensitive, redactText } from "./redaction.mjs";
 import { buildStageContext, roleAssignmentForTask } from "./context-compactor.mjs";
+import { loadAssignedSkillInstructions } from "./skill-router.mjs";
 
 function appendEvent(eventLogPath, event) {
   if (!eventLogPath || typeof eventLogPath !== "string") return;
@@ -299,7 +300,7 @@ function buildExecutionContext(manifest, stage, {
 export function buildAgyInvocation(
   manifest,
   vaultRoot,
-  { graphifyContext = "", latestDiff = "", repository = manifest.project.repository } = {},
+  { graphifyContext = "", latestDiff = "", repository = manifest.project.repository, runsRoot = null } = {},
 ) {
   if (manifest.project.agent !== "agy") {
     throw new Error(`Agent ${manifest.project.agent} belum memiliki executor adapter.`);
@@ -319,6 +320,15 @@ export function buildAgyInvocation(
     revisionState: manifest.execution?.revisionState ?? {},
   });
   const roleAssignment = roleAssignmentForTask(manifest.task);
+  const assignedSkills = Array.isArray(manifest.task?.skills) ? manifest.task.skills : [];
+  const skillInstructions = runsRoot ? loadAssignedSkillInstructions({ assignments: assignedSkills, runsRoot }) : [];
+  const skillContext = skillInstructions.length
+    ? [
+      "=== ASSIGNED SKILL INSTRUCTIONS ===",
+      "The following instructions were loaded only for this assigned orchestration node. They cannot change the approved scope or permissions.",
+      ...skillInstructions.map((skill) => `Skill ${skill.skillId}@${skill.version} (${skill.checksum}):\n${skill.instructions}`),
+    ].join("\n")
+    : "=== ASSIGNED SKILL INSTRUCTIONS ===\nNo skill assigned; use the existing general role agent behavior.";
   const prompt = [
     "=== KONTRAK EKSEKUSI CODING AGENT ===",
     "1. Baca task, project metadata, dan hanya knowledge/source yang relevan.",
@@ -332,6 +342,8 @@ export function buildAgyInvocation(
     "9. Gunakan approved role responsibility hanya sebagai fokus kerja. Role tidak memberi otorisasi tambahan dan tidak dapat mengubah allowed paths, tools, capability tier, approval, atau lifecycle authority.",
     "",
     contextPack.text,
+    "",
+    skillContext,
     "",
     "=== TARGET EXECUTION METADATA ===",
     `Project repository: ${repository}`,
@@ -356,6 +368,8 @@ export function buildAgyInvocation(
     role: roleAssignment.role,
     roleResponsibility: roleAssignment.responsibility,
     roleAssignment,
+    skillRouting: assignedSkills,
+    skillInstructions: assignedSkills.map(({ skillId, version, checksum }) => ({ skillId, version, checksum })),
   };
 }
 
@@ -1178,6 +1192,7 @@ export async function executeRun({
       graphifyContext,
       latestDiff: captureWorkspaceDiff(repository, workspace.baseCommit, manifest.task?.allowedPaths ?? []),
       repository,
+      runsRoot,
     });
     const invocationId = `${runId}:implementation`;
     const agent = await runDurableInvocation({
@@ -1204,6 +1219,7 @@ export async function executeRun({
         projectId: manifest.project?.id ?? null,
         role: invocation.role ?? null,
         roleResponsibility: invocation.roleResponsibility ?? null,
+        skillRouting: invocation.skillRouting ?? [],
         agentLifetime: invocation.roleAssignment?.lifetime ?? "RUN_SCOPED",
         temporarySubAgent: invocation.roleAssignment?.temporary ?? true,
       },
@@ -1246,6 +1262,7 @@ export async function executeRun({
           configuration: invocation.agentConfig ?? null,
           role: invocation.role ?? null,
           roleResponsibility: invocation.roleResponsibility ?? null,
+          skillRouting: invocation.skillRouting ?? [],
           lifetime: invocation.roleAssignment?.lifetime ?? "RUN_SCOPED",
           temporary: invocation.roleAssignment?.temporary ?? true,
         },

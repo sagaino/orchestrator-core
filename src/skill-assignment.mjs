@@ -15,12 +15,16 @@ function error(message, code, details = null) {
 
 export function projectSignalsForProjects(projects = []) {
   const entries = Array.isArray(projects) ? projects : projects?.projects ?? [];
-  return Object.fromEntries(entries.map((project) => [project.id, [
-    project.id,
+  return Object.fromEntries(entries.map((project) => {
+    const projectId = project.id ?? project.projectId;
+    return [projectId, [
+    projectId,
     project.agent ? `agent:${project.agent}` : null,
     ...(project.verificationDefaults ?? []).map((script) => `verification:${script}`),
+    ...(project.verificationScripts ?? []).map((script) => `verification:${script}`),
     project.graphify ? "graphify" : "no-graphify",
-  ].filter(Boolean)]));
+  ].filter(Boolean)];
+  }));
 }
 
 export function validateAssignedSkill({ assignment, skill, node, projectSignals = [], checkCompatibility = true } = {}) {

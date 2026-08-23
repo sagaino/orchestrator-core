@@ -223,6 +223,7 @@ function renderTasks({ objective, plan, orchestrationId, allocation, readDocumen
         nodeType: node.type,
         writeConflictGroup: node.writeConflictGroup ?? null,
         contextFrom: node.contextFrom ?? [],
+        skills: node.skills ?? [],
       },
     });
     if (!content.includes(`task_id: ${target.taskId}`) || !content.includes("orchestration_managed: true")) {
