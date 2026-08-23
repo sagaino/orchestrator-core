@@ -774,6 +774,7 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
       lastTickAt: null,
       lastQueuedCount: 0,
       lastBlockedCount: 0,
+      lastBudgetBlockerCount: 0,
       lastError: null,
     },
     lastEvent: { event: "DAEMON_STARTED", at: startedAt },
@@ -920,13 +921,15 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
             lastTickAt: new Date().toISOString(),
             lastQueuedCount: result.queued?.length ?? 0,
             lastBlockedCount: result.blocked?.length ?? 0,
+            lastBudgetBlockerCount: result.budgetBlockers?.length ?? 0,
             lastError: null,
           };
-          if ((result.queued?.length ?? 0) > 0 || (result.blocked?.length ?? 0) > 0) {
+          if ((result.queued?.length ?? 0) > 0 || (result.blocked?.length ?? 0) > 0 || (result.budgetBlockers?.length ?? 0) > 0) {
             appendLog(paths.log, {
               event: "ORCHESTRATION_SCHEDULER_TICK",
               queued: result.queued?.map((job) => job.jobId) ?? [],
               blocked: result.blocked ?? [],
+              budgetBlockers: result.budgetBlockers ?? [],
             });
           }
         } catch (error) {

@@ -649,6 +649,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         runsRoot,
         decisionId: params.id,
         action: body?.action,
+        budget: body?.budget,
         resolvedBy: req.operatorIdentity,
       });
       appendAuditEntry(runsRoot, {
@@ -658,6 +659,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         nodeId: result.decision?.nodeId ?? null,
         decisionId: result.decision?.decisionId ?? params.id,
         action: result.decision?.resolution?.action ?? body?.action ?? null,
+        budget: result.decision?.resolution?.budget ?? null,
       });
       eventHub.broadcast(result.alreadyResolved ? "DECISION_RESOLUTION_IDEMPOTENT" : "DECISION_RESOLVED", {
         decisionId: result.decision?.decisionId ?? params.id,
