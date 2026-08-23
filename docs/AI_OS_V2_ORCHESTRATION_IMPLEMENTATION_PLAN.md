@@ -1117,6 +1117,7 @@ No earlier phase may depend on this phase. Existing role prompts must already su
   - structured-output envelopes are parsed deterministically;
   - `UNDETERMINED` requests clarification with no implicated project;
   - `COMPATIBLE` permits only diagnostic/verification nodes with `requiresChanges=false` and `allowedPaths=[]`;
+  - integration verification accepts only registered scoped `projectId:script` strings, never prose or object payloads;
   - no implementation task is materialized for a compatible contract audit;
   - focused backend security/Cross-project tests and Dashboard Linked Projects browser gates remain green.
 
