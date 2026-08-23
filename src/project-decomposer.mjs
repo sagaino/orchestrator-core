@@ -80,8 +80,8 @@ export function decompositionPlanSchema() {
             title: { type: "string", minLength: 1 },
             purpose: { type: "string", minLength: 1 },
             projectId: { type: "string", minLength: 1 },
-            role: { type: "string" },
-            type: { type: "string" },
+            role: { enum: ["PLANNER", "DIAGNOSTIC", "FRONTEND", "BACKEND", "DATABASE", "INTEGRATION", "TESTING", "REVIEW", "GENERAL"] },
+            type: { enum: ["DIAGNOSTIC", "IMPLEMENTATION", "INTEGRATION", "VERIFICATION"] },
             dependsOn: { type: "array", items: { type: "string" } },
             acceptanceCriteria: { type: "array", minItems: 1, items: { type: "string" } },
             allowedPaths: { type: "array", items: { type: "string" } },
@@ -113,6 +113,8 @@ export function decompositionPlanSchema() {
       approvedAt: { type: ["string", "null"] },
       createdAt: { type: "string", minLength: 1 },
       estimatedTokens: { type: "integer", minimum: 0 },
+      toolAction: { type: "string" },
+      toolSummary: { type: "string" },
     },
   };
 }
@@ -129,6 +131,8 @@ export function decompositionOutputSchema() {
           schemaVersion: { const: 1 },
           clarificationNeeded: { const: true },
           clarificationQuestion: { type: "string", minLength: 1 },
+          toolAction: { type: "string" },
+          toolSummary: { type: "string" },
         },
       },
     ],
@@ -138,8 +142,22 @@ export function decompositionOutputSchema() {
 function unwrapProviderEnvelope(value) {
   if (!isRecord(value)) return value;
   const keys = Object.keys(value);
-  if (keys.length === 1 && isRecord(value.structured_output)) return value.structured_output;
+  if (isRecord(value.structured_output)) return value.structured_output;
   if (keys.length === 2 && value.event === "result" && isRecord(value.result)) return value.result;
+  if (Object.hasOwn(value, "response")) {
+    if (String(value.status ?? "").toUpperCase() === "ERROR" || value.error) {
+      throw errorWithCode(`Decomposition provider melaporkan error: ${boundedText(value.error ?? value.status, 600)}`, "PROVIDER_FAILED");
+    }
+    if (isRecord(value.response)) return value.response;
+    if (typeof value.response === "string") {
+      try {
+        const response = JSON.parse(value.response.trim());
+        if (isRecord(response)) return response;
+      } catch {
+        throw errorWithCode("Decomposition provider response harus satu dokumen JSON tanpa prose.", "INVALID_DECOMPOSITION_OUTPUT");
+      }
+    }
+  }
   return value;
 }
 
@@ -156,7 +174,8 @@ export function parseDecompositionResult(result) {
   }
   payload = unwrapProviderEnvelope(payload);
   if (!isRecord(payload)) throw errorWithCode("Decomposition provider tidak menghasilkan object JSON.", "INVALID_DECOMPOSITION_OUTPUT");
-  return payload;
+  const { toolAction: _toolAction, toolSummary: _toolSummary, ...contractPayload } = payload;
+  return contractPayload;
 }
 
 function normalizedBudget(budget = {}) {
@@ -349,6 +368,7 @@ export async function decomposeProject({
   const prompt = [
     "=== READ-ONLY PROJECT DECOMPOSITION ===",
     "You are a planning-only provider. Do not edit files, run commands, create tasks, enqueue jobs, execute agents, approve a plan, or invent human identities.",
+    "All repository evidence required for this decision is already supplied below. Do not inspect files or invoke tools.",
     "Return exactly one JSON object matching the supplied schema. Do not wrap it in Markdown or explanatory prose.",
     `The planId must be ${planId}; objectiveId must be ${objective.objectiveId}; revision must be 1; state must be PENDING_APPROVAL.`,
     "approvedBy and approvedAt must remain null. skills must remain an empty array.",

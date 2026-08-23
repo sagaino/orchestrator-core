@@ -59,6 +59,11 @@ const plan = {
 
 assert.equal(decompositionOutputSchema().oneOf.length, 2);
 assert.deepEqual(parseDecompositionResult({ stdoutTail: JSON.stringify(plan) }), plan);
+assert.deepEqual(parseDecompositionResult({ stdoutTail: JSON.stringify({ conversation_id: "fixture", status: "SUCCESS", response: JSON.stringify(plan), error: null }) }), plan);
+assert.deepEqual(parseDecompositionResult({ stdoutTail: JSON.stringify({ conversation_id: "fixture", status: "SUCCESS", response: JSON.stringify({ ...plan, toolAction: "Complete planning", toolSummary: "Finish task" }), error: null }) }), plan);
+assert.deepEqual(parseDecompositionResult({ stdoutTail: JSON.stringify({ conversation_id: "fixture", status: "ERROR", response: "invalid intermediate output", error: "schema retry failed", structured_output: plan }) }), plan);
+assert.throws(() => parseDecompositionResult({ stdoutTail: JSON.stringify({ conversation_id: "fixture", status: "ERROR", response: JSON.stringify(plan), error: "provider tool failed" }) }), (error) => error.code === "PROVIDER_FAILED");
+assert.throws(() => parseDecompositionResult({ stdoutTail: JSON.stringify({ conversation_id: "fixture", status: "SUCCESS", response: `${JSON.stringify(plan)}\n${JSON.stringify(plan)}`, error: null }) }), (error) => error.code === "INVALID_DECOMPOSITION_OUTPUT");
 assert.throws(() => parseDecompositionResult({ stdoutTail: `Here is the plan:\n${JSON.stringify(plan)}` }), (error) => error.code === "INVALID_DECOMPOSITION_OUTPUT");
 assert.throws(() => parseDecompositionResult({ stdoutTail: `${JSON.stringify(plan)}\n${JSON.stringify(plan)}` }), (error) => error.code === "INVALID_DECOMPOSITION_OUTPUT");
 
