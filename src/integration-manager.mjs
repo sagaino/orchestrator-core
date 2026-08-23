@@ -184,7 +184,11 @@ function needsLocalServices({ plan, requests }) {
 function requestedServiceProjectIds({ plan, projects }) {
   const configured = Array.isArray(plan.integration?.localServices) ? plan.integration.localServices : [];
   const ids = configured.map((item) => typeof item === "string" ? item : item?.projectId).filter(Boolean);
-  return ids.length ? projects.filter((project) => ids.includes(project.id)) : projects;
+  if (ids.length) return projects.filter((project) => ids.includes(project.id));
+  return projects.filter((project) => {
+    const devScript = String(getPackageScripts(project.repository).dev ?? "").trim();
+    return devScript && !/(?:^|\s)(?:bash\s+)?(?:\.\/)?start\.sh(?:\s|$)/.test(devScript);
+  });
 }
 
 function repositoryAcceptance({ projects, sourceRuns, verification }) {
@@ -224,7 +228,7 @@ async function runApprovedVerification({ project, script, scope = "PROJECT", ver
     writableRoots: [project.repository],
     readableRoots: [project.repository],
     env: { ...process.env, ORCHESTRATOR_PROJECT_URLS: JSON.stringify(serviceUrls) },
-    allowLoopback: scope === "CROSS_PROJECT",
+    allowLoopback: scope === "CROSS_PROJECT" || /(?:^|:)(?:test|browser|e2e|smoke)(?::|$)/i.test(script),
   });
   return { projectId: project.id, script, scope, command, serviceUrls, ...response, status: response.exitCode === 0 ? "PASS" : "FAIL" };
 }

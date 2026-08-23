@@ -34,7 +34,7 @@ function createFixture() {
     fs.mkdirSync(repository, { recursive: true });
     execFileSync("git", ["-C", repository, "init", "-q"]);
     fs.writeFileSync(path.join(repository, "package.json"), JSON.stringify({
-      scripts: { dev: "node -e pass", test: "node -e pass", "test:contract": "node -e pass", "test:e2e": "node -e pass" },
+      scripts: { dev: projectId === "backend" ? "./start.sh" : "node -e pass", test: "node -e pass", "test:contract": "node -e pass", "test:e2e": "node -e pass" },
     }));
     fs.writeFileSync(path.join(repository, "src.js"), `${projectId}\n`);
     execFileSync("git", ["-C", repository, "config", "user.email", `${projectId}@example.invalid`]);
@@ -133,11 +133,12 @@ const result = await startIntegration({
 });
 assert.equal(result.action, "INTEGRATION_COMPLETED");
 assert.equal(result.integration.state, "PASSED");
-assert.equal(serviceStarts.length, 2);
-assert.equal(serviceStops.length, 2);
+assert.equal(serviceStarts.length, 1);
+assert.equal(serviceStarts[0].projectId, "frontend");
+assert.equal(serviceStops.length, 1);
 assert.equal(verificationCalls.length, 4);
 assert.deepEqual(new Set(verificationCalls.map((input) => input.scope)), new Set(["PROJECT", "CROSS_PROJECT"]));
-assert.ok(verificationCalls.filter((input) => input.scope === "CROSS_PROJECT").every((input) => input.serviceUrls.frontend.startsWith("http://127.0.0.1:") && input.serviceUrls.backend.startsWith("http://127.0.0.1:")));
+assert.ok(verificationCalls.filter((input) => input.scope === "CROSS_PROJECT").every((input) => input.serviceUrls.frontend.startsWith("http://127.0.0.1:") && input.serviceUrls.backend === undefined));
 assert.ok(verificationCalls.filter((input) => input.scope === "CROSS_PROJECT").every((input) => input.command.startsWith("npm run ")));
 
 const evidence = getIntegrationEvidence({ runsRoot: fixture.runsRoot, orchestrationId: fixture.orchestrationId });
