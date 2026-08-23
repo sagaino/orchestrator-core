@@ -44,6 +44,7 @@ import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjec
 import { materializeApprovedPlan } from "./task-materializer.mjs";
 import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
 import { getIntegrationEvidence, recoverIntegration, startIntegration } from "./integration-manager.mjs";
+import { acceptObjective, buildObjectiveEvidence } from "./objective-evidence.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -297,6 +298,38 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       sendJson(res, 200, { success: true, data: orchestrationId ? getIntegrationEvidence({ runsRoot, orchestrationId }) : null });
     } catch (error) {
       sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.get("/api/objectives/:id/evidence", async (req, res, { params }) => {
+    try {
+      sendJson(res, 200, { success: true, data: buildObjectiveEvidence({ runsRoot, objectiveId: params.id }) });
+    } catch (error) {
+      sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/final-acceptance", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk final acceptance objective.", { code: "IDEMPOTENCY_REQUIRED" });
+      const accept = services?.acceptObjective ?? acceptObjective;
+      const result = accept({ runsRoot, objectiveId: params.id, acceptedBy: req.operatorIdentity });
+      appendAuditEntry(runsRoot, {
+        event: result.alreadyAccepted ? "OBJECTIVE_ACCEPTANCE_IDEMPOTENT" : "OBJECTIVE_ACCEPTED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: params.id,
+        orchestrationId: result.evidence?.orchestration?.orchestrationId ?? null,
+        decisionId: result.decision?.decisionId ?? result.evidence?.finalAcceptance?.decisionId ?? null,
+      });
+      eventHub.broadcast(result.alreadyAccepted ? "OBJECTIVE_ACCEPTANCE_IDEMPOTENT" : "OBJECTIVE_ACCEPTED", {
+        objectiveId: params.id,
+        orchestrationId: result.evidence?.orchestration?.orchestrationId ?? null,
+        decisionId: result.decision?.decisionId ?? result.evidence?.finalAcceptance?.decisionId ?? null,
+        state: result.objective?.state ?? result.evidence?.objective?.state ?? null,
+      });
+      sendJson(res, result.alreadyAccepted ? 200 : 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 409, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
   });
 
