@@ -961,7 +961,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 - Backend/dashboard paths: objective graph API, SSE event mapping, new objective graph components, browser tests.
 - Acceptance: reload reconstructs identical graph; updates are idempotent; keyboard and non-color status labels are present; large graphs are bounded/paginated or summarized.
 
-#### V2-071 — Add Decision Inbox
+#### ✅ V2-071 — Add Decision Inbox
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend/dashboard paths: decision store/API, navigation/page/components, tests.
