@@ -122,6 +122,21 @@ try {
   fs.rmSync(preparedDifferentProfile.temporaryRoot, { recursive: true, force: true });
 }
 
+const preparedRestrictedParent = prepareCapabilitySpawn({
+  command: process.execPath,
+  args: ["-e", "process.exit(0)"],
+  cwd: "/tmp",
+  env: { PATH: "/bin", HOME: "/Users/fixture", ORCHESTRATOR_CAPABILITY_SANDBOX: "verification" },
+  capabilityProfile: "agent",
+});
+try {
+  assert.equal(preparedRestrictedParent.command, process.execPath);
+  assert.equal(preparedRestrictedParent.inheritedSandbox, true);
+  assert.equal(preparedRestrictedParent.inheritedProfile, "verification");
+} finally {
+  fs.rmSync(preparedRestrictedParent.temporaryRoot, { recursive: true, force: true });
+}
+
 const knownSecret = "phase42-known-secret-value";
 assert.equal(redactText(`Bearer ${knownSecret}`, { env: { TEST_TOKEN: knownSecret } }), "Bearer [REDACTED]");
 assert.deepEqual(redactSensitive({ password: knownSecret, nested: `token=${knownSecret}` }, { env: { TEST_TOKEN: knownSecret } }), {
