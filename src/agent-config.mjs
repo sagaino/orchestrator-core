@@ -8,6 +8,8 @@ export const DEFAULT_AGY_EFFORT = "high";
 export const STAGE_DEFAULT_EFFORTS = Object.freeze({
   "task-intake": "low",
   "TASK_INTAKE": "low",
+  "project-decomposition": "medium",
+  "PROJECT_DECOMPOSITION": "medium",
   "retrospective": "low",
   "RETROSPECTIVE": "low",
   "knowledge-classification": "low",

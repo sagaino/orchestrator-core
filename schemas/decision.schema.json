@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "personal-ai-os/decision/v1",
+  "type": "object",
+  "required": ["schemaVersion", "revision", "decisionId", "objectiveId", "type", "state", "evidence", "requestedAction", "allowedChoices", "creator", "createdAt", "resolution"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "revision": { "type": "integer", "minimum": 0 },
+    "decisionId": { "type": "string", "minLength": 1 },
+    "objectiveId": { "type": "string", "minLength": 1 },
+    "nodeId": { "type": ["string", "null"] },
+    "runId": { "type": ["string", "null"] },
+    "type": { "type": "string" },
+    "state": { "enum": ["OPEN", "RESOLVED", "CANCELLED"] },
+    "evidence": { "type": ["object", "array"] },
+    "requestedAction": { "type": "string", "minLength": 1 },
+    "allowedChoices": { "type": "array", "minItems": 1, "uniqueItems": true },
+    "creator": { "const": "SYSTEM" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "resolution": { "type": ["object", "null"] }
+  }
+}

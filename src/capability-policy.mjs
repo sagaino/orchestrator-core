@@ -26,6 +26,7 @@ export function capabilityForStage(stage = "") {
     || value === "review_revision"
     || value === "automatic_recovery"
     || value === "task-intake-planner"
+    || value === "project-decomposition"
     || value === "retrospective"
     || value === "knowledge-classification"
     || value === "knowledge-ingest"

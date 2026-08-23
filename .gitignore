@@ -4,7 +4,10 @@ native/macos-notifier/build/
 *.log
 .DS_Store
 graphify-out
-docs/
+docs/*
+!docs/AI_OS_V2_ORCHESTRATION_IMPLEMENTATION_PLAN.md
+!docs/AI_OS_V2_SCOPE.md
+!docs/AI_OS_V2_THREAT_MODEL.md
 
 # Environment Variables
 .env
