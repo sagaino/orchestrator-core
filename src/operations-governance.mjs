@@ -5,6 +5,7 @@ import { daemonStatus } from "./daemon.mjs";
 import { listJobs, JOB_STATES } from "./job-queue.mjs";
 import { listRuns } from "./run-manager.mjs";
 import { verifyAuditChain } from "./audit-chain.mjs";
+import { summarizeOperationsArtifacts } from "./operations-artifacts.mjs";
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
@@ -202,6 +203,7 @@ export function recordRecoveryDrill({ runsRoot, drillId = `drill-${randomUUID()}
     rtoMinutes: normalizedRtoMinutes,
     intervalDays: normalizedIntervalDays,
     nextDueAt: new Date(now.getTime() + normalizedIntervalDays * 24 * 60 * 60 * 1000).toISOString(),
+    artifactCoverage: summarizeOperationsArtifacts({ runsRoot }),
   };
   writePrivateJson(recoveryDrillPath(runsRoot), record);
   return record;
@@ -223,6 +225,7 @@ export function recoveryDrillStatus({ runsRoot, now = new Date(), config = opera
     dueAt: dueAt.toISOString(),
     overdueByMs,
     intervalDays,
+    artifactCoverage: record.artifactCoverage ?? null,
   };
 }
 
@@ -239,6 +242,7 @@ export function recordVerifiedBackup({ runsRoot, backupPath, verification, manif
     completedAt: manifest.completedAt,
     fileCount: verification.fileCount,
     totalBytes: verification.totalBytes,
+    artifactCoverage: manifest.artifactCoverage ?? verification.artifactCoverage ?? null,
     independentTarget: independentTarget === null
       ? (sourceRoots.length > 0 ? sourceRoots.every((sourceRoot) => {
         const relative = path.relative(path.resolve(sourceRoot), path.resolve(backupPath));
@@ -350,6 +354,7 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
 
   const runtime = measureTree(runsRoot);
   const artifacts = measureTree(path.join(runsRoot, "workspace-artifacts"));
+  const artifactCoverage = summarizeOperationsArtifacts({ runsRoot });
   checks.push(runtime.bytes > config.maxRuntimeBytes
     ? check({ id: "runtime-storage", status: "FAIL", severity: "CRITICAL", message: "Ukuran runtime melewati kuota operasi.", action: "Buat retention preview dan pindahkan artefak yang disetujui ke trash.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#retention", metrics: { bytes: runtime.bytes, maximumBytes: config.maxRuntimeBytes } })
     : artifacts.bytes > config.maxArtifactBytes
@@ -411,7 +416,7 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
       resolutionEvidenceRequired: true,
     };
   });
-  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, backupSchedule: { configured: Boolean(backupSchedule), launchctlActivated: backupSchedule?.launchctlActivated === true, intervalHours: backupSchedule?.intervalHours ?? null }, recoveryDrill: drill, runtime, artifacts, queue: { queued: queued.length, oldestAgeMs: queueAgeMs }, failures: { deadlineFailures, providerFailures } } };
+  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, backupSchedule: { configured: Boolean(backupSchedule), launchctlActivated: backupSchedule?.launchctlActivated === true, intervalHours: backupSchedule?.intervalHours ?? null }, recoveryDrill: drill, runtime, artifacts, artifactCoverage, queue: { queued: queued.length, oldestAgeMs: queueAgeMs }, failures: { deadlineFailures, providerFailures } } };
 }
 
 export function assertOperationalReadiness({ runsRoot, now, config } = {}) {
@@ -449,7 +454,8 @@ export function previewRetention({ runsRoot, olderThanDays = 30, now = new Date(
       candidates.push({ category, name: entry.name, relativePath: entry.name, modifiedAt: stat.mtime.toISOString(), bytes: measured.bytes, fileCount: measured.files });
     }
   }
-  const plan = { schemaVersion: 1, planId: `retention-${randomUUID()}`, status: "PREVIEWED", createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + PLAN_TTL_MS).toISOString(), olderThanDays: days, candidates, summary: { candidateCount: candidates.length, bytes: candidates.reduce((sum, item) => sum + item.bytes, 0), fileCount: candidates.reduce((sum, item) => sum + item.fileCount, 0) } };
+  const artifactCoverage = summarizeOperationsArtifacts({ runsRoot });
+  const plan = { schemaVersion: 1, planId: `retention-${randomUUID()}`, status: "PREVIEWED", createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + PLAN_TTL_MS).toISOString(), olderThanDays: days, candidates, artifactCoverage, protection: { activeStateNeverPurged: true, protectedActiveRecordCount: artifactCoverage.protectedActiveRecordCount, protectedActivePaths: artifactCoverage.protectedActivePaths }, summary: { candidateCount: candidates.length, bytes: candidates.reduce((sum, item) => sum + item.bytes, 0), fileCount: candidates.reduce((sum, item) => sum + item.fileCount, 0) } };
   writePrivateJson(retentionPlanPath(runsRoot, plan.planId), plan);
   return plan;
 }

@@ -7,6 +7,7 @@ import { listRuns, RUN_STATES } from "./run-manager.mjs";
 import { normalizeSafeRelativePath } from "./security.mjs";
 import { recoveryModePath } from "./recovery-mode.mjs";
 import { readBackupStatus, recordVerifiedBackup } from "./operations-governance.mjs";
+import { assertBackupArtifactCoverage, summarizeOperationsArtifacts } from "./operations-artifacts.mjs";
 
 export const DR_SCHEMA_VERSION = 1;
 export const DR_RPO_TARGET_HOURS = 24;
@@ -186,6 +187,7 @@ export function createDisasterRecoveryBackup({
         excludeTopLevel: new Set(["disaster-recovery"]),
       }),
     ];
+    const artifactCoverage = summarizeOperationsArtifacts({ runsRoot });
     const completedAt = new Date();
     const manifest = {
       schemaVersion: DR_SCHEMA_VERSION,
@@ -218,6 +220,7 @@ export function createDisasterRecoveryBackup({
         runtimeToken: "runs/runtime/api-token.json",
       },
       datasets,
+      artifactCoverage,
       summary: {
         datasetCount: datasets.length,
         fileCount: datasets.reduce((sum, item) => sum + item.fileCount, 0),
@@ -237,6 +240,7 @@ export function createDisasterRecoveryBackup({
       consistency: manifest.consistency,
       recovery: manifest.recovery,
       configurationSnapshot: manifest.configurationSnapshot,
+      artifactCoverage: manifest.artifactCoverage,
       summary: manifest.summary,
       backupPath,
       manifestPath: path.join(backupPath, "manifest.json"),
@@ -282,6 +286,7 @@ export function verifyDisasterRecoveryBackup({ backupPath } = {}) {
   }
   const startedAtMs = Date.now();
   const manifest = readAndValidateManifest(backupPath);
+  const artifactCoverage = assertBackupArtifactCoverage({ manifest, backupPath });
   let fileCount = 0;
   let totalBytes = 0;
   for (const dataset of manifest.datasets) {
@@ -318,6 +323,7 @@ export function verifyDisasterRecoveryBackup({ backupPath } = {}) {
     durationMs: Date.now() - startedAtMs,
     fileCount,
     totalBytes,
+    artifactCoverage,
   };
   Object.defineProperty(result, "manifest", { value: manifest, enumerable: false });
   return result;

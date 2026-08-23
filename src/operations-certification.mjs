@@ -48,6 +48,13 @@ function resourceTrendCheck({ readiness, soak, capacity }) {
   return result("RESOURCE_CAPACITY_TREND", passed, passed ? "Resource trend remains within declared capacity." : "Resource trend exceeded declared capacity or reported failures.", { artifactBytes, maxArtifactBytes, apiFailures, sseRejected, readinessChecks: resourceChecks });
 }
 
+function artifactCoverageCheck({ readiness, soak }) {
+  const coverage = soak?.workload?.artifactCoverage ?? readiness?.signals?.artifactCoverage ?? null;
+  if (!coverage) return result("OPERATIONS_ARTIFACT_COVERAGE", true, "Artifact coverage evidence belum diperlukan oleh fixture ini.");
+  const passed = coverage.complete === true && coverage.activeStateNeverPurged === true;
+  return result("OPERATIONS_ARTIFACT_COVERAGE", passed, passed ? "Durable orchestration dan integration artifacts memiliki coverage evidence; active state protected." : "Artifact coverage tidak lengkap atau active state protection tidak terbukti.", { complete: coverage.complete, activeStateNeverPurged: coverage.activeStateNeverPurged, protectedActiveRecordCount: coverage.protectedActiveRecordCount ?? 0, requiredCollections: coverage.requiredCollections ?? [] });
+}
+
 export function createOperationsCertification({
   runsRoot,
   vaultRoot,
@@ -85,6 +92,7 @@ export function createOperationsCertification({
     result("KNOWLEDGE_INTEGRITY", Number(knowledge?.summary?.errors ?? 0) === 0 && knowledge?.verdict !== "FAIL", "Knowledge health has no unresolved integrity error.", { verdict: knowledge?.verdict ?? "MISSING", errors: knowledge?.summary?.errors ?? null, warnings: knowledge?.summary?.warnings ?? null }),
     result("AUDIT_INTEGRITY", audit?.valid === true, "Audit chain is valid.", { valid: audit?.valid ?? false, errors: audit?.errors ?? [] }),
     resourceTrendCheck({ readiness, soak, capacity }),
+    artifactCoverageCheck({ readiness, soak }),
   ];
   const blockers = checks.filter((item) => item.status !== "PASS").map((item) => item.id);
   const certificationId = `p85-ops-${now.toISOString().replace(/[-:.]/g, "").replace("Z", "Z")}-${randomUUID().slice(0, 8)}`;
@@ -98,7 +106,7 @@ export function createOperationsCertification({
     blockers,
     checks,
     operations: { readinessStatus: readiness.status, admissionAllowed: readiness.admission.allowed, alerts: readiness.alerts ?? [], signals: readiness.signals ?? {} },
-    evidence: { soakReportPath: soakReportPath ? path.resolve(soakReportPath) : null, soakSummary: soak ? { status: soak.status, virtualWindow: soak.virtualWindow, invariants: soak.invariants } : null, backup, backupVerification, recoveryDrill: drill, knowledge: { verdict: knowledge?.verdict ?? null, summary: knowledge?.summary ?? null }, audit, capacity },
+    evidence: { soakReportPath: soakReportPath ? path.resolve(soakReportPath) : null, soakSummary: soak ? { status: soak.status, virtualWindow: soak.virtualWindow, invariants: soak.invariants, artifactCoverage: soak.workload?.artifactCoverage ?? null } : null, backup, backupVerification, recoveryDrill: drill, knowledge: { verdict: knowledge?.verdict ?? null, summary: knowledge?.summary ?? null }, audit, capacity },
     nextAction: blockers.length ? "Resolve certification blockers and rerun P8.5." : "Human must review this bundle and explicitly accept P8.5.",
   };
   const persisted = writeBundle(path.join(certificationDirectory(runsRoot), `${certificationId}.json`), bundle);

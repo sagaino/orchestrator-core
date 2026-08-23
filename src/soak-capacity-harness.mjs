@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { createEventHub } from "./api/events.mjs";
 import { createOrchestratorServer } from "./server.mjs";
 import { enqueueTaskJob, listJobs } from "./job-queue.mjs";
+import { summarizeOperationsArtifacts } from "./operations-artifacts.mjs";
 
 const HARNESS_SCHEMA_VERSION = 1;
 const DEFAULT_MAX_STEPS = 288;
@@ -224,6 +225,7 @@ export async function runSoakCapacityHarness({
   const missingJobIds = [...expectedJobIds].filter((jobId) => !persistedJobIds.has(jobId));
   const nonQueuedJobs = jobs.filter((job) => job.state !== "QUEUED");
   const artifacts = measureTree(path.join(actualRunsRoot, "workspace-artifacts"));
+  const artifactCoverage = summarizeOperationsArtifacts({ runsRoot: actualRunsRoot });
   const sseOverflow = sse.some((client) => client.overflow);
   const invariants = [
     invariant("NO_DUPLICATE_INVOCATION", duplicateAdmissions === 0, { duplicateAdmissionAttempts, duplicateAdmissions }),
@@ -231,6 +233,7 @@ export async function runSoakCapacityHarness({
     invariant("NO_SILENT_APPROVAL", nonQueuedJobs.length === 0, { nonQueuedJobs: nonQueuedJobs.map((job) => ({ jobId: job.jobId, state: job.state })) }),
     invariant("BOUNDED_CLIENT_AND_OUTPUT", sseRejected === 0 && !sseOverflow && artifacts.bytes <= normalizedMaxArtifactBytes && apiFailures === 0, { sseClients: normalizedSseClients, sseRejected, sseOverflow, sseBytes, artifactBytes: artifacts.bytes, maxArtifactBytes: normalizedMaxArtifactBytes, apiFailures }),
     invariant("RECOVERABLE_STATE", errors.length === 0 && missingJobIds.length === 0, { restartCount, errors: errors.slice(0, 10) }),
+    invariant("OPERATIONS_ARTIFACT_COVERAGE", artifactCoverage.complete && artifactCoverage.activeStateNeverPurged, { complete: artifactCoverage.complete, requiredCollections: artifactCoverage.requiredCollections, protectedActiveRecordCount: artifactCoverage.protectedActiveRecordCount }),
   ];
   const report = {
     schemaVersion: HARNESS_SCHEMA_VERSION,
@@ -239,7 +242,7 @@ export async function runSoakCapacityHarness({
     generatedAt: new Date().toISOString(),
     virtualWindow: { durationHours: normalizedDurationHours, stepMinutes: normalizedStepMinutes, steps: stepCount, simulatedStart: now.toISOString(), simulatedEnd: new Date(now.getTime() + normalizedDurationHours * 60 * 60 * 1000).toISOString() },
     capacity: { workers: normalizedWorkers, apiRequestsPerStep: normalizedApiRequests, sseClients: normalizedSseClients, restartEverySteps: normalizedRestartEvery, maxSteps: normalizedMaxSteps, maxResponseBytes: normalizedMaxResponseBytes, maxArtifactBytes: normalizedMaxArtifactBytes },
-    workload: { createdJobs: createdJobIds.size, duplicateAdmissionAttempts, duplicateAdmissions, restarts: restartCount, apiRequests, apiFailures, maxApiDurationMs: apiDurationsMs.length ? Math.max(...apiDurationsMs) : 0, sseConnections: normalizedSseClients * (restartCount + 1), sseRejected, sseBytes, alerts: [...alerts.values()], artifacts },
+    workload: { createdJobs: createdJobIds.size, duplicateAdmissionAttempts, duplicateAdmissions, restarts: restartCount, apiRequests, apiFailures, maxApiDurationMs: apiDurationsMs.length ? Math.max(...apiDurationsMs) : 0, sseConnections: normalizedSseClients * (restartCount + 1), sseRejected, sseBytes, alerts: [...alerts.values()], artifacts, artifactCoverage },
     invariants,
     errors: errors.slice(0, 50),
     guardrails: { syntheticJobsExecuted: false, providerInvocations: 0, automaticApproval: false, automaticRestore: false, permanentDelete: false },
