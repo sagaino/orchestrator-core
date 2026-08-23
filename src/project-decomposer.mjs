@@ -102,8 +102,8 @@ export function decompositionPlanSchema() {
         additionalProperties: false,
         properties: {
           required: { type: "boolean" },
-          projectVerification: { type: "array" },
-          crossProjectVerification: { type: "array" },
+          projectVerification: { type: "array", items: { type: "string", minLength: 1 } },
+          crossProjectVerification: { type: "array", items: { type: "string", minLength: 1 } },
           previewRequired: { type: "boolean" },
         },
       },
@@ -283,6 +283,39 @@ function validateParsedPlan(plan, objective, budget, projectContexts = []) {
   const graphValidation = validateTaskGraph(plan.nodes);
   errors.push(...schemaValidation.errors, ...graphValidation.errors.map((message) => `graph: ${message}`));
 
+  const expectedProjectSet = new Set(expectedProjects);
+  const scriptsByProject = new Map(projectContexts.map((project) => [
+    String(project.projectId ?? project.id),
+    new Set((project.verificationScripts ?? project.verification ?? []).map(String)),
+  ]));
+  const validateIntegrationScripts = (field, { requireEveryProject = false, requireAtLeastOne = false } = {}) => {
+    const values = plan.integration?.[field];
+    if (!Array.isArray(values)) return;
+    if (requireAtLeastOne && values.length === 0) errors.push(`plan.integration.${field} wajib memuat approved scoped script`);
+    const covered = new Set();
+    for (const [index, value] of values.entries()) {
+      if (typeof value !== "string" || !value.trim()) {
+        errors.push(`plan.integration.${field}[${index}] harus string projectId:script`);
+        continue;
+      }
+      const match = expectedProjects.find((projectId) => value.startsWith(`${projectId}:`));
+      if (!match || !expectedProjectSet.has(match)) {
+        errors.push(`plan.integration.${field}[${index}] harus scoped sebagai projectId:script`);
+        continue;
+      }
+      const script = value.slice(match.length + 1).trim();
+      if (!script || !scriptsByProject.get(match)?.has(script)) errors.push(`plan.integration.${field}[${index}] menggunakan verification script tidak terdaftar: ${value}`);
+      covered.add(match);
+    }
+    if (requireEveryProject) {
+      for (const projectId of expectedProjects) if (!covered.has(projectId)) errors.push(`plan.integration.${field} belum mencakup project ${projectId}`);
+    }
+  };
+  if (plan.integration?.required === true) {
+    validateIntegrationScripts("projectVerification", { requireEveryProject: expectedProjects.length > 1, requireAtLeastOne: true });
+    validateIntegrationScripts("crossProjectVerification", { requireAtLeastOne: String(objective.mode).toUpperCase() === "CROSS_PROJECT_INCIDENT" });
+  }
+
   const estimatedTokens = Number.isInteger(plan.estimatedTokens) ? plan.estimatedTokens : estimateTokenCount(JSON.stringify(plan));
   if (budget.maxTotalTokens !== null && estimatedTokens > budget.maxTotalTokens) {
     errors.push(`plan estimated tokens exceed budget: ${estimatedTokens} > ${budget.maxTotalTokens}`);
@@ -375,6 +408,7 @@ export async function decomposeProject({
     `The only allowed project IDs are: ${JSON.stringify(sortedProjectIds(objective.projectIds))}.`,
     `Budget ceilings: ${JSON.stringify(budget)}. Never exceed them silently.`,
     "If a safe decomposition is impossible without a human answer, return only the clarification JSON shape with clarificationNeeded=true and a precise clarificationQuestion.",
+    "integration.projectVerification and integration.crossProjectVerification may contain only approved scoped strings in the exact form projectId:script; never use objects, prose, acceptance criteria, or shell commands. For multi-project integration include at least one projectVerification entry per project and at least one crossProjectVerification entry.",
     ...(crossProjectDiagnosis ? [
       "The cross-project diagnostic is authoritative for implicated-project boundaries.",
       `Do not create implementation nodes outside these implicated projects: ${JSON.stringify(crossProjectDiagnosis.implicatedProjects)}.`,

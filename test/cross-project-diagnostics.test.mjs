@@ -188,7 +188,7 @@ const contractPlan = {
       skills: [],
     },
   ],
-  integration: { required: true, projectVerification: ["test:frontend", "test:backend"], crossProjectVerification: ["test:contract"], previewRequired: true },
+  integration: { required: true, projectVerification: ["frontend:test:frontend", "backend:test:backend"], crossProjectVerification: ["backend:test:contract"], previewRequired: true },
   risk: "MEDIUM",
   complexity: "HIGH",
   approvedBy: null,

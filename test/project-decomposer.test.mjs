@@ -49,7 +49,7 @@ const plan = {
     contextFrom: [],
     skills: [],
   }],
-  integration: { required: true, projectVerification: ["test"], crossProjectVerification: [], previewRequired: true },
+  integration: { required: true, projectVerification: ["shop:test"], crossProjectVerification: [], previewRequired: true },
   risk: "MEDIUM",
   complexity: "MEDIUM",
   approvedBy: null,
