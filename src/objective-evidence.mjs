@@ -124,6 +124,18 @@ export function buildObjectiveEvidence({ runsRoot, objectiveId } = {}) {
     ...nodes.map(blockerForNode).filter(Boolean),
     ...openDecisions.map((decision) => ({ id: decision.decisionId, kind: "DECISION", decisionId: decision.decisionId, state: decision.state, message: decision.requestedAction })),
   ];
+  if (objective.mode === "CROSS_PROJECT_INCIDENT") {
+    const repositoryAcceptance = Array.isArray(integration?.repositoryAcceptance) ? integration.repositoryAcceptance : [];
+    for (const projectId of objective.projectIds ?? []) {
+      const acceptance = repositoryAcceptance.find((item) => item.projectId === projectId);
+      if (!acceptance || acceptance.acceptance?.status !== "PASS") {
+        blockers.push({ id: `repository-${projectId}`, kind: "REPOSITORY_ACCEPTANCE", projectId, state: acceptance?.acceptance?.status ?? "MISSING", message: `Per-repository acceptance untuk ${projectId} belum lulus.` });
+      }
+    }
+    if (integration?.crossProjectVerification?.required && integration.crossProjectVerification.status !== "PASS") {
+      blockers.push({ id: "cross-project-verification", kind: "CROSS_PROJECT_VERIFICATION", state: integration.crossProjectVerification.status, message: "Cross-project contract/E2E verification belum lulus." });
+    }
+  }
   const runVerification = nodes.flatMap((node) => node.verification);
   const integrationVerification = Array.isArray(integration?.verification)
     ? integration.verification

@@ -929,7 +929,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - contract mismatch creates coordinated FE/BE nodes plus a contract verification node.
 - Verification: mocked FE-only, BE-only, both, contract, and unknown fixtures.
 
-#### V2-063 — Add cross-project verification
+#### ✅ V2-063 — Add cross-project verification
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: integration manager, dev-server and visual-evidence aggregation, API DTOs, tests.

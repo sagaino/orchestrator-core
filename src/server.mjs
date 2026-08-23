@@ -64,6 +64,17 @@ function validateRouteIdentifiers(params) {
   }
 }
 
+function integrationEvidenceDto(evidence) {
+  if (!evidence) return null;
+  return {
+    ...evidence,
+    projectBaselines: evidence.projectBaselines ?? {},
+    services: Array.isArray(evidence.services) ? evidence.services : [],
+    repositoryAcceptance: Array.isArray(evidence.repositoryAcceptance) ? evidence.repositoryAcceptance : [],
+    crossProjectVerification: evidence.crossProjectVerification ?? { required: false, status: "NOT_REQUIRED", results: [] },
+  };
+}
+
 export function idempotencyScopeKey({ key, method, requestTarget, rawBody = "" }) {
   const normalizedKey = String(key ?? "").trim();
   if (!normalizedKey || normalizedKey.length > 200) {
@@ -296,7 +307,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
     try {
       const objective = getObjective(runsRoot, params.id);
       const orchestrationId = objective?.activeOrchestrationId;
-      sendJson(res, 200, { success: true, data: orchestrationId ? getIntegrationEvidence({ runsRoot, orchestrationId }) : null });
+      sendJson(res, 200, { success: true, data: orchestrationId ? integrationEvidenceDto(getIntegrationEvidence({ runsRoot, orchestrationId })) : null });
     } catch (error) {
       sendError(res, error.statusCode || 404, error.message, error.details);
     }

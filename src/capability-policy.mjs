@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 const BASE_ENV = Object.freeze([
-  "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "SHELL", "USER", "LOGNAME", "NO_COLOR",
+  "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "SHELL", "USER", "LOGNAME", "NO_COLOR", "ORCHESTRATOR_PROJECT_URLS",
 ]);
 const PROVIDER_ENV = Object.freeze([
   "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
