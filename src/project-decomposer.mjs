@@ -5,6 +5,7 @@ import { buildStageContext, estimateTokenCount } from "./context-compactor.mjs";
 import { validatePlanRecord } from "./orchestration-schema.mjs";
 import { validateTaskGraph } from "./task-graph.mjs";
 import { runProcess } from "./executor.mjs";
+import { diagnoseCrossProject, validateCrossProjectPlan } from "./cross-project-diagnostics.mjs";
 
 export const PROJECT_DECOMPOSITION_STAGE = "project-decomposition";
 export const PROJECT_DECOMPOSITION_REVISION = 1;
@@ -181,7 +182,7 @@ function boundedProjectContexts(projectContexts = []) {
   }));
 }
 
-export function buildDecompositionContext({ objective, projectContexts = [], knowledge = [], graphifyContext = "", budgets = {} } = {}) {
+export function buildDecompositionContext({ objective, projectContexts = [], knowledge = [], graphifyContext = "", crossProjectDiagnosis = null, budgets = {} } = {}) {
   const boundedProjects = boundedProjectContexts(projectContexts);
   const budget = normalizedBudget(objective?.budget);
   return buildStageContext({
@@ -200,6 +201,12 @@ export function buildDecompositionContext({ objective, projectContexts = [], kno
         budget,
       }),
       projects: JSON.stringify(boundedProjects),
+      crossProjectDiagnosis: crossProjectDiagnosis ? JSON.stringify({
+        outcome: crossProjectDiagnosis.outcome,
+        summary: crossProjectDiagnosis.summary,
+        evidence: crossProjectDiagnosis.evidence,
+        implicatedProjects: crossProjectDiagnosis.implicatedProjects,
+      }) : "",
     },
     knowledge,
     budgets,
@@ -296,7 +303,37 @@ export async function decomposeProject({
   const risk = String(objective.risk ?? "UNKNOWN").toUpperCase();
   const route = resolveAgentRoute({ stage: PROJECT_DECOMPOSITION_STAGE, risk, complexity });
   const agentConfig = resolveAgyConfig(env, PROJECT_DECOMPOSITION_STAGE, { risk, complexity });
-  const context = buildDecompositionContext({ objective, projectContexts, knowledge, graphifyContext, budgets: contextBudgets });
+  let crossProjectDiagnosis = null;
+  let diagnosticMetadata = null;
+  if (String(objective.mode ?? "").toUpperCase() === "CROSS_PROJECT_INCIDENT") {
+    const diagnostic = await diagnoseCrossProject({
+      objective,
+      projectContexts,
+      relationshipContext: objective.relationshipContext ?? "",
+      graphifyContext,
+      knowledge,
+      runsRoot,
+      processRunner,
+      now,
+      env,
+      contextBudgets,
+    });
+    crossProjectDiagnosis = diagnostic.diagnosis;
+    diagnosticMetadata = {
+      status: diagnostic.status,
+      invocationId: diagnostic.invocationId,
+      route: diagnostic.route,
+      context: diagnostic.context,
+    };
+    if (diagnostic.status === "NEEDS_CLARIFICATION") {
+      return {
+        ...diagnostic,
+        diagnostic: diagnostic.diagnosis,
+        decomposition: diagnosticMetadata,
+      };
+    }
+  }
+  const context = buildDecompositionContext({ objective, projectContexts, knowledge, graphifyContext, crossProjectDiagnosis, budgets: contextBudgets });
   const invocationId = `decomposition-${objective.objectiveId}-r${PROJECT_DECOMPOSITION_REVISION}`;
   const eventLogPath = runsRoot ? path.join(runsRoot, "events", `${invocationId}.jsonl`) : undefined;
   const planId = `plan-${objective.objectiveId}-r${PROJECT_DECOMPOSITION_REVISION}`;
@@ -309,6 +346,11 @@ export async function decomposeProject({
     `The only allowed project IDs are: ${JSON.stringify(sortedProjectIds(objective.projectIds))}.`,
     `Budget ceilings: ${JSON.stringify(budget)}. Never exceed them silently.`,
     "If a safe decomposition is impossible without a human answer, return only the clarification JSON shape with clarificationNeeded=true and a precise clarificationQuestion.",
+    ...(crossProjectDiagnosis ? [
+      "The cross-project diagnostic is authoritative for implicated-project boundaries.",
+      `Do not create implementation nodes outside these implicated projects: ${JSON.stringify(crossProjectDiagnosis.implicatedProjects)}.`,
+      `Diagnostic outcome: ${crossProjectDiagnosis.outcome}. Evidence must remain reflected in node purposes or acceptance criteria.`,
+    ] : []),
     "",
     "=== BOUNDED OBJECTIVE CONTEXT ===",
     context.text,
@@ -344,6 +386,9 @@ export async function decomposeProject({
   if (parsed.clarificationNeeded === true) return clarificationResult(parsed, metadata);
 
   const validation = validateParsedPlan(parsed, objective, budget);
+  if (!validation.errors.length && crossProjectDiagnosis) {
+    validation.errors.push(...validateCrossProjectPlan(parsed, crossProjectDiagnosis, objective));
+  }
   if (validation.errors.length) {
     throw errorWithCode(`Decomposition plan invalid: ${validation.errors.join("; ")}`, "INVALID_PLAN", {
       validation: validation.errors,
@@ -357,6 +402,8 @@ export async function decomposeProject({
     clarificationNeeded: false,
     clarificationQuestion: null,
     plan: parsed,
+    diagnostic: crossProjectDiagnosis,
+    decomposition: diagnosticMetadata,
     readOnly: true,
     planning: { started: true, readOnly: true, tasksCreated: 0, jobsCreated: 0, runsCreated: 0 },
     ...metadata,

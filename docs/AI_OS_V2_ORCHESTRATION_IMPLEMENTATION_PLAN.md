@@ -910,7 +910,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - relationship editing uses the explicit confirmation API and displays audit errors.
 - Verification: dashboard `npm run test:verify`.
 
-#### V2-062 — Add cross-project diagnostic phase
+#### ✅ V2-062 — Add cross-project diagnostic phase
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: new `src/cross-project-diagnostics.mjs`, decomposer, context compactor, tests.
