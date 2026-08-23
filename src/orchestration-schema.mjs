@@ -114,6 +114,24 @@ export function validateObjectiveRecord(objective) {
     add(errors, typeof objective.freshProject.targetDirectory === "string" && objective.freshProject.targetDirectory.length > 0, "objective.freshProject.targetDirectory must be non-empty");
     add(errors, objective.freshProject.blueprint === "frontend-vite", "objective.freshProject.blueprint is unsupported");
   }
+  add(errors, objective.attachments === undefined || Array.isArray(objective.attachments), "objective.attachments must be an array");
+  for (const [index, attachment] of (objective.attachments ?? []).entries()) {
+    add(errors, isRecord(attachment), `objective.attachments[${index}] must be an object`);
+    if (!isRecord(attachment)) continue;
+    add(errors, ["MOCKUP", "PROJECT_ASSET"].includes(attachment.type), `objective.attachments[${index}].type is unsupported`);
+    add(errors, nonEmptyString(attachment.fileName), `objective.attachments[${index}].fileName must be non-empty`);
+    add(errors, attachment.relativeVaultPath === null || attachment.relativeVaultPath === undefined || nonEmptyString(attachment.relativeVaultPath), `objective.attachments[${index}].relativeVaultPath must be null or non-empty`);
+    add(errors, attachment.relativeProjectPath === null || attachment.relativeProjectPath === undefined || nonEmptyString(attachment.relativeProjectPath), `objective.attachments[${index}].relativeProjectPath must be null or non-empty`);
+    add(errors, attachment.sizeBytes === null || attachment.sizeBytes === undefined || nonNegativeInteger(attachment.sizeBytes), `objective.attachments[${index}].sizeBytes must be null or non-negative`);
+  }
+  if (objective.planning !== undefined) {
+    add(errors, isRecord(objective.planning), "objective.planning must be an object");
+    if (isRecord(objective.planning)) {
+      add(errors, objective.planning.status === "NEEDS_CLARIFICATION", "objective.planning.status is unsupported");
+      add(errors, nonEmptyString(objective.planning.clarificationQuestion), "objective.planning.clarificationQuestion must be non-empty");
+      add(errors, isoDate(objective.planning.requestedAt), "objective.planning.requestedAt must be an ISO timestamp");
+    }
+  }
   add(errors, objective.activePlanId === null || identifier(objective.activePlanId), "objective.activePlanId must be null or a stable identifier");
   add(errors, objective.activeOrchestrationId === null || identifier(objective.activeOrchestrationId), "objective.activeOrchestrationId must be null or a stable identifier");
   validateBudget(objective.budget, "objective.budget", errors);

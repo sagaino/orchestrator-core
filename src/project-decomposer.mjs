@@ -201,6 +201,12 @@ export function buildDecompositionContext({ objective, projectContexts = [], kno
         mode: objective?.mode ?? null,
         projectIds: objective?.projectIds ?? [],
         budget,
+        attachments: (objective?.attachments ?? []).slice(0, 20).map((attachment) => ({
+          type: attachment.type,
+          fileName: boundedText(attachment.fileName, 255),
+          relativeVaultPath: boundedText(attachment.relativeVaultPath, 500) || null,
+          relativeProjectPath: boundedText(attachment.relativeProjectPath, 500) || null,
+        })),
       }),
       projects: JSON.stringify(boundedProjects),
       crossProjectDiagnosis: crossProjectDiagnosis ? JSON.stringify({
@@ -224,7 +230,7 @@ function unexpectedKeys(record, allowed, label) {
   return Object.keys(record).filter((key) => !allowed.has(key)).map((key) => `${label} contains unsupported field: ${key}`);
 }
 
-function validateParsedPlan(plan, objective, budget) {
+function validateParsedPlan(plan, objective, budget, projectContexts = []) {
   const expectedObjectiveId = String(objective.objectiveId ?? "").trim();
   const expectedProjects = sortedProjectIds(objective.projectIds);
   const errors = [];
@@ -250,6 +256,7 @@ function validateParsedPlan(plan, objective, budget) {
 
   const schemaValidation = validatePlanRecord({ ...plan, nodes: Array.isArray(plan.nodes) ? plan.nodes : [] }, {
     knownProjectIds: expectedProjects,
+    projectVerificationScripts: Object.fromEntries(projectContexts.map((project) => [project.projectId ?? project.id, project.verificationScripts ?? project.verification ?? []])),
     maxSubtasks: budget.maxSubtasks,
     maxParallelAgents: budget.maxParallelAgents,
     maxTotalTokens: budget.maxTotalTokens ?? undefined,
@@ -387,7 +394,7 @@ export async function decomposeProject({
   };
   if (parsed.clarificationNeeded === true) return clarificationResult(parsed, metadata);
 
-  const validation = validateParsedPlan(parsed, objective, budget);
+  const validation = validateParsedPlan(parsed, objective, budget, projectContexts);
   if (!validation.errors.length && crossProjectDiagnosis) {
     validation.errors.push(...validateCrossProjectPlan(parsed, crossProjectDiagnosis, objective));
   }

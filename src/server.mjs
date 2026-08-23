@@ -52,6 +52,7 @@ import { acceptObjective, buildObjectiveEvidence } from "./objective-evidence.mj
 import { buildObjectiveVisualEvidence } from "./objective-visual-evidence.mjs";
 import { acceptDeliveryCertification, createDeliveryCertification, getDeliveryCertification, listDeliveryCertifications } from "./delivery-certification.mjs";
 import { getProjectRelationships, replaceProjectRelationships } from "./project-relations.mjs";
+import { planObjective } from "./objective-planning.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -327,6 +328,21 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       sendJson(res, 200, { success: true, data: reader({ runsRoot, objectiveId: params.id }) });
     } catch (error) {
       sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/generate-plan", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk objective planning.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const planner = services?.planObjective ?? planObjective;
+      const result = await planner({ vaultRoot, runsRoot, objectiveId: params.id, clarification: body?.clarification ?? body?.answer ?? null, requestedBy: req.operatorIdentity ?? "local:unknown", env });
+      const event = result.status === "NEEDS_CLARIFICATION" ? "PLAN_CLARIFICATION_REQUIRED" : result.alreadyPlanned ? "PLAN_GENERATION_IDEMPOTENT" : "PLAN_GENERATED";
+      appendAuditEntry(runsRoot, { event, actor: req.operatorIdentity ?? "local:unknown", objectiveId: result.objective.objectiveId, planId: result.plan?.planId ?? null, planFingerprint: result.plan?.planFingerprint ?? null, state: result.objective.state, readOnly: true });
+      eventHub.broadcast(event, { objectiveId: result.objective.objectiveId, planId: result.plan?.planId ?? null, state: result.objective.state });
+      sendJson(res, result.alreadyPlanned ? 200 : 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
   });
 
@@ -2517,6 +2533,7 @@ export function createOrchestratorServer({
     listObjectiveIntake,
     getObjectiveLifecycle,
     createPlanRevision,
+    planObjective,
     clarifyPlan,
     approvePlan,
     requestPlanChanges,

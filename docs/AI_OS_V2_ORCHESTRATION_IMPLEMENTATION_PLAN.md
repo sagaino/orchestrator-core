@@ -1091,6 +1091,19 @@ No earlier phase may depend on this phase. Existing role prompts must already su
   - tests cover enabled, disabled, and unknown values;
   - backend and dashboard certification gates remain green.
 
+#### ✅ V2-106 — Migrate Existing Project intake to objective orchestration
+
+- Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
+- Scope: replace the Dashboard Existing Project legacy task-intake path with durable objective creation, read-only project decomposition, Plan Review, explicit approval, and approved-plan materialization.
+- Acceptance:
+  - Existing Project intake creates an objective and never creates task/job/run before plan approval;
+  - project context and registered verification scripts constrain decomposition output;
+  - planner clarification is durable and can resume planning without creating execution artifacts;
+  - uploaded asset references remain attached to the objective;
+  - `Approve & Run` approves the exact plan fingerprint and then materializes its canonical tasks;
+  - duplicate planning remains idempotent and the Dashboard no longer calls legacy `/api/tasks/request` for Existing Project;
+  - backend unit and Dashboard typecheck, lint, build, security, and browser gates remain green.
+
 ## 14. Required Test Matrix
 
 Every phase adds focused tests. Before phase acceptance, run the complete applicable gates.
