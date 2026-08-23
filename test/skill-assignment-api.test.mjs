@@ -89,6 +89,14 @@ try {
   const catalog = await request("GET", "/api/skills");
   assert.equal(catalog.response.status, 200);
   assert.equal(catalog.data.data.skills[0].skillId, "api-review");
+  assert.equal(catalog.data.data.skills[0].usage.planAssignments, 0);
+  const disabled = await request("PUT", "/api/skills/api-review", { body: { version: "1.0.0", enabled: false }, idempotencyKey: "skill-status-disable" });
+  assert.equal(disabled.response.status, 200, JSON.stringify(disabled.data));
+  assert.equal(disabled.data.data.skill.enabled, false);
+  const disabledAssignment = await request("POST", `/api/objectives/${objectiveId}/plan/skills`, { body: { assignments: [{ nodeId: "N01", skillId: "api-review", version: "1.0.0" }] }, idempotencyKey: "skill-assignment-api-disabled" });
+  assert.equal(disabledAssignment.response.status, 422);
+  const reenabled = await request("PUT", "/api/skills/api-review", { body: { version: "1.0.0", enabled: true }, idempotencyKey: "skill-status-enable" });
+  assert.equal(reenabled.response.status, 200, JSON.stringify(reenabled.data));
   const assigned = await request("POST", `/api/objectives/${objectiveId}/plan/skills`, { body: { assignments: [{ nodeId: "N01", skillId: "api-review", version: "1.0.0" }] }, idempotencyKey: "skill-assignment-api-1" });
   assert.equal(assigned.response.status, 201, JSON.stringify(assigned.data));
   assert.equal(assigned.data.data.plan.revision, 2);

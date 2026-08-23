@@ -1070,7 +1070,7 @@ No earlier phase may depend on this phase. Existing role prompts must already su
   - routing never lowers model tier, path scope, or verification;
   - selected skill IDs/checksums are recorded in plan fingerprint, prompt evidence, telemetry, and result evidence.
 
-#### V2-103 — Add Skill Management dashboard
+#### V2-103 — Add Skill Management dashboard ✅
 
 - Model: `ECONOMY`.
 - Scope: list, inspect, enable/disable, compatibility, version, provenance, and usage. Installation/update remains a separate human-confirmed workflow.
