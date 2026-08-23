@@ -858,7 +858,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - restart and lease recovery remain exactly-once.
 - Verification: parallel distinct-project reliability tests and soak workload.
 
-#### V2-052 — Build aggregate integration workspace
+#### ✅ V2-052 — Build aggregate integration workspace
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: new integration workspace helpers, `src/workspace-manager.mjs`, integration manager, tests.
