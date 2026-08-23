@@ -1861,7 +1861,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       decision = null,
       destination = null,
       targetPath = null,
-      autoCommit = true,
+      autoCommit = false,
       commitMessage = null,
     } = body || {};
 
@@ -1873,7 +1873,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       decision,
       destination,
       targetPath,
-      autoCommit: Boolean(autoCommit),
+      autoCommit: autoCommit === true,
       commitMessage,
     });
 
