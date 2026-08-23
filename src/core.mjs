@@ -141,6 +141,16 @@ export function parseProjectRegistry(registryText) {
     if (cells.length < 6 || cells[0] === "project_id" || /^-+$/.test(cells[0])) continue;
     const [id, projectPage, repository, agent, graphify, graphifyOutput] = cells;
     if (!id || !repository) continue;
+    let relationships = [];
+    let relationshipsParseError = null;
+    const relationshipCell = cells[6] ?? "[]";
+    try {
+      const parsed = JSON.parse(relationshipCell || "[]");
+      if (!Array.isArray(parsed)) throw new Error("relationships harus berupa array");
+      relationships = parsed;
+    } catch (error) {
+      relationshipsParseError = error.message;
+    }
     projects.push({
       id,
       projectPage,
@@ -148,6 +158,8 @@ export function parseProjectRegistry(registryText) {
       agent,
       graphify: graphify === "true",
       graphifyOutput,
+      relationships,
+      ...(relationshipsParseError ? { relationshipsParseError } : {}),
     });
   }
   return projects;
