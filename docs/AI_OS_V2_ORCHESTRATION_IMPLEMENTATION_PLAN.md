@@ -1075,7 +1075,7 @@ No earlier phase may depend on this phase. Existing role prompts must already su
 - Model: `ECONOMY`.
 - Scope: list, inspect, enable/disable, compatibility, version, provenance, and usage. Installation/update remains a separate human-confirmed workflow.
 
-#### V2-104 — Skill Router certification
+#### V2-104 — Skill Router certification ✅
 
 - Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
 - Pilot: one FE, one BE, one diagnostic, and one integration node. Prove correct selection, no incompatible selection, general-agent fallback, checksum rejection, and unchanged scope safety.
