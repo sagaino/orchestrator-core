@@ -18,6 +18,33 @@ export const STAGE_CONTEXT_BUDGETS = Object.freeze({
 
 const DEFAULT_CONTEXT_BUDGET = 4000;
 
+export const APPROVED_ROLE_RESPONSIBILITIES = Object.freeze({
+  PLANNER: "Menjaga pemecahan pekerjaan, dependency, dan acceptance criteria tetap eksplisit.",
+  DIAGNOSTIC: "Menelusuri gejala, dependency, dan root cause tanpa memperluas scope perubahan.",
+  FRONTEND: "Memusatkan perhatian pada struktur UI, accessibility, state client, dan perilaku browser yang relevan.",
+  BACKEND: "Memusatkan perhatian pada kontrak service, business logic, error handling, dan boundary API yang relevan.",
+  DATABASE: "Memusatkan perhatian pada model data, query, migration safety, dan integritas persistence yang relevan.",
+  INTEGRATION: "Memusatkan perhatian pada kontrak antar-komponen, wiring, dependency, dan hasil integrasi yang relevan.",
+  TESTING: "Memusatkan perhatian pada coverage acceptance criteria, regression risk, dan kualitas verification.",
+  REVIEW: "Memusatkan perhatian pada kesesuaian implementasi terhadap feedback, scope, dan acceptance criteria.",
+  GENERAL: "Menyelesaikan acceptance criteria secara terarah dengan mengikuti scope dan guardrail yang telah disetujui.",
+});
+
+export function approvedRoleProfile(role) {
+  const normalized = String(role ?? "GENERAL").trim().toUpperCase();
+  const approvedRole = Object.hasOwn(APPROVED_ROLE_RESPONSIBILITIES, normalized) ? normalized : "GENERAL";
+  return {
+    role: approvedRole,
+    responsibility: APPROVED_ROLE_RESPONSIBILITIES[approvedRole],
+    lifetime: "RUN_SCOPED",
+    temporary: true,
+  };
+}
+
+export function roleAssignmentForTask(task = {}) {
+  return approvedRoleProfile(task.role ?? task.metadata?.role ?? "GENERAL");
+}
+
 export function contextBudget(stage, overrides = {}) {
   const value = overrides?.[stage] ?? STAGE_CONTEXT_BUDGETS[stage] ?? DEFAULT_CONTEXT_BUDGET;
   return Number.isInteger(value) && value > 0 ? value : DEFAULT_CONTEXT_BUDGET;
@@ -61,15 +88,22 @@ export function buildStageContext({
   allowedPaths = [],
   graphifyContext = "",
   knowledge = [],
+  role = null,
   budgets = {},
 } = {}) {
   const budgetTokens = contextBudget(stage, budgets);
   const budgetCharacters = budgetTokens * 4;
   const criteria = Array.isArray(acceptanceCriteria) ? acceptanceCriteria : [acceptanceCriteria];
   const boundedKnowledge = selectBoundedKnowledge(knowledge);
+  const roleProfile = approvedRoleProfile(role);
   const sections = [
     ["ACCEPTANCE CRITERIA", criteria.filter(Boolean).map((item) => `- ${clean(item)}`).join("\n")],
     ["LATEST HUMAN FEEDBACK", latestFeedback],
+    ...(role === null || role === undefined ? [] : [["APPROVED ROLE RESPONSIBILITY", [
+      `Role: ${roleProfile.role}`,
+      `Responsibility: ${roleProfile.responsibility}`,
+      "Role ini advisory dan tidak dapat memperluas allowed paths, tools, capability tier, approval, atau lifecycle authority.",
+    ].join("\n")]]),
     ["ALLOWED PATHS", allowedPaths.filter(Boolean).join(", ")],
     ["LATEST DIFF", latestDiff],
     ["COMPACT REVISION STATE", Object.entries(revisionState || {}).map(([key, value]) => `${key}: ${clean(value)}`).join("\n")],
@@ -103,6 +137,8 @@ export function buildStageContext({
     estimatedTokens: estimateTokenCount(output.join("\n")),
     text: output.join("\n"),
     selectedKnowledge: boundedKnowledge,
+    role: roleProfile.role,
+    roleResponsibility: roleProfile.responsibility,
   };
 }
 

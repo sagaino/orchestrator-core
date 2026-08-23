@@ -101,6 +101,7 @@ export function createReadyTaskEvent(vaultRoot, filePath, services) {
       requiresChanges: document.metadata.requires_changes === true,
       risk: String(document.metadata.risk ?? "UNKNOWN").toUpperCase(),
       complexity: String(document.metadata.complexity ?? "UNKNOWN").toUpperCase(),
+      role: String(document.metadata.role ?? "GENERAL").toUpperCase(),
       acceptanceCriteria,
       sources: Array.isArray(document.metadata.sources)
         ? document.metadata.sources.map(String)

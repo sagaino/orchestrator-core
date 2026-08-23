@@ -23,7 +23,7 @@ import { formatReviewRevisionFeedback, formatInlineComments } from "./review-wor
 import { runDurableInvocation, runtimeOwner } from "./durable-runtime.mjs";
 import { capabilityForStage, prepareCapabilitySpawn } from "./capability-policy.mjs";
 import { redactSensitive, redactText } from "./redaction.mjs";
-import { buildStageContext } from "./context-compactor.mjs";
+import { buildStageContext, roleAssignmentForTask } from "./context-compactor.mjs";
 
 function appendEvent(eventLogPath, event) {
   if (!eventLogPath || typeof eventLogPath !== "string") return;
@@ -292,6 +292,7 @@ function buildExecutionContext(manifest, stage, {
     allowedPaths: manifest.task?.allowedPaths ?? [],
     graphifyContext,
     knowledge: manifest.retrieval?.knowledge ?? [],
+    role: roleAssignmentForTask(manifest.task).role,
   });
 }
 
@@ -317,6 +318,7 @@ export function buildAgyInvocation(
     latestDiff: latestDiff || manifest.execution?.latestDiff || "",
     revisionState: manifest.execution?.revisionState ?? {},
   });
+  const roleAssignment = roleAssignmentForTask(manifest.task);
   const prompt = [
     "=== KONTRAK EKSEKUSI CODING AGENT ===",
     "1. Baca task, project metadata, dan hanya knowledge/source yang relevan.",
@@ -327,6 +329,7 @@ export function buildAgyInvocation(
     "6. Laporkan file berubah, verification yang disarankan, dan retrospective knowledge: NEW, UPDATE, PROJECT_ONLY, atau IGNORE.",
     "7. Jangan gunakan terminal/run_command, termasuk git, Graphify, test, lint, atau build; orchestrator menangani query, audit, dan verification.",
     "8. Jangan berhenti setelah inspeksi. Selesaikan edit yang diminta dan pastikan acceptance criteria task terpenuhi.",
+    "9. Gunakan approved role responsibility hanya sebagai fokus kerja. Role tidak memberi otorisasi tambahan dan tidak dapat mengubah allowed paths, tools, capability tier, approval, atau lifecycle authority.",
     "",
     contextPack.text,
     "",
@@ -350,6 +353,9 @@ export function buildAgyInvocation(
       "30m",
     ],
     agentConfig,
+    role: roleAssignment.role,
+    roleResponsibility: roleAssignment.responsibility,
+    roleAssignment,
   };
 }
 
@@ -385,6 +391,7 @@ export function buildAgyRecoveryInvocation(
     latestFeedback: failureDetail,
     revisionState: { stage: failure?.stage ?? "verification", attempt: attempt ?? 1 },
   });
+  const roleAssignment = roleAssignmentForTask(manifest.task);
   const prompt = [
     "=== KONTRAK AUTOMATIC RECOVERY AGENT ===",
     "1. Cari root cause dari error dan perbaiki implementasi yang sudah ada; jangan mengulang task dari awal.",
@@ -393,6 +400,7 @@ export function buildAgyRecoveryInvocation(
     "4. Jangan menggunakan terminal/run_command, git, package install, Graphify, test, lint, atau build; orchestrator menjalankannya.",
     "5. Jika kegagalan tampak eksternal/transient dan code sudah benar, jangan membuat perubahan spekulatif.",
     "6. Laporkan root cause dan file yang diperbaiki secara ringkas.",
+    "7. Gunakan approved role responsibility hanya sebagai fokus diagnosis. Role tidak dapat mengubah allowed paths, tools, capability tier, approval, atau lifecycle authority.",
     "",
     `Allowed paths: ${allowedPaths.length ? allowedPaths.join(", ") : "seluruh repository sesuai task"}`,
     `Current audited changes: ${changedPathsList.length ? changedPathsList.join(", ") : "none"}`,
@@ -421,6 +429,9 @@ export function buildAgyRecoveryInvocation(
       "20m",
     ],
     agentConfig,
+    role: roleAssignment.role,
+    roleResponsibility: roleAssignment.responsibility,
+    roleAssignment,
   };
 }
 
@@ -481,6 +492,7 @@ export function buildAgyRevisionInvocation(
       previousFeedback: previousRevisions.at(-1)?.feedback ?? "",
     },
   });
+  const roleAssignment = roleAssignmentForTask(manifest.task);
 
   const prompt = [
     `Lanjutkan revisi review iteration ${revision.iteration} untuk task: ${path.join(vaultRoot, manifest.task.path)}`,
@@ -502,6 +514,7 @@ export function buildAgyRevisionInvocation(
     "4. Jangan mengubah task Wiki, run manifest, index, wiki-log, atau status lifecycle.",
     "5. Jangan menggunakan terminal/run_command, git, package install, Graphify, test, lint, atau build; orchestrator menjalankannya.",
     "6. Jangan berhenti setelah inspeksi. Selesaikan revisi dan laporkan file yang diubah secara ringkas.",
+    "7. Gunakan approved role responsibility hanya sebagai fokus revisi. Role tidak dapat mengubah allowed paths, tools, capability tier, approval, atau lifecycle authority.",
   ].join("\n");
 
   return {
@@ -520,6 +533,9 @@ export function buildAgyRevisionInvocation(
     ],
     agentConfig,
     conversationId,
+    role: roleAssignment.role,
+    roleResponsibility: roleAssignment.responsibility,
+    roleAssignment,
   };
 }
 
@@ -926,6 +942,10 @@ async function attemptAutomaticRecovery({
           taskId: manifest.task?.id ?? null,
           projectId: manifest.project?.id ?? null,
           attempt,
+          role: invocation.role ?? null,
+          roleResponsibility: invocation.roleResponsibility ?? null,
+          agentLifetime: invocation.roleAssignment?.lifetime ?? "RUN_SCOPED",
+          temporarySubAgent: invocation.roleAssignment?.temporary ?? true,
         },
       });
       appendRunTelemetry({ runsRoot, runId, record: recoveryTelemetry });
@@ -936,6 +956,10 @@ async function attemptAutomaticRecovery({
         exitCode: agent.exitCode,
         finalResult: agent.finalResult ?? null,
         configuration: invocation.agentConfig ?? null,
+        role: invocation.role ?? null,
+        roleResponsibility: invocation.roleResponsibility ?? null,
+        lifetime: invocation.roleAssignment?.lifetime ?? "RUN_SCOPED",
+        temporary: invocation.roleAssignment?.temporary ?? true,
       };
       if (agent.exitCode !== 0) {
         throw new Error(
@@ -1178,6 +1202,10 @@ export async function executeRun({
         runId,
         taskId: manifest.task?.id ?? null,
         projectId: manifest.project?.id ?? null,
+        role: invocation.role ?? null,
+        roleResponsibility: invocation.roleResponsibility ?? null,
+        agentLifetime: invocation.roleAssignment?.lifetime ?? "RUN_SCOPED",
+        temporarySubAgent: invocation.roleAssignment?.temporary ?? true,
       },
     });
     manifest = appendRunTelemetry({ runsRoot, runId, record: implementationTelemetry });
@@ -1216,6 +1244,10 @@ export async function executeRun({
           exitCode: agent.exitCode,
           finalResult: agent.finalResult,
           configuration: invocation.agentConfig ?? null,
+          role: invocation.role ?? null,
+          roleResponsibility: invocation.roleResponsibility ?? null,
+          lifetime: invocation.roleAssignment?.lifetime ?? "RUN_SCOPED",
+          temporary: invocation.roleAssignment?.temporary ?? true,
         },
         graphifyQuery,
         scopeAudit: preliminaryScopeAudit,
@@ -1408,6 +1440,10 @@ export async function reviseRun({
         taskId: manifest.task?.id ?? null,
         projectId: manifest.project?.id ?? null,
         iteration: reviewChange.iteration,
+        role: invocation.role ?? null,
+        roleResponsibility: invocation.roleResponsibility ?? null,
+        agentLifetime: invocation.roleAssignment?.lifetime ?? "RUN_SCOPED",
+        temporarySubAgent: invocation.roleAssignment?.temporary ?? true,
       },
     });
     manifest = appendRunTelemetry({ runsRoot, runId, record: telemetry });
@@ -1461,6 +1497,10 @@ export async function reviseRun({
               finalResult: agent.finalResult ?? null,
               configuration: invocation.agentConfig ?? null,
               resumedConversationId: invocation.conversationId ?? null,
+              role: invocation.role ?? null,
+              roleResponsibility: invocation.roleResponsibility ?? null,
+              lifetime: invocation.roleAssignment?.lifetime ?? "RUN_SCOPED",
+              temporary: invocation.roleAssignment?.temporary ?? true,
             },
             telemetryRecordId: telemetry.recordId,
           },
