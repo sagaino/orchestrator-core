@@ -41,7 +41,9 @@ import { approveFreshProjectGenesis, auditGenesisApproval } from "./fresh-projec
 import { getObjective } from "./objective-store.mjs";
 import { buildObjectiveGraph } from "./objective-graph.mjs";
 import { listDecisions, listDecisionInbox } from "./decision-store.mjs";
-import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
+import { approvePlan, assignPlanSkills, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
+import { defaultSkillRegistryPath, listInstalledSkills } from "./skill-registry.mjs";
+import { projectSignalsForProjects } from "./skill-assignment.mjs";
 import { materializeApprovedPlan } from "./task-materializer.mjs";
 import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
 import { getIntegrationEvidence, recoverIntegration, startIntegration } from "./integration-manager.mjs";
@@ -671,6 +673,73 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       sendJson(res, 201, { success: true, data: result });
     } catch (error) {
       sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.get("/api/skills", async (_req, res) => {
+    try {
+      const skills = listInstalledSkills({ registryPath: defaultSkillRegistryPath(runsRoot), includeDisabled: false });
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          schemaVersion: 1,
+          mode: "read-only-skill-catalog",
+          registryState: "AVAILABLE",
+          skills: skills.map((skill) => ({
+            skillId: skill.skillId,
+            version: skill.version,
+            purpose: skill.purpose,
+            supportedRoles: skill.supportedRoles,
+            supportedTaskTypes: skill.supportedTaskTypes,
+            requiredContextTypes: skill.requiredContextTypes,
+            requiredCapabilities: skill.requiredCapabilities,
+            compatibleProjectSignals: skill.compatibleProjectSignals,
+            riskLevel: skill.riskLevel,
+            instructionChecksum: skill.instructions.sha256,
+            verificationRequirements: skill.verificationRequirements,
+            enabled: skill.enabled,
+            provenance: skill.provenance,
+          })),
+        },
+      });
+    } catch (error) {
+      if (error.code === "SKILL_REGISTRY_NOT_FOUND") return sendJson(res, 200, { success: true, data: { schemaVersion: 1, mode: "read-only-skill-catalog", registryState: "EMPTY", skills: [] } });
+      sendError(res, error.statusCode || 422, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/plan/skills", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk skill assignment.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const result = assignPlanSkills({
+        runsRoot,
+        objectiveId: params.id,
+        assignments: body?.assignments,
+        assignedBy: req.operatorIdentity,
+        registryPath: defaultSkillRegistryPath(runsRoot),
+        projectSignalsByProject: projectSignalsForProjects(listProjects(vaultRoot)),
+      });
+      appendAuditEntry(runsRoot, {
+        event: "PLAN_SKILLS_ASSIGNED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.plan.planFingerprint,
+        skillAssignments: result.skillAssignments,
+        registryRevision: result.registryRevision,
+      });
+      eventHub.broadcast("PLAN_SKILLS_ASSIGNED", {
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.plan.planFingerprint,
+        skillAssignments: result.skillAssignments,
+      });
+      sendJson(res, 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || (error.code === "SKILL_REGISTRY_NOT_FOUND" ? 404 : 422), error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
   });
 

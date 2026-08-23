@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { createDecision, getDecision, listDecisions } from "./decision-store.mjs";
 import { getObjective, updateObjective } from "./objective-store.mjs";
 import { createPlan, getPlan, listPlans, updatePlan } from "./plan-store.mjs";
 import { validatePlanRecord } from "./orchestration-schema.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
+import { assignmentMetadata, defaultSkillRegistryPath, validateAssignedSkill, validatePlanSkillAssignments } from "./skill-assignment.mjs";
+import { readSkillRegistry } from "./skill-registry.mjs";
 
 const PLAN_STATE_PENDING = "PENDING_APPROVAL";
 const PLAN_STATE_APPROVED = "APPROVED";
@@ -176,10 +179,12 @@ function createRevisionDecision({ runsRoot, objective, plan, action, resolvedBy,
       objectiveId: objective.objectiveId,
       nodeId: null,
       runId: null,
-      type: action === "SCOPE_EXPANSION" ? "SCOPE_EXPANSION" : "PLAN_CLARIFICATION",
+      type: action === "SCOPE_EXPANSION" ? "SCOPE_EXPANSION" : action === "ASSIGN_SKILLS" ? "SKILL_ASSIGNMENT" : "PLAN_CLARIFICATION",
       state: "RESOLVED",
       evidence,
-      requestedAction: action === "CLARIFY"
+      requestedAction: action === "ASSIGN_SKILLS"
+        ? "Apply human-selected skills to a new plan revision"
+        : action === "CLARIFY"
         ? "Apply user clarification to create a new plan revision"
         : action === "SCOPE_EXPANSION"
           ? "Expand objective scope through a new plan revision"
@@ -192,22 +197,24 @@ function createRevisionDecision({ runsRoot, objective, plan, action, resolvedBy,
   });
 }
 
+function createRevisionLocked({ runsRoot, objectiveId, candidate, state, now, resolvedBy = null, decisionAction = null, evidence = null }) {
+  const objective = objectiveOrFail(runsRoot, objectiveId);
+  const previous = objective.activePlanId ? activePlanOrFail(runsRoot, objective) : null;
+  const revision = previous ? planRevision(previous) + 1 : 1;
+  const plan = assertModelCandidate({ objective, candidate, revision, now });
+  const persisted = createPlan({ runsRoot, record: plan, validationOptions: planValidationOptions(objective) });
+  if (previous) markSuperseded({ runsRoot, objective, now });
+  const nextObjective = updateObjectiveForPlan({ runsRoot, objective, plan: persisted, state, now });
+  let decision = null;
+  if (decisionAction) {
+    decision = createRevisionDecision({ runsRoot, objective: nextObjective, plan: persisted, action: decisionAction, resolvedBy, now, evidence });
+  }
+  return { objective: nextObjective, plan: persisted, previousPlan: previous, decision, revision: planRevision(persisted) };
+}
+
 function createRevision({ runsRoot, objectiveId, candidate, state, now, resolvedBy = null, decisionAction = null, evidence = null }) {
   const initial = objectiveOrFail(runsRoot, objectiveId);
-  return withDurableLease({ runsRoot, ...lifecycleLease(initial.objectiveId) }, () => {
-    const objective = objectiveOrFail(runsRoot, initial.objectiveId);
-    const previous = objective.activePlanId ? activePlanOrFail(runsRoot, objective) : null;
-    const revision = previous ? planRevision(previous) + 1 : 1;
-    const plan = assertModelCandidate({ objective, candidate, revision, now });
-    const persisted = createPlan({ runsRoot, record: plan, validationOptions: planValidationOptions(objective) });
-    if (previous) markSuperseded({ runsRoot, objective, now });
-    const nextObjective = updateObjectiveForPlan({ runsRoot, objective, plan: persisted, state, now });
-    let decision = null;
-    if (decisionAction) {
-      decision = createRevisionDecision({ runsRoot, objective: nextObjective, plan: persisted, action: decisionAction, resolvedBy, now, evidence });
-    }
-    return { objective: nextObjective, plan: persisted, previousPlan: previous, decision, revision: planRevision(persisted) };
-  });
+  return withDurableLease({ runsRoot, ...lifecycleLease(initial.objectiveId) }, () => createRevisionLocked({ runsRoot, objectiveId: initial.objectiveId, candidate, state, now, resolvedBy, decisionAction, evidence }));
 }
 
 export function createPlanRevision({ runsRoot, objectiveId, candidate, now = new Date() } = {}) {
@@ -286,6 +293,53 @@ export function requestScopeExpansion({ runsRoot, objectiveId, reason, candidate
   });
 }
 
+export function assignPlanSkills({ runsRoot, objectiveId, assignments, assignedBy, registryPath = defaultSkillRegistryPath(runsRoot), projectSignalsByProject = {}, now = new Date() } = {}) {
+  const initial = objectiveOrFail(runsRoot, objectiveId);
+  const identity = String(assignedBy ?? "").trim();
+  if (!identity) fail("Skill assignment membutuhkan identitas human operator.", { statusCode: 403, code: "SKILL_ASSIGNER_REQUIRED", details: { code: "SKILL_ASSIGNER_REQUIRED" } });
+  if (!Array.isArray(assignments) || assignments.length === 0) fail("Minimal satu skill assignment wajib dipilih.", { code: "SKILL_ASSIGNMENTS_REQUIRED", details: { code: "SKILL_ASSIGNMENTS_REQUIRED" } });
+  return withDurableLease({ runsRoot, ...lifecycleLease(initial.objectiveId) }, () => {
+    const objective = objectiveOrFail(runsRoot, initial.objectiveId);
+    const previous = activePlanOrFail(runsRoot, objective);
+    if (objective.state === "CANCELLED" || previous.state !== PLAN_STATE_PENDING) fail("Skill hanya dapat ditambahkan pada plan revision yang belum di-approve.", { statusCode: 409, code: "SKILL_ASSIGNMENT_PLAN_NOT_EDITABLE", details: { code: "SKILL_ASSIGNMENT_PLAN_NOT_EDITABLE", planId: previous.planId, state: previous.state } });
+    const registry = readSkillRegistry({ registryPath, registryRoot: path.dirname(registryPath) });
+    const nodes = new Map(previous.nodes.map((node) => [node.nodeId, node]));
+    const seenNodes = new Set();
+    const normalized = assignments.map((requested) => {
+      const node = nodes.get(requested?.nodeId);
+      if (!node) fail(`Node tidak ditemukan untuk skill assignment: ${requested?.nodeId}`, { statusCode: 422, code: "SKILL_ASSIGNMENT_NODE_NOT_FOUND", details: { code: "SKILL_ASSIGNMENT_NODE_NOT_FOUND", nodeId: requested?.nodeId } });
+      if (seenNodes.has(node.nodeId)) fail(`Node menerima lebih dari satu skill assignment request: ${node.nodeId}`, { statusCode: 422, code: "SKILL_ASSIGNMENT_DUPLICATE_NODE", details: { code: "SKILL_ASSIGNMENT_DUPLICATE_NODE", nodeId: node.nodeId } });
+      seenNodes.add(node.nodeId);
+      const skill = registry.skills.find((candidate) => candidate.skillId === requested?.skillId && candidate.version === requested?.version) ?? null;
+      const validation = validateAssignedSkill({ assignment: { skillId: requested?.skillId, version: requested?.version, checksum: requested?.checksum ?? skill?.instructions?.sha256 }, skill, node, projectSignals: projectSignalsByProject[node.projectId] ?? [] });
+      if (!validation.valid) fail(`Skill assignment ditolak untuk ${node.nodeId}: ${validation.errors.join("; ")}`, { statusCode: 422, code: "SKILL_ASSIGNMENT_INVALID", details: { code: "SKILL_ASSIGNMENT_INVALID", nodeId: node.nodeId, errors: validation.errors } });
+      return { nodeId: node.nodeId, skill: assignmentMetadata(skill) };
+    });
+    const candidate = {
+      ...structuredClone(previous),
+      nodes: previous.nodes.map((node) => {
+        const selected = normalized.find((item) => item.nodeId === node.nodeId);
+        return selected ? { ...node, skills: [selected.skill] } : node;
+      }),
+    };
+    const result = createRevisionLocked({
+      runsRoot,
+      objectiveId: objective.objectiveId,
+      candidate,
+      state: "PLAN_REVIEW",
+      now,
+      resolvedBy: identity,
+      decisionAction: "ASSIGN_SKILLS",
+      evidence: { assignments: normalized, previousPlanId: previous.planId, previousPlanFingerprint: previous.planFingerprint ?? planFingerprint(previous) },
+    });
+    return { ...result, skillAssignments: normalized, registryRevision: registry.revision };
+  });
+}
+
+export function validateApprovedPlanSkills({ runsRoot, plan, projectSignalsByProject = {}, registryPath = defaultSkillRegistryPath(runsRoot) } = {}) {
+  return validatePlanSkillAssignments({ runsRoot, plan, projectSignalsByProject, registryPath });
+}
+
 export function cancelObjective({ runsRoot, objectiveId, cancelledBy = "user", now = new Date() } = {}) {
   const objective = objectiveOrFail(runsRoot, objectiveId);
   const identity = String(cancelledBy ?? "").trim();
@@ -360,6 +414,8 @@ export function approvePlan({ runsRoot, objectiveId, planId = null, expectedFing
     if (planId && planId !== active.planId) fail("Approval hanya boleh diterapkan pada active plan revision.", { statusCode: 409, code: "STALE_PLAN_REVISION", details: { code: "STALE_PLAN_REVISION", activePlanId: active.planId, requestedPlanId: planId } });
     const fingerprint = active.planFingerprint ?? planFingerprint(active);
     if (expectedFingerprint && expectedFingerprint !== fingerprint) fail("Plan fingerprint tidak cocok dengan revision aktif.", { statusCode: 409, code: "PLAN_FINGERPRINT_MISMATCH", details: { code: "PLAN_FINGERPRINT_MISMATCH", expected: fingerprint, received: expectedFingerprint } });
+    const skillValidation = validatePlanSkillAssignments({ runsRoot, plan: active, checkCompatibility: false });
+    if (!skillValidation.valid) fail("Plan skill assignment tidak lagi valid.", { statusCode: 422, code: "INVALID_PLAN_SKILLS", details: { code: "INVALID_PLAN_SKILLS", errors: skillValidation.errors } });
     if (active.state === PLAN_STATE_SUPERSEDED || active.state === PLAN_STATE_CANCELLED) fail("Plan revision sudah tidak berlaku.", { statusCode: 409, code: "STALE_PLAN_REVISION", details: { code: "STALE_PLAN_REVISION", planId: active.planId } });
     const existing = getDecision(runsRoot, `decision-plan-approval-${active.planId}`);
     if (active.state === PLAN_STATE_APPROVED && existing?.state === "RESOLVED") return { objective: current, plan: active, decision: existing, alreadyApproved: true, planFingerprint: fingerprint };

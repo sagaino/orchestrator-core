@@ -1051,7 +1051,7 @@ No earlier phase may depend on this phase. Existing role prompts must already su
   - provenance and human installer.
 - Acceptance: registry is read-only to agents; invalid checksum/version/tool request fails closed; Wiki knowledge is referenced as context, never reclassified as a skill.
 
-#### V2-101 — Add manual skill assignment in Guided mode
+#### ✅ V2-101 — Add manual skill assignment in Guided mode
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Acceptance: Plan Review may select only installed/enabled compatible skills; selection creates a new plan revision; skill cannot broaden task permissions; full skill instructions are loaded only for the assigned node.

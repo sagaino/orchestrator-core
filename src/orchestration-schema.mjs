@@ -16,7 +16,7 @@ const COMPLEXITIES = new Set(["LOW", "MEDIUM", "HIGH"]);
 const DECISION_TYPES = new Set([
   "FRESH_PROJECT_CREATION", "PLAN_APPROVAL", "PLAN_CLARIFICATION", "NODE_RETRY",
   "SCOPE_EXPANSION", "INTEGRATION_CONFLICT", "HIGH_RISK_CHANGE", "OBJECTIVE_ACCEPTANCE",
-  "BUDGET_EXCEEDED",
+  "BUDGET_EXCEEDED", "SKILL_ASSIGNMENT",
 ]);
 const DECISION_STATES = new Set(["OPEN", "RESOLVED", "CANCELLED"]);
 const RISK_ORDER = new Map([["LOW", 1], ["MEDIUM", 2], ["HIGH", 3]]);
@@ -195,7 +195,20 @@ function validateNode(node, index, plan, options, errors) {
   add(errors, typeof node.canRunInParallel === "boolean", `${label}.canRunInParallel must be boolean`);
   add(errors, node.writeConflictGroup === null || node.writeConflictGroup === undefined || nonEmptyString(node.writeConflictGroup), `${label}.writeConflictGroup must be null or non-empty`);
   add(errors, Array.isArray(node.contextFrom) && node.contextFrom.every(identifier), `${label}.contextFrom must be an array of stable identifiers`);
-  add(errors, Array.isArray(node.skills) && node.skills.length === 0, `${label}.skills must be an empty array in schema version 1`);
+  add(errors, Array.isArray(node.skills), `${label}.skills must be an array`);
+  if (Array.isArray(node.skills)) {
+    const skillIdentities = new Set();
+    for (const assignment of node.skills) {
+      add(errors, isRecord(assignment), `${label}.skills entries must be objects`);
+      if (!isRecord(assignment)) continue;
+      add(errors, nonEmptyString(assignment.skillId) && /^[a-z0-9][a-z0-9._-]{1,127}$/.test(assignment.skillId), `${label}.skills.skillId must be a stable lowercase identifier`);
+      add(errors, nonEmptyString(assignment.version) && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(assignment.version), `${label}.skills.version must be valid semver`);
+      add(errors, typeof assignment.checksum === "string" && /^[a-f0-9]{64}$/.test(assignment.checksum), `${label}.skills.checksum must be a lowercase SHA-256 checksum`);
+      const identity = `${assignment.skillId ?? ""}@${assignment.version ?? ""}`;
+      if (skillIdentities.has(identity)) errors.push(`${label}.skills contains duplicate assignment: ${identity}`);
+      skillIdentities.add(identity);
+    }
+  }
 
   const knownProjects = knownProjectsFor(options);
   if (knownProjects && !knownProjects.has(node.projectId)) errors.push(`${label}.projectId is unknown: ${node.projectId}`);

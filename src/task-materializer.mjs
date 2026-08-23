@@ -11,6 +11,7 @@ import { existingTaskSummary, nextTaskIdentity, taskDocument } from "./task-inta
 import { injectFault } from "./fault-injection.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 import { validatePlanRecord } from "./orchestration-schema.mjs";
+import { validatePlanSkillAssignments } from "./skill-assignment.mjs";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -102,13 +103,21 @@ function assertApprovedPlan({ objective, plan, expectedPlanId, expectedFingerpri
   return fingerprint;
 }
 
-function assertPlanShape({ objective, plan, projects }) {
+function assertPlanShape({ objective, plan, projects, runsRoot }) {
   const validation = validatePlanRecord(plan, planOptions(objective, projects));
   if (!validation.valid) {
     fail("Plan approved tidak lolos validasi sebelum materialization.", {
       statusCode: 422,
       code: "INVALID_APPROVED_PLAN",
       details: { code: "INVALID_APPROVED_PLAN", errors: validation.errors },
+    });
+  }
+  const skillValidation = validatePlanSkillAssignments({ runsRoot, plan, checkCompatibility: false });
+  if (!skillValidation.valid) {
+    fail("Plan approved memiliki skill assignment yang tidak valid.", {
+      statusCode: 422,
+      code: "INVALID_PLAN_SKILLS",
+      details: { code: "INVALID_PLAN_SKILLS", errors: skillValidation.errors },
     });
   }
 }
@@ -376,7 +385,7 @@ export function materializeApprovedPlan({
       expectedFingerprint,
       decision: plan ? planApprovalDecision(runsRoot, plan) : null,
     });
-    assertPlanShape({ objective, plan, projects });
+    assertPlanShape({ objective, plan, projects, runsRoot });
     const existing = getOrchestration(runsRoot, lockId, { plan });
     const idempotent = alreadyMaterialized({ existing, objective, plan, fingerprint });
     if (idempotent) return idempotent;

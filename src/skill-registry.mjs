@@ -22,6 +22,11 @@ export const SKILL_CAPABILITIES = Object.freeze([
   "knowledge.propose",
 ]);
 
+export function defaultSkillRegistryPath(runsRoot) {
+  if (!runsRoot) throw new Error("runsRoot wajib diisi untuk skill registry.");
+  return path.join(runsRoot, "runtime", "skills", "registry.json");
+}
+
 const CAPABILITY_SET = new Set(SKILL_CAPABILITIES);
 const RISK_SET = new Set(SKILL_RISK_LEVELS);
 const PROVENANCE_SET = new Set(SKILL_PROVENANCE_SOURCES);
@@ -202,6 +207,28 @@ export function validateSkillRequest({ skill, requestedCapabilities = [], regist
     errors.push(...validation.errors);
   }
   return { valid: errors.length === 0, errors, code: errors.length ? "SKILL_REQUEST_REJECTED" : null };
+}
+
+export function assessSkillCompatibility({ skill, node, projectSignals = [] } = {}) {
+  const errors = [];
+  if (!skill) errors.push("skill not found");
+  if (!node || typeof node !== "object") errors.push("node is required");
+  if (skill && !skill.enabled) errors.push("skill is disabled");
+  if (skill && node && !(skill.supportedRoles.includes(node.role) || skill.supportedRoles.includes("GENERAL"))) {
+    errors.push(`skill does not support node role: ${node.role}`);
+  }
+  if (skill && node) {
+    const taskTypes = [node.taskType, node.type].filter(Boolean);
+    if (!taskTypes.some((type) => skill.supportedTaskTypes.includes(type) || skill.supportedTaskTypes.includes("ANY"))) {
+      errors.push(`skill does not support node task type: ${node.type}`);
+    }
+  }
+  if (skill?.compatibleProjectSignals?.length > 0) {
+    const signals = Array.isArray(projectSignals) ? projectSignals : [];
+    if (!signals.length) errors.push("project signals are required for this skill");
+    else if (!skill.compatibleProjectSignals.some((signal) => signals.includes(signal))) errors.push("skill is incompatible with project signals");
+  }
+  return { compatible: errors.length === 0, errors };
 }
 
 export function resolveSkillRequest({ registryPath, registryRoot, skillId, version, requestedCapabilities = [], checkInstructions = true } = {}) {
