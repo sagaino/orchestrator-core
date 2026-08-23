@@ -75,6 +75,11 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
   const runCleanups = runs.map(runCleanup);
   const knowledge = runs.map(knowledgeCapture);
   const visualNodes = (visual?.nodes ?? []).filter((node) => node.runId);
+  const previewRequired = objectiveEvidence.plan?.integration?.previewRequired === true;
+  // Visual capture is part of the preview delivery path. Plans that explicitly
+  // opt out of aggregate preview (for example read-only API diagnostics) must
+  // not be blocked by an evidence type they did not request.
+  const visualEvidenceRequired = previewRequired;
   const visualEvidenceComplete = visualNodes.length > 0 && visualNodes.every((node) => {
     const visualRefsPresent = node.evidenceRefs.length > 0 || node.captureRefs.length > 0;
     const checksPass = node.verificationChecks.every((check) => check.status === "PASS" || check.passed === true);
@@ -82,14 +87,16 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
   });
   const integrationRequired = objectiveEvidence.verification.integration.required === true;
   const integrationComplete = !integrationRequired || objectiveEvidence.verification.integration.status === "PASS";
+  const previewComplete = !previewRequired || Boolean(preview && preview.status === "READY");
+  const cleanupComplete = (!previewRequired || preview?.cleanup?.status === "CLEANED") && runCleanups.every((item) => item.cleaned);
   const checks = [
     result("PLAN_COMPLETE", objectiveEvidence.plan?.state === "APPROVED", "Approved objective plan is present.", { planId: objectiveEvidence.plan?.planId ?? null, state: objectiveEvidence.plan?.state ?? null }),
     result("EXECUTION_COMPLETE", objectiveEvidence.orchestration?.state === "DONE" && objectiveEvidence.nodes.length > 0 && objectiveEvidence.nodes.every((node) => node.state === "DONE"), "All objective nodes and orchestration are done.", { orchestrationState: objectiveEvidence.orchestration?.state ?? null, nodeStates: objectiveEvidence.nodes.map((node) => ({ nodeId: node.nodeId, state: node.state })) }),
     result("INTEGRATION_COMPLETE", integrationComplete, "Required integration verification is passing or not required.", { required: integrationRequired, status: objectiveEvidence.verification.integration.status }),
-    result("PREVIEW_COMPLETE", Boolean(preview && preview.status === "READY"), "Aggregate preview reached READY for the objective.", { sessionId: preview?.sessionId ?? null, status: preview?.status ?? "MISSING", previewCount: preview?.previews?.length ?? 0, unavailableCount: preview?.unavailable?.length ?? 0 }),
-    result("VISUAL_E2E_EVIDENCE_COMPLETE", visualEvidenceComplete, "Every runnable node has linked visual evidence and passing node checks.", { evidenceCount: visual?.summary?.evidenceCount ?? 0, captureCount: visual?.summary?.captureCount ?? 0, nodeCount: visualNodes.length }),
+    result("PREVIEW_COMPLETE", previewComplete, previewRequired ? "Aggregate preview reached READY for the objective." : "Aggregate preview is not required by the approved plan.", { required: previewRequired, sessionId: preview?.sessionId ?? null, status: previewRequired ? (preview?.status ?? "MISSING") : "NOT_REQUIRED", previewCount: preview?.previews?.length ?? 0, unavailableCount: preview?.unavailable?.length ?? 0 }),
+    result("VISUAL_E2E_EVIDENCE_COMPLETE", !visualEvidenceRequired || visualEvidenceComplete, visualEvidenceRequired ? "Every runnable node has linked visual evidence and passing node checks." : "Visual/E2E capture evidence is not required by the approved plan.", { required: visualEvidenceRequired, evidenceCount: visual?.summary?.evidenceCount ?? 0, captureCount: visual?.summary?.captureCount ?? 0, nodeCount: visualNodes.length }),
     result("HUMAN_ACCEPTANCE_COMPLETE", objectiveEvidence.finalAcceptance.state === "ACCEPTED", "Objective final acceptance is recorded by a human gate.", { state: objectiveEvidence.finalAcceptance.state, acceptedBy: objectiveEvidence.finalAcceptance.acceptedBy ?? null, acceptedAt: objectiveEvidence.finalAcceptance.acceptedAt ?? null }),
-    result("CLEANUP_COMPLETE", Boolean(preview?.cleanup?.status === "CLEANED" && runCleanups.every((item) => item.cleaned)), "Aggregate preview and isolated run workspaces are cleaned.", { previewCleanup: preview?.cleanup?.status ?? "MISSING", runCleanups }),
+    result("CLEANUP_COMPLETE", cleanupComplete, previewRequired ? "Aggregate preview and isolated run workspaces are cleaned." : "Isolated run workspaces are cleaned; aggregate preview was not required.", { previewRequired, previewCleanup: previewRequired ? (preview?.cleanup?.status ?? "MISSING") : "NOT_REQUIRED", runCleanups }),
     result("KNOWLEDGE_CAPTURE_COMPLETE", knowledge.length > 0 && knowledge.every((item) => item.approved && item.synced), "Knowledge approval/capture is present for every source run.", { knowledge }),
   ];
   const blockers = checks.filter((check) => check.status !== "PASS").map((check) => check.id);

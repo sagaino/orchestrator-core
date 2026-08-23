@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createDecision } from "../src/decision-store.mjs";
 import { createObjective } from "../src/objective-store.mjs";
-import { createPlan } from "../src/plan-store.mjs";
+import { createPlan, updatePlan } from "../src/plan-store.mjs";
 import { createOrchestration } from "../src/orchestration-store.mjs";
 import { createVisualEvidence, createAggregatePreviewEvidence, persistVisualEvidence, persistAggregatePreviewEvidence } from "../src/visual-evidence.mjs";
 import { createDeliveryCertification, verifyDeliveryCertification, acceptDeliveryCertification } from "../src/delivery-certification.mjs";
@@ -65,6 +65,22 @@ try {
   assert.equal(verifyDeliveryCertification({ bundlePath: certificate.bundlePath }).valid, true);
   fs.appendFileSync(certificate.bundlePath, "tamper\n");
   assert.equal(verifyDeliveryCertification({ bundlePath: certificate.bundlePath }).valid, false);
+
+  // A read-only/API diagnostic plan may explicitly opt out of aggregate
+  // preview and visual capture. Certification must not block that plan.
+  updatePlan({
+    runsRoot,
+    id: planId,
+    expectedRevision: 1,
+    update: (current) => ({ ...current, integration: { ...current.integration, previewRequired: false } }),
+    validationOptions: { knownProjectIds: ["delivery-project"], budget },
+  });
+  fs.rmSync(path.join(runsRoot, "runtime", "visual-evidence"), { recursive: true, force: true });
+  const noPreviewCertificate = createDeliveryCertification({ runsRoot, objectiveId, now: new Date("2026-08-23T02:00:00.000Z") });
+  assert.equal(noPreviewCertificate.status, "HUMAN_GATE_REQUIRED", JSON.stringify(noPreviewCertificate, null, 2));
+  assert.deepEqual(noPreviewCertificate.blockers, []);
+  assert.equal(noPreviewCertificate.checks.find((check) => check.id === "PREVIEW_COMPLETE").evidence.required, false);
+  assert.equal(noPreviewCertificate.checks.find((check) => check.id === "VISUAL_E2E_EVIDENCE_COMPLETE").evidence.required, false);
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }
