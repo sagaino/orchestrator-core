@@ -9,6 +9,8 @@ export const STAGE_DEFAULT_EFFORTS = Object.freeze({
   "task-intake": "low",
   "TASK_INTAKE": "low",
   "project-decomposition": "medium",
+  "cross-project-diagnostic": "medium",
+  "CROSS_PROJECT_DIAGNOSTIC": "medium",
   "PROJECT_DECOMPOSITION": "medium",
   "retrospective": "low",
   "RETROSPECTIVE": "low",

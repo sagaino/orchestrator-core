@@ -8,6 +8,7 @@ import { formatInlineComments } from "./review-workflow.mjs";
 
 export const STAGE_CONTEXT_BUDGETS = Object.freeze({
   intake: 1200,
+  "cross-project-diagnostic": 2200,
   "project-decomposition": 2800,
   implementation: 6000,
   recovery: 4000,

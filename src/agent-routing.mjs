@@ -5,6 +5,7 @@
 export const ROUTING_TIERS = Object.freeze({ ECONOMY: "ECONOMY", STRONG_REVIEW: "STRONG_REVIEW" });
 export const ROUTING_STAGES = Object.freeze([
   "task-intake",
+  "cross-project-diagnostic",
   "project-decomposition",
   "retrospective",
   "knowledge-classification",
@@ -15,6 +16,7 @@ export const ROUTING_STAGES = Object.freeze([
 const STAGE_ALIASES = Object.freeze({
   TASK_INTAKE: "task-intake",
   PROJECT_DECOMPOSITION: "project-decomposition",
+  CROSS_PROJECT_DIAGNOSTIC: "cross-project-diagnostic",
   RETROSPECTIVE: "retrospective",
   KNOWLEDGE: "knowledge-classification",
   KNOWLEDGE_CLASSIFICATION: "knowledge-classification",
