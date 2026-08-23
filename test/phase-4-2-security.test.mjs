@@ -12,7 +12,7 @@ import { changedPaths, repositorySnapshot, snapshotFromObject, verificationRequi
 import { isSafeInfrastructureFailure } from "../src/task-workflow.mjs";
 
 console.log("Running phase-4-2-security.test.mjs...");
-assert.deepEqual(Object.keys(CAPABILITY_PROFILES).sort(), ["agent", "graphify", "preview", "updater", "verification"]);
+assert.deepEqual(Object.keys(CAPABILITY_PROFILES).sort(), ["agent", "diagnostic", "graphify", "preview", "updater", "verification"]);
 
 const filtered = allowlistedEnvironment({ PATH: "/bin", HOME: "/Users/fixture", HOST_SECRET: "seeded-host-secret", API_KEY: "secret-api-key" }, "verification");
 assert.equal(filtered.PATH, "/bin");
@@ -20,17 +20,20 @@ assert.equal(filtered.HOME, "/Users/fixture");
 assert.equal(filtered.HOST_SECRET, undefined);
 assert.equal(filtered.API_KEY, undefined);
 assert.match(sandboxPolicy({ profileName: "agent", cwd: "/tmp" }), /\(allow network\*\)/);
+assert.match(sandboxPolicy({ profileName: "diagnostic", cwd: "/tmp" }), /\(allow network\*\)/);
 assert.match(sandboxPolicy({ profileName: "verification", cwd: "/tmp" }), /\(deny network\*\)/);
 const loopbackPolicy = sandboxPolicy({ profileName: "verification", cwd: "/tmp", allowLoopback: true });
 assert.match(loopbackPolicy, /deny network-outbound \(require-not \(remote ip "localhost:\*"\)\)/);
 assert.match(loopbackPolicy, /deny network-inbound \(require-not \(local ip "localhost:\*"\)\)/);
 assert.doesNotMatch(loopbackPolicy, /\(deny network\*\)/);
 assert.doesNotMatch(sandboxPolicy({ profileName: "agent", cwd: "/tmp", home: "/Users/fixture" }), /Library\/Keychains/);
+assert.doesNotMatch(sandboxPolicy({ profileName: "diagnostic", cwd: "/tmp", home: "/Users/fixture" }), /Library\/Keychains/);
 assert.match(sandboxPolicy({ profileName: "verification", cwd: "/tmp", home: "/Users/fixture" }), /Library\/Keychains/);
 const providerPolicy = sandboxPolicy({ profileName: "agent", cwd: "/tmp", home: "/Users/fixture", providerManagedSandbox: true });
 assert.doesNotMatch(providerPolicy, /deny file-write\* \(require-all/);
 assert.match(providerPolicy, /deny file-write\* \(subpath "\/Users\/fixture\/\.ssh"\)/);
 for (const stage of ["task-intake-planner", "retrospective", "knowledge-classification", "knowledge-ingest", "knowledge-harvest-pass-1"]) assert.equal(capabilityForStage(stage), "agent");
+assert.equal(capabilityForStage("cross-project-diagnostic"), "diagnostic");
 assert.equal(capabilityForStage("verification:npm-test"), "verification");
 assert.equal(verificationRequiresLoopback("test:e2e", "playwright test"), true);
 assert.equal(verificationRequiresLoopback("test:browser", "vitest run"), true);
@@ -66,6 +69,23 @@ try {
   assert.doesNotMatch(preparedAgy.args[1], /deny file-write\* \(require-all/);
 } finally {
   fs.rmSync(preparedAgy.temporaryRoot, { recursive: true, force: true });
+}
+
+const preparedDiagnostic = prepareCapabilitySpawn({
+  command: "agy",
+  args: ["-p", "fixture"],
+  cwd: "/tmp",
+  writableRoots: [],
+  env: { PATH: "/bin", HOME: "/Users/fixture" },
+  capabilityProfile: "diagnostic",
+});
+try {
+  assert.equal(preparedDiagnostic.args.at(-1), "--sandbox");
+  assert.match(preparedDiagnostic.args[1], /allow network\*/);
+  assert.doesNotMatch(preparedDiagnostic.args[1], /deny file-write\* \(require-all/);
+  assert.match(preparedDiagnostic.args[1], /deny file-read\* \(subpath "\/Users\/fixture\/\.ssh"\)/);
+} finally {
+  fs.rmSync(preparedDiagnostic.temporaryRoot, { recursive: true, force: true });
 }
 
 const knownSecret = "phase42-known-secret-value";

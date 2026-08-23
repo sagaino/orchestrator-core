@@ -920,11 +920,13 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - `BOTH`;
   - `CONTRACT`;
   - `INFRASTRUCTURE`;
+  - `COMPATIBLE`;
   - `UNDETERMINED`.
 - Acceptance:
   - diagnosis cites reproducible evidence;
   - read-only diagnostic cannot edit either repository;
   - `UNDETERMINED` requests clarification/investigation;
+  - `COMPATIBLE` creates only read-only diagnostic/verification nodes with empty write scope;
   - implementation nodes are created only for implicated projects;
   - contract mismatch creates coordinated FE/BE nodes plus a contract verification node.
 - Verification: mocked FE-only, BE-only, both, contract, and unknown fixtures.
@@ -1103,6 +1105,20 @@ No earlier phase may depend on this phase. Existing role prompts must already su
   - `Approve & Run` approves the exact plan fingerprint and then materializes its canonical tasks;
   - duplicate planning remains idempotent and the Dashboard no longer calls legacy `/api/tasks/request` for Existing Project;
   - backend unit and Dashboard typecheck, lint, build, security, and browser gates remain green.
+
+#### ✅ V2-107 — Harden Linked Projects live diagnostic intake
+
+- Model: `ECONOMY`; result: `HUMAN GATE` for any resulting verification plan.
+- Scope: start diagnostic planning from Dashboard Linked Projects intake, run Antigravity diagnostics non-interactively with cached authentication, accept current structured-output envelopes, and represent a verified no-mismatch result as `COMPATIBLE`.
+- Acceptance:
+  - Linked Projects intake creates the objective and starts read-only diagnostic planning without legacy task intake;
+  - diagnostic capability allows provider network/authentication while retaining provider sandbox and plan mode;
+  - diagnostic print mode does not require interactive login or command approval;
+  - structured-output envelopes are parsed deterministically;
+  - `UNDETERMINED` requests clarification with no implicated project;
+  - `COMPATIBLE` permits only diagnostic/verification nodes with `requiresChanges=false` and `allowedPaths=[]`;
+  - no implementation task is materialized for a compatible contract audit;
+  - focused backend security/Cross-project tests and Dashboard Linked Projects browser gates remain green.
 
 ## 14. Required Test Matrix
 

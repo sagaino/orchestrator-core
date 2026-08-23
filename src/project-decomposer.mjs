@@ -379,6 +379,9 @@ export async function decomposeProject({
       "The cross-project diagnostic is authoritative for implicated-project boundaries.",
       `Do not create implementation nodes outside these implicated projects: ${JSON.stringify(crossProjectDiagnosis.implicatedProjects)}.`,
       `Diagnostic outcome: ${crossProjectDiagnosis.outcome}. Evidence must remain reflected in node purposes or acceptance criteria.`,
+      ...(crossProjectDiagnosis.outcome === "COMPATIBLE" ? [
+        "COMPATIBLE requires a verification-only plan: do not create IMPLEMENTATION nodes, set requiresChanges=false, and keep allowedPaths=[] for every node.",
+      ] : []),
     ] : []),
     "",
     "=== BOUNDED OBJECTIVE CONTEXT ===",
