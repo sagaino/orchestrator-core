@@ -997,7 +997,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 - Backend paths: extend `src/dev-server-manager.mjs` and visual evidence services; tests.
 - Acceptance: one objective can expose approved loopback preview URLs per runnable project; processes are bounded and cleaned; unavailable preview is explicit, not a failed verification pass.
 
-#### V2-081 — Objective-level visual and E2E evidence
+#### ✅ V2-081 — Objective-level visual and E2E evidence
 
 - Model: `ECONOMY`.
 - Backend/dashboard paths: existing visual QA modules, Objective review UI, tests.
