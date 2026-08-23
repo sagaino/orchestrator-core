@@ -442,13 +442,21 @@ export async function retryTaskRun({
 }) {
   let manifest = getRun(runsRoot, runId);
   if (manifest.state !== RUN_STATES.FAILED) {
-    throw new Error(`Retry hanya dapat dilakukan untuk run FAILED; state ${manifest.state}.`);
+    const error = new Error(`Retry hanya dapat dilakukan untuk run FAILED; state ${manifest.state}.`);
+    error.statusCode = 409;
+    error.code = "RETRY_NOT_ALLOWED";
+    error.details = { code: error.code, runState: manifest.state };
+    throw error;
   }
   const rawError = String(manifest.execution?.result?.error ?? "Unknown failure");
   const error = cleanErrorTail(rawError);
   const safeInfrastructureFailure = isSafeInfrastructureFailure({ rawError, manifest });
   if (!safeInfrastructureFailure && !force) {
-    throw new Error("Retry otomatis ditolak karena failure mungkin terjadi setelah project berubah. Review worktree lalu gunakan --force jika aman.");
+    const error = new Error("Retry otomatis ditolak karena failure mungkin terjadi setelah project berubah. Review worktree lalu gunakan --force jika aman.");
+    error.statusCode = 409;
+    error.code = "RETRY_REVIEW_REQUIRED";
+    error.details = { code: error.code, runId };
+    throw error;
   }
 
   manifest = await discardWorkspace({ runsRoot, manifest });

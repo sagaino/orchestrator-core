@@ -67,6 +67,14 @@ function safeRunId(runId) {
   return runId;
 }
 
+function retryConflict(message, details = {}) {
+  const error = new Error(message);
+  error.statusCode = 409;
+  error.code = "RETRY_NOT_ALLOWED";
+  error.details = { code: error.code, ...details };
+  return error;
+}
+
 function manifestPath(runsRoot, runId) {
   return path.join(runsRoot, `${safeRunId(runId)}.json`);
 }
@@ -218,13 +226,13 @@ export function promoteTaskToReady({
 
 export function resetFailedTaskToBacklog({ vaultRoot, manifest, retriedBy = "user", reason }) {
   if (manifest.state !== RUN_STATES.FAILED) {
-    throw new Error(`Retry membutuhkan run FAILED; state saat ini ${manifest.state}.`);
+    throw retryConflict(`Retry membutuhkan run FAILED; state saat ini ${manifest.state}.`, { runState: manifest.state });
   }
   const taskPath = path.join(vaultRoot, manifest.task.path);
   let content = fs.readFileSync(taskPath, "utf8");
   const currentStatus = content.match(/^status:\s*([^\s#]+)/m)?.[1]?.toUpperCase();
   if (currentStatus !== "FAILED") {
-    throw new Error(`Retry membutuhkan task FAILED; status saat ini ${currentStatus ?? "UNKNOWN"}.`);
+    throw retryConflict(`Retry membutuhkan task FAILED; status saat ini ${currentStatus ?? "UNKNOWN"}. Retry orchestration dilakukan melalui Decision Inbox.`, { taskStatus: currentStatus ?? "UNKNOWN", runId: manifest.runId });
   }
 
   const at = new Date().toISOString();
@@ -259,7 +267,7 @@ export function resetOrchestrationTaskToBacklog({
     return { taskPath, status: "BACKLOG", updatedAt: null, alreadyReset: true };
   }
   if (currentStatus !== "FAILED") {
-    throw new Error(`Retry orchestration membutuhkan task FAILED; status saat ini ${currentStatus ?? "UNKNOWN"}.`);
+    throw retryConflict(`Retry orchestration membutuhkan task FAILED; status saat ini ${currentStatus ?? "UNKNOWN"}.`, { taskStatus: currentStatus ?? "UNKNOWN" });
   }
 
   const at = (now instanceof Date ? now : new Date(now)).toISOString();
