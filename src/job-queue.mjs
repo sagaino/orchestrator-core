@@ -23,6 +23,10 @@ export const JOB_STATES = Object.freeze({
   CANCELLED: "CANCELLED",
 });
 
+export function sameProjectParallelEnabled(env = process.env) {
+  return ["1", "true", "on"].includes(String(env.ORCHESTRATOR_SAME_PROJECT_PARALLEL ?? "0").trim().toLowerCase());
+}
+
 function jobsRoot(runsRoot) {
   return path.join(runsRoot, "jobs");
 }
@@ -187,6 +191,10 @@ export function enqueueTaskJob({
         nodeId: orchestrationMetadata?.nodeId ?? null,
         attempt: orchestrationMetadata?.attempt ?? null,
         planFingerprint: orchestrationMetadata?.planFingerprint ?? null,
+        sameProjectParallel: orchestrationMetadata?.sameProjectParallel === true,
+        baseCommit: orchestrationMetadata?.baseCommit ?? null,
+        frozenSourceStatus: orchestrationMetadata?.frozenSourceStatus ?? null,
+        frozenSourceStatusHash: orchestrationMetadata?.frozenSourceStatusHash ?? null,
         planApproval: orchestrationMetadata ? {
           decisionId: orchestrationMetadata.approvalDecisionId ?? null,
           planFingerprint: orchestrationMetadata.planFingerprint ?? null,
@@ -200,6 +208,7 @@ export function enqueueTaskJob({
           orchestrationId: orchestrationMetadata.orchestrationId,
           nodeId: orchestrationMetadata.nodeId,
           attempt: orchestrationMetadata.attempt ?? 1,
+          sameProjectParallel: orchestrationMetadata.sameProjectParallel === true,
         } : null,
         runId: null,
         runState: null,
@@ -248,11 +257,13 @@ export function reservedProjectIds(runsRoot) {
   )].sort();
 }
 
-export function claimNextJob(runsRoot, { blockedProjectIds = [] } = {}) {
+export function claimNextJob(runsRoot, { blockedProjectIds = [], allowSameProjectParallel = false } = {}) {
   const jobs = listJobs(runsRoot);
+  const activeJobs = jobs.filter((job) => activeJobState(job.state));
+  const sameProjectMode = allowSameProjectParallel === true;
   const reserved = new Set([
-    ...jobs
-      .filter((job) => [JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state))
+    ...activeJobs
+      .filter((job) => !(sameProjectMode && job.sameProjectParallel === true))
       .map((job) => job.projectId),
     ...blockedProjectIds,
   ]);
@@ -261,28 +272,32 @@ export function claimNextJob(runsRoot, { blockedProjectIds = [] } = {}) {
     .filter((job) => !reserved.has(job.projectId))
     .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)));
   for (const candidate of queued) {
-    releaseInactiveProjectReservation(runsRoot, candidate.projectId);
+    const candidateSameProject = sameProjectMode && candidate.sameProjectParallel === true;
+    if (!candidateSameProject) releaseInactiveProjectReservation(runsRoot, candidate.projectId);
     let projectLease = null;
     let executionLease = null;
     try {
-      projectLease = acquireDurableLease({
-        runsRoot,
-        namespace: PROJECT_RESERVATION_NAMESPACE,
-        key: candidate.projectId,
-        purpose: `project reservation ${candidate.projectId}`,
-        metadata: { jobId: candidate.jobId, projectId: candidate.projectId },
-        ttlMs: null,
-        reclaimDeadOwner: false,
-      });
+      if (!candidateSameProject) {
+        projectLease = acquireDurableLease({
+          runsRoot,
+          namespace: PROJECT_RESERVATION_NAMESPACE,
+          key: candidate.projectId,
+          purpose: `project reservation ${candidate.projectId}`,
+          metadata: { jobId: candidate.jobId, projectId: candidate.projectId },
+          ttlMs: null,
+          reclaimDeadOwner: false,
+        });
+      }
 
       const conflicting = listJobs(runsRoot).find((job) => (
         job.jobId !== candidate.jobId
         && job.projectId === candidate.projectId
         && activeJobState(job.state)
+        && (!candidateSameProject || job.sameProjectParallel !== true)
       ));
       const latest = getJob(runsRoot, candidate.jobId);
-      if (conflicting || latest.state !== JOB_STATES.QUEUED) {
-        releaseDurableLease(projectLease);
+      if (conflicting || latest.state !== JOB_STATES.QUEUED || (candidateSameProject !== (latest.sameProjectParallel === true))) {
+        if (projectLease) releaseDurableLease(projectLease);
         continue;
       }
 
@@ -303,11 +318,12 @@ export function claimNextJob(runsRoot, { blockedProjectIds = [] } = {}) {
           claimId: executionLease.record.leaseId,
           claimedAt,
           owner: executionLease.record.owner,
-          projectReservationId: projectLease.record.leaseId,
+          projectReservationId: projectLease?.record?.leaseId ?? null,
         },
         scheduling: {
-          strategy: "PARALLEL_DISTINCT_PROJECTS",
-          projectExclusive: true,
+          strategy: candidateSameProject ? "PARALLEL_SAME_PROJECT" : "PARALLEL_DISTINCT_PROJECTS",
+          projectExclusive: !candidateSameProject,
+          sameProjectParallel: candidateSameProject,
           durable: true,
         },
       });

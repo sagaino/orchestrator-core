@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { listRuns, prepareRunFromEvent, reconcileInterruptedRuns, RUN_STATES } from "./run-manager.mjs";
 import { scanReadyTasks, watchReadyTasks } from "./adapters/vault-task-watcher.mjs";
-import { claimNextJob, JOB_STATES, listJobs, reconcileJobs, updateJob } from "./job-queue.mjs";
+import { claimNextJob, JOB_STATES, listJobs, reconcileJobs, sameProjectParallelEnabled, updateJob } from "./job-queue.mjs";
 import { resumeClaimedTaskRun, startTaskRun } from "./task-workflow.mjs";
 import { notificationSummary, notifyTaskOutcome } from "./notification-service.mjs";
 import { createOrchestratorServer } from "./server.mjs";
@@ -311,6 +311,7 @@ function launchAgentPlist({ vaultRoot, runsRoot, cliPath, outputPath }) {
     ["ORCHESTRATOR_TOKEN_WARNING_THRESHOLD", process.env.ORCHESTRATOR_TOKEN_WARNING_THRESHOLD],
     ["ORCHESTRATOR_MAX_PARALLEL_JOBS", process.env.ORCHESTRATOR_MAX_PARALLEL_JOBS],
     ["ORCHESTRATOR_OBJECTIVE_SCHEDULER", process.env.ORCHESTRATOR_OBJECTIVE_SCHEDULER],
+    ["ORCHESTRATOR_SAME_PROJECT_PARALLEL", process.env.ORCHESTRATOR_SAME_PROJECT_PARALLEL],
   ].filter(([, value]) => value !== undefined && value !== "");
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -386,6 +387,17 @@ export async function processClaimedJob({
         approvedBy: job.requestedBy,
         services,
         initialTelemetry: job.intakeTelemetry ?? null,
+        orchestrationMetadata: job.sameProjectParallel === true ? {
+          objectiveId: job.objectiveId,
+          planId: job.planId,
+          orchestrationId: job.orchestrationId,
+          nodeId: job.nodeId,
+          attempt: job.attempt,
+          sameProjectParallel: true,
+          baseCommit: job.baseCommit,
+          frozenSourceStatus: job.frozenSourceStatus,
+          frozenSourceStatusHash: job.frozenSourceStatusHash,
+        } : null,
         onProgress,
       });
     const state = manifest.state === RUN_STATES.RETROSPECTIVE ? JOB_STATES.REVIEW : JOB_STATES.FAILED;
@@ -447,6 +459,7 @@ export async function processNextQueuedJob(options) {
   }
   const job = claimNextJob(options.runsRoot, {
     blockedProjectIds: options.blockedProjectIds ?? [],
+    allowSameProjectParallel: sameProjectParallelEnabled(process.env),
   });
   if (!job) return null;
   return processClaimedJob({ ...options, job });
@@ -482,7 +495,7 @@ export function createParallelJobPool({
       return { ...snapshot(), admission: readiness.admission };
     }
     while (activeJobs.size < maxWorkers) {
-      const job = claimNextJob(runsRoot);
+      const job = claimNextJob(runsRoot, { allowSameProjectParallel: sameProjectParallelEnabled(process.env) });
       if (!job) break;
       const promise = processClaimedJob({
         vaultRoot,

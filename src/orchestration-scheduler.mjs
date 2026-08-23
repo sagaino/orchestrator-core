@@ -1,9 +1,12 @@
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { listProjects } from "./core.mjs";
 import { getObjective, updateObjective } from "./objective-store.mjs";
 import { getPlan } from "./plan-store.mjs";
 import { createDecision, getDecision, updateDecision } from "./decision-store.mjs";
 import { getOrchestration, listOrchestrations, updateOrchestration } from "./orchestration-store.mjs";
-import { enqueueTaskJob, JOB_STATES, listJobs, updateJob } from "./job-queue.mjs";
-import { topologicalOrder } from "./task-graph.mjs";
+import { enqueueTaskJob, JOB_STATES, listJobs, sameProjectParallelEnabled, updateJob } from "./job-queue.mjs";
+import { detectWriteConflicts, topologicalOrder } from "./task-graph.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 import { classifyIntegrationFailure, getIntegrationEvidence } from "./integration-manager.mjs";
 
@@ -46,6 +49,92 @@ function configuredGlobalParallelJobs(env = process.env) {
     });
   }
   return value;
+}
+
+function gitOutput(repository, args) {
+  return execFileSync("git", ["-C", repository, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+function sourceBaseline(repository) {
+  const status = gitOutput(repository, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  return {
+    repository,
+    baseCommit: gitOutput(repository, ["rev-parse", "HEAD"]),
+    frozenSourceStatus: status,
+    frozenSourceStatusHash: createHash("sha256").update(status).digest("hex"),
+  };
+}
+
+function sameProjectParallelProjects(plan) {
+  if (plan.integration?.required !== true) return [];
+  const counts = new Map();
+  for (const node of plan.nodes) {
+    if (node.canRunInParallel !== true) continue;
+    counts.set(node.projectId, (counts.get(node.projectId) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([projectId]) => projectId).sort();
+}
+
+function freezeSameProjectBaselines({ vaultRoot, runsRoot, plan, orchestration, now }) {
+  const projectIds = sameProjectParallelProjects(plan);
+  if (!projectIds.length) return { orchestration, active: false, projectIds: [] };
+  if (!vaultRoot) {
+    fail("Same-project parallel membutuhkan vaultRoot untuk membekukan repository baseline.", {
+      code: "SAME_PROJECT_BASELINE_ROOT_REQUIRED",
+      details: { code: "SAME_PROJECT_BASELINE_ROOT_REQUIRED" },
+    });
+  }
+  const projects = listProjects(vaultRoot).projects;
+  const existing = orchestration.integration?.projectBaselines ?? {};
+  const baselines = { ...existing };
+  let changed = false;
+  for (const projectId of projectIds) {
+    const project = projects.find((candidate) => candidate.id === projectId);
+    if (!project) fail(`Project baseline tidak ditemukan: ${projectId}`, { code: "SAME_PROJECT_PROJECT_NOT_FOUND", details: { projectId } });
+    let current;
+    try {
+      current = sourceBaseline(project.repository);
+    } catch (error) {
+      fail(`Repository baseline tidak dapat dibekukan untuk ${projectId}: ${error.message}`, { code: "SAME_PROJECT_BASELINE_UNAVAILABLE", details: { projectId } });
+    }
+    if (current.frozenSourceStatus) {
+      fail(`Repository ${projectId} harus clean sebelum same-project parallel diaktifkan.`, {
+        code: "SAME_PROJECT_BASELINE_DIRTY",
+        details: { projectId, statusHash: current.frozenSourceStatusHash },
+      });
+    }
+    const previous = baselines[projectId];
+    if (previous && typeof previous === "object") {
+      if (previous.baseCommit !== current.baseCommit || previous.frozenSourceStatusHash !== current.frozenSourceStatusHash) {
+        fail(`Frozen baseline berubah untuk project ${projectId}.`, {
+          code: "SAME_PROJECT_BASELINE_DRIFT",
+          details: { projectId, frozenBaseCommit: previous.baseCommit, currentBaseCommit: current.baseCommit },
+        });
+      }
+      continue;
+    }
+    baselines[projectId] = { ...current, frozenAt: new Date(now).toISOString() };
+    changed = true;
+  }
+  if (!changed && orchestration.integration?.sameProjectParallel?.enabled === true) {
+    return { orchestration, active: true, projectIds };
+  }
+  const updated = updateOrchestration({
+    runsRoot,
+    orchestrationId: orchestration.orchestrationId,
+    expectedRevision: orchestration.revision,
+    now,
+    update: (record) => ({
+      ...record,
+      integration: {
+        ...(record.integration ?? {}),
+        projectBaselines: baselines,
+        sameProjectParallel: { enabled: true, activatedAt: record.integration?.sameProjectParallel?.activatedAt ?? new Date(now).toISOString() },
+      },
+    }),
+    validationOptions: { plan },
+  });
+  return { orchestration: updated, active: true, projectIds };
 }
 
 function planOptions(objective) {
@@ -189,7 +278,7 @@ function materializedTaskMap(orchestration) {
   return new Map((orchestration.materialization?.tasks ?? []).map((task) => [task.nodeId, task]));
 }
 
-function queueCandidate({ runsRoot, objective, plan, orchestration, nodeId, task }) {
+function queueCandidate({ runsRoot, objective, plan, orchestration, nodeId, task, sameProjectParallel = false, baseline = null }) {
   if (!task?.path || !task?.taskId || !task?.projectId) {
     fail(`Materialized task untuk node ${nodeId} tidak lengkap.`, {
       code: "MATERIALIZED_TASK_MISSING",
@@ -200,6 +289,10 @@ function queueCandidate({ runsRoot, objective, plan, orchestration, nodeId, task
     ...approvalMetadata({ objective: { ...objective, runsRoot }, plan, orchestrationId: orchestration.orchestrationId }),
     nodeId,
     attempt: orchestration.nodes[nodeId]?.attempt ?? 1,
+    sameProjectParallel,
+    baseCommit: baseline?.baseCommit ?? null,
+    frozenSourceStatus: baseline?.frozenSourceStatus ?? null,
+    frozenSourceStatusHash: baseline?.frozenSourceStatusHash ?? null,
   };
   const queued = enqueueTaskJob({
     runsRoot,
@@ -499,7 +592,7 @@ function activeQueueJob(job) {
   return [JOB_STATES.QUEUED, JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job?.state);
 }
 
-function scheduleOne({ runsRoot, orchestration, now, env = process.env }) {
+function scheduleOne({ vaultRoot = null, runsRoot, orchestration, now, env = process.env }) {
   if (TERMINAL_ORCHESTRATION_STATES.has(orchestration.state)) return { orchestration, queued: [], changed: false };
   const objective = getObjective(runsRoot, orchestration.objectiveId);
   if (!objective) fail(`Objective scheduler tidak ditemukan: ${orchestration.objectiveId}`, { code: "OBJECTIVE_NOT_FOUND", details: { code: "OBJECTIVE_NOT_FOUND", objectiveId: orchestration.objectiveId } });
@@ -509,7 +602,12 @@ function scheduleOne({ runsRoot, orchestration, now, env = process.env }) {
     fail(`Orchestration ${orchestration.orchestrationId} tidak memiliki plan approved yang cocok.`, { code: "STALE_APPROVED_PLAN", details: { code: "STALE_APPROVED_PLAN", orchestrationId: orchestration.orchestrationId } });
   }
   const jobs = listJobs(runsRoot);
-  const reconciled = reconcileRuntimeNodes({ plan, orchestration, jobs });
+  const sameProjectFlag = sameProjectParallelEnabled(env);
+  const frozen = sameProjectFlag
+    ? freezeSameProjectBaselines({ vaultRoot, runsRoot, plan, orchestration, now })
+    : { orchestration, active: false, projectIds: [] };
+  const activeOrchestration = frozen.orchestration;
+  const reconciled = reconcileRuntimeNodes({ plan, orchestration: activeOrchestration, jobs });
   let nodes = reconciled.nodes;
   let state = orchestrationState(nodes, orchestration.state);
   const queued = [];
@@ -520,19 +618,38 @@ function scheduleOne({ runsRoot, orchestration, now, env = process.env }) {
   let objectiveOccupancy = objectiveJobs.length;
   const maxObjectiveParallel = Number(objective.budget?.maxParallelAgents ?? 1);
   const tasks = materializedTaskMap(orchestration);
-  const occupiedProjects = new Set(
-    activeJobs
-      .filter((job) => [JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state))
-      .map((job) => job.projectId)
-      .filter(Boolean),
-  );
+  const sameProjectMode = frozen.active;
+  const sameProjectBaseline = new Map(Object.entries(activeOrchestration.integration?.projectBaselines ?? {}));
+  const sameProjectNode = (nodeId) => {
+    const node = plan.nodes.find((candidate) => candidate.nodeId === nodeId);
+    return sameProjectMode && node?.canRunInParallel === true && frozen.projectIds.includes(node.projectId);
+  };
+  const activeSameProjectNodeIds = new Set();
+  const activeSameProjectProjects = new Set();
+  const occupiedProjects = new Set();
+  for (const job of activeJobs) {
+    if (sameProjectNode(job.nodeId) && job.sameProjectParallel === true) {
+      activeSameProjectNodeIds.add(job.nodeId);
+      if (job.projectId) activeSameProjectProjects.add(job.projectId);
+    }
+    else if ([JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state) && job.projectId) occupiedProjects.add(job.projectId);
+  }
   for (const [nodeId, runtime] of Object.entries(nodes)) {
     if (ACTIVE_NODE_STATES.has(runtime.state)) {
       const projectId = tasks.get(nodeId)?.projectId;
-      if (projectId) occupiedProjects.add(projectId);
+      if (projectId && sameProjectNode(nodeId)) {
+        activeSameProjectNodeIds.add(nodeId);
+        activeSameProjectProjects.add(projectId);
+      }
+      else if (projectId) occupiedProjects.add(projectId);
     }
   }
   const ordered = topologicalOrder(plan.nodes);
+  const conflicts = new Set(detectWriteConflicts(plan.nodes).flatMap((conflict) => {
+    const [left, right] = conflict.nodeIds;
+    return [`${left}:${right}`, `${right}:${left}`];
+  }));
+  const selectedSameProjectNodeIds = new Set();
 
   for (const nodeId of ordered) {
     if (globalOccupancy >= globalCeiling || objectiveOccupancy >= maxObjectiveParallel) break;
@@ -540,8 +657,24 @@ function scheduleOne({ runsRoot, orchestration, now, env = process.env }) {
     const runtime = nodes[nodeId];
     if (runtime?.state !== "READY" || !candidate.dependsOn.every((dependency) => nodes[dependency]?.state === "DONE")) continue;
     const task = tasks.get(candidate.nodeId);
-    if (!task?.projectId || occupiedProjects.has(task.projectId)) continue;
-    const queuedCandidate = queueCandidate({ runsRoot, objective, plan, orchestration, nodeId: candidate.nodeId, task });
+    if (!task?.projectId) continue;
+    const candidateSameProject = sameProjectNode(candidate.nodeId);
+    if (candidateSameProject) {
+      if (occupiedProjects.has(task.projectId)) continue;
+      const relatedActive = [...activeSameProjectNodeIds, ...selectedSameProjectNodeIds]
+        .filter((activeNodeId) => plan.nodes.find((node) => node.nodeId === activeNodeId)?.projectId === task.projectId);
+      if (relatedActive.some((activeNodeId) => conflicts.has(`${candidate.nodeId}:${activeNodeId}`))) continue;
+    } else if (occupiedProjects.has(task.projectId) || activeSameProjectProjects.has(task.projectId)) continue;
+    const queuedCandidate = queueCandidate({
+      runsRoot,
+      objective,
+      plan,
+      orchestration: activeOrchestration,
+      nodeId: candidate.nodeId,
+      task,
+      sameProjectParallel: candidateSameProject,
+      baseline: sameProjectBaseline.get(task.projectId),
+    });
     queued.push(queuedCandidate);
     nodes = structuredClone(nodes);
     nodes[candidate.nodeId] = {
@@ -550,12 +683,13 @@ function scheduleOne({ runsRoot, orchestration, now, env = process.env }) {
       jobId: queuedCandidate.job.jobId,
       lastError: null,
     };
-    occupiedProjects.add(task.projectId);
+    if (candidateSameProject) selectedSameProjectNodeIds.add(candidate.nodeId);
+    else occupiedProjects.add(task.projectId);
     globalOccupancy += 1;
     objectiveOccupancy += 1;
     state = "RUNNING";
   }
-  const persisted = persistOrchestration({ runsRoot, orchestration, plan, nodes, state, now });
+  const persisted = persistOrchestration({ runsRoot, orchestration: activeOrchestration, plan, nodes, state, now });
   updateObjectiveState({ runsRoot, objective, orchestration: persisted });
   return { orchestration: persisted, queued, changed: reconciled.changed || queued.length > 0 || persisted !== orchestration };
 }
@@ -575,7 +709,7 @@ export function schedulerTick({ vaultRoot = null, runsRoot, enabled = orchestrat
     const results = [];
     for (const orchestration of listOrchestrations(runsRoot)) {
       try {
-        const result = scheduleOne({ runsRoot, orchestration, now, env });
+        const result = scheduleOne({ vaultRoot, runsRoot, orchestration, now, env });
         results.push({ orchestrationId: orchestration.orchestrationId, ...result });
       } catch (error) {
         results.push({ orchestrationId: orchestration.orchestrationId, error: { code: error.code ?? "SCHEDULER_ERROR", message: error.message } });

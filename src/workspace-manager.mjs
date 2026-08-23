@@ -278,7 +278,23 @@ export async function prepareIsolatedWorkspace({ manifest, runsRoot, eventLogPat
     stage: "workspace:source-status",
     eventLogPath,
   }, "Status repository tidak dapat dibaca");
+  const orchestrationBaseline = manifest.execution?.orchestration?.sameProjectParallel === true
+    ? manifest.execution.orchestration
+    : null;
+  const sourceHead = commitResult.stdoutTail.trim();
+  const sourceStatus = String(statusResult.stdoutTail ?? "").trim();
+  if (orchestrationBaseline?.baseCommit && sourceHead !== orchestrationBaseline.baseCommit) {
+    const error = new Error(`Source repository berubah dari frozen common base ${orchestrationBaseline.baseCommit}.`);
+    error.code = "SAME_PROJECT_BASELINE_DRIFT";
+    throw error;
+  }
+  if (orchestrationBaseline && sourceStatus !== String(orchestrationBaseline.frozenSourceStatus ?? "").trim()) {
+    const error = new Error("Source repository status berubah dari frozen common baseline.");
+    error.code = "SAME_PROJECT_BASELINE_DRIFT";
+    throw error;
+  }
   const sourceStatusPaths = porcelainPaths(statusResult.stdoutTail);
+  const workspaceBaseCommit = orchestrationBaseline?.baseCommit || sourceHead;
 
   const workspaceRoot = path.join(runsRoot, "workspaces");
   const workspacePath = ensureInside(
@@ -291,7 +307,7 @@ export async function prepareIsolatedWorkspace({ manifest, runsRoot, eventLogPat
   fs.mkdirSync(path.dirname(workspacePath), { recursive: true });
   await requireSuccessfulProcess(processRunner, {
     command: "git",
-    args: ["worktree", "add", "--detach", workspacePath, commitResult.stdoutTail.trim()],
+    args: ["worktree", "add", "--detach", workspacePath, workspaceBaseCommit],
     cwd: repository,
     stage: "workspace:create",
     eventLogPath,
@@ -307,7 +323,7 @@ export async function prepareIsolatedWorkspace({ manifest, runsRoot, eventLogPat
       state: "PREPARING",
       path: workspacePath,
       sourceRepository: repository,
-      baseCommit: commitResult.stdoutTail.trim(),
+      baseCommit: workspaceBaseCommit,
       sourceDirty: Boolean(statusResult.stdoutTail.trim()),
       sourceStatusEntryCount: sourceStatusPaths.length,
       sourceStatusPaths,
