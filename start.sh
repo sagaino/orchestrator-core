@@ -360,7 +360,18 @@ graceful_kill_port "$BACKEND_PORT"
 graceful_kill_port "$FRONTEND_PORT"
 
 # 6. Trap SIGINT and SIGTERM for Graceful Shutdown
-trap 'stop_services; exit 0' SIGINT SIGTERM EXIT
+# SIGINT/SIGTERM handlers call exit, which also fires EXIT. Guard the cleanup
+# so Ctrl+C cannot print or execute the shutdown flow twice.
+STOP_SERVICES_RAN=0
+stop_services_once() {
+  if [ "$STOP_SERVICES_RAN" -eq 1 ]; then
+    return 0
+  fi
+  STOP_SERVICES_RAN=1
+  stop_services
+}
+trap 'stop_services_once; exit 0' SIGINT SIGTERM
+trap 'stop_services_once' EXIT
 
 # 7. Launch Services
 echo ""
