@@ -40,7 +40,7 @@ import { createObjectiveIntake, getObjectiveIntake, listObjectiveIntake, objecti
 import { approveFreshProjectGenesis, auditGenesisApproval } from "./fresh-project-genesis.mjs";
 import { getObjective } from "./objective-store.mjs";
 import { buildObjectiveGraph } from "./objective-graph.mjs";
-import { listDecisions } from "./decision-store.mjs";
+import { listDecisions, listDecisionInbox } from "./decision-store.mjs";
 import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
 import { materializeApprovedPlan } from "./task-materializer.mjs";
 import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
@@ -431,6 +431,19 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         .filter((decision) => !objectiveId || decision.objectiveId === objectiveId)
         .filter((decision) => !state || decision.state === state);
       sendJson(res, 200, { success: true, data: decisions });
+    } catch (error) {
+      sendError(res, error.statusCode || 500, error.message, error.details);
+    }
+  });
+
+  router.get("/api/decisions/inbox", async (req, res) => {
+    try {
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+      const objectiveId = parsedUrl.searchParams.get("objectiveId");
+      const state = parsedUrl.searchParams.get("state") || "OPEN";
+      const limit = parsedUrl.searchParams.get("limit") || "100";
+      const inbox = (services?.listDecisionInbox ?? listDecisionInbox)(runsRoot, { objectiveId, state, limit });
+      sendJson(res, 200, { success: true, data: inbox });
     } catch (error) {
       sendError(res, error.statusCode || 500, error.message, error.details);
     }
@@ -2189,6 +2202,7 @@ export function createOrchestratorServer({
     resolveDecision,
     cancelOrchestration,
     listDecisions,
+    listDecisionInbox,
     startIntegration,
     getIntegrationEvidence,
     recoverIntegration,
