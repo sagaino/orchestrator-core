@@ -12,6 +12,7 @@ export const CROSS_PROJECT_DIAGNOSTIC_OUTCOMES = Object.freeze([
   "BOTH",
   "CONTRACT",
   "INFRASTRUCTURE",
+  "COMPATIBLE",
   "UNDETERMINED",
 ]);
 
@@ -97,8 +98,22 @@ export function crossProjectDiagnosticSchema() {
 function unwrapProviderEnvelope(value) {
   if (!isRecord(value)) return value;
   const keys = Object.keys(value);
-  if (keys.length === 1 && isRecord(value.structured_output)) return value.structured_output;
+  if (isRecord(value.structured_output)) return value.structured_output;
   if (keys.length === 2 && value.event === "result" && isRecord(value.result)) return value.result;
+  if (Object.hasOwn(value, "response")) {
+    if (String(value.status ?? "").toUpperCase() === "ERROR" || value.error) {
+      throw errorWithCode(`Cross-project diagnostic provider melaporkan error: ${clean(value.error ?? value.status, 600)}`, "PROVIDER_FAILED");
+    }
+    if (isRecord(value.response)) return value.response;
+    if (typeof value.response === "string") {
+      try {
+        const response = JSON.parse(value.response.trim());
+        if (isRecord(response)) return response;
+      } catch {
+        throw errorWithCode("Cross-project diagnostic provider response harus satu dokumen JSON tanpa prose.", "INVALID_CROSS_PROJECT_DIAGNOSTIC");
+      }
+    }
+  }
   return value;
 }
 
@@ -160,6 +175,10 @@ export function validateCrossProjectDiagnostic(diagnostic, objective) {
     if (diagnostic.clarificationNeeded !== true) errors.push("UNDETERMINED wajib meminta clarification/investigation");
     if (!nonEmpty(diagnostic.clarificationQuestion)) errors.push("UNDETERMINED wajib memiliki clarificationQuestion");
     if ((diagnostic.implicatedProjects ?? []).length > 0) errors.push("UNDETERMINED tidak boleh membuat project terimplikasi");
+  } else if (diagnostic.outcome === "COMPATIBLE") {
+    if (diagnostic.clarificationNeeded !== false) errors.push("COMPATIBLE tidak boleh meminta clarification");
+    if (diagnostic.clarificationQuestion !== null) errors.push("clarificationQuestion harus null untuk COMPATIBLE");
+    if ((diagnostic.implicatedProjects ?? []).length > 0) errors.push("COMPATIBLE tidak boleh membuat project terimplikasi");
   } else {
     if (diagnostic.clarificationNeeded !== false) errors.push("diagnosis terdeterminasi tidak boleh meminta clarification");
     if (diagnostic.clarificationQuestion !== null) errors.push("clarificationQuestion harus null untuk diagnosis terdeterminasi");
@@ -183,7 +202,7 @@ export function buildCrossProjectDiagnosticContext({ objective, projectContexts 
   return buildStageContext({
     stage: CROSS_PROJECT_DIAGNOSTIC_STAGE,
     acceptanceCriteria: [
-      "Classify the incident as FRONTEND, BACKEND, BOTH, CONTRACT, INFRASTRUCTURE, or UNDETERMINED.",
+      "Classify the result as FRONTEND, BACKEND, BOTH, CONTRACT, INFRASTRUCTURE, COMPATIBLE, or UNDETERMINED.",
       "Every diagnosis must cite evidence that another operator can reproduce without editing either repository.",
       "Keep implicatedProjects limited to repositories supported by the evidence.",
     ],
@@ -233,10 +252,14 @@ export async function diagnoseCrossProject({
   const prompt = [
     "=== READ-ONLY CROSS-PROJECT DIAGNOSTIC ===",
     "You are a diagnostic-only provider. Do not edit files, run mutating commands, create tasks, enqueue jobs, execute agents, approve a plan, or invent human identities.",
+    "Tool use is forbidden in this phase, including file search, repository inspection, and shell commands. Use only the bounded context below.",
+    "Do not execute verification scripts; only record configured verification names supplied in context. If endpoint-level evidence is absent, return UNDETERMINED and request the smallest concrete evidence needed.",
     "Use only reproducible observations from the bounded context. Return exactly one JSON object matching the supplied schema, without Markdown or prose.",
     `The diagnosticId must be ${diagnosticId}; objectiveId must be ${objective.objectiveId}; readOnly must be true.`,
     "Evidence.reproduction must describe a repeatable command or observable sequence and evidence.actual must be concrete.",
     "Use UNDETERMINED when evidence does not distinguish the implicated layer; set clarificationNeeded=true and ask for the smallest useful investigation.",
+    "For UNDETERMINED, implicatedProjects must be an empty array. Do not implicate a project without evidence that distinguishes its layer.",
+    "Use COMPATIBLE only when reproducible evidence shows the compared contract assumptions align and no repair is required. For COMPATIBLE, implicatedProjects must be [], clarificationNeeded must be false, and clarificationQuestion must be null.",
     `The only allowed project IDs are: ${JSON.stringify(sortedProjectIds(objective.projectIds))}.`,
     "",
     "=== BOUNDED DIAGNOSTIC CONTEXT ===",
@@ -258,6 +281,9 @@ export async function diagnoseCrossProject({
     ],
     cwd: repository,
     stage: CROSS_PROJECT_DIAGNOSTIC_STAGE,
+    capabilityProfile: "diagnostic",
+    writableRoots: [],
+    readableRoots: projectContexts.map((project) => project?.repository).filter(nonEmpty),
     eventLogPath,
     readOnly: true,
     now,
@@ -321,6 +347,16 @@ export function validateCrossProjectPlan(plan, diagnosis, objective) {
     if (!implementationNodes.some((node) => node.role === "BACKEND" && implicated.has(node.projectId))) errors.push("CONTRACT diagnosis requires a coordinated BACKEND implementation node");
     if (!(plan?.nodes ?? []).some((node) => node.type === "VERIFICATION" && (node.role === "INTEGRATION" || node.role === "TESTING") && /contract/.test(nodeText(node)))) {
       errors.push("CONTRACT diagnosis requires a contract verification node");
+    }
+  }
+  if (diagnosis.outcome === "COMPATIBLE") {
+    if (implementationNodes.length > 0) errors.push("COMPATIBLE diagnosis cannot create implementation nodes");
+    for (const node of plan?.nodes ?? []) {
+      if (node.requiresChanges !== false) errors.push(`COMPATIBLE node ${node.nodeId} must be read-only`);
+      if ((node.allowedPaths ?? []).length > 0) errors.push(`COMPATIBLE node ${node.nodeId} cannot declare write paths`);
+    }
+    if (!(plan?.nodes ?? []).some((node) => node.type === "VERIFICATION" || node.type === "DIAGNOSTIC")) {
+      errors.push("COMPATIBLE diagnosis requires at least one read-only diagnostic or verification node");
     }
   }
   return [...new Set(errors)];

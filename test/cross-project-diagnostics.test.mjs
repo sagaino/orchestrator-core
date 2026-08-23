@@ -3,6 +3,7 @@ import {
   CROSS_PROJECT_DIAGNOSTIC_OUTCOMES,
   crossProjectDiagnosticSchema,
   diagnoseCrossProject,
+  parseCrossProjectDiagnosticResult,
   validateCrossProjectDiagnostic,
   validateCrossProjectPlan,
 } from "../src/cross-project-diagnostics.mjs";
@@ -54,6 +55,15 @@ function diagnosis(outcome, implicatedProjects, clarification = null) {
 
 assert.deepEqual(crossProjectDiagnosticSchema().properties.outcome.enum, CROSS_PROJECT_DIAGNOSTIC_OUTCOMES);
 
+const envelopeDiagnosis = diagnosis("FRONTEND", ["frontend"]);
+assert.deepEqual(parseCrossProjectDiagnosticResult({ stdoutTail: JSON.stringify({
+  conversation_id: "fixture",
+  status: "SUCCESS",
+  response: JSON.stringify(envelopeDiagnosis),
+  structured_output: envelopeDiagnosis,
+  usage: { total_tokens: 100 },
+}) }), envelopeDiagnosis);
+
 for (const [outcome, implicated] of [
   ["FRONTEND", ["frontend"]],
   ["BACKEND", ["backend"]],
@@ -68,8 +78,12 @@ for (const [outcome, implicated] of [
     projectContexts,
     processRunner: async (input) => {
       assert.equal(input.stage, "cross-project-diagnostic");
+      assert.equal(input.capabilityProfile, "diagnostic");
+      assert.deepEqual(input.writableRoots, []);
+      assert.deepEqual(input.readableRoots, ["/tmp/frontend", "/tmp/backend"]);
       assert.equal(input.readOnly, true);
       assert.equal(input.args[input.args.indexOf("--mode") + 1], "plan");
+      assert.equal(input.args.includes("--dangerously-skip-permissions"), false);
       return { exitCode: 0, stdoutTail: JSON.stringify(parsed), finalResult: parsed };
     },
   });
@@ -78,6 +92,16 @@ for (const [outcome, implicated] of [
   assert.equal(result.diagnosis.outcome, outcome);
   assert.equal(result.planning.jobsCreated, 0);
 }
+
+const compatible = diagnosis("COMPATIBLE", []);
+assert.deepEqual(validateCrossProjectDiagnostic(compatible, objective), []);
+const compatibleRun = await diagnoseCrossProject({
+  objective,
+  projectContexts,
+  processRunner: async () => ({ exitCode: 0, stdoutTail: JSON.stringify(compatible) }),
+});
+assert.equal(compatibleRun.status, "DIAGNOSIS_READY");
+assert.equal(compatibleRun.diagnosis.outcome, "COMPATIBLE");
 
 const unknown = diagnosis("UNDETERMINED", [], "Capture the failing request and identify whether the first divergent signal is in FE or BE.");
 const unknownResult = await diagnoseCrossProject({
@@ -174,6 +198,32 @@ const contractPlan = {
 
 assert.deepEqual(validateCrossProjectPlan(contractPlan, diagnosis("CONTRACT", ["frontend", "backend"]), objective), []);
 assert.ok(validateCrossProjectPlan({ ...contractPlan, nodes: contractPlan.nodes.filter((node) => node.nodeId !== "N02") }, diagnosis("CONTRACT", ["frontend", "backend"]), objective).some((message) => message.includes("BACKEND")));
+
+const compatiblePlan = {
+  ...contractPlan,
+  summary: "Verify that the registered frontend/backend contract remains compatible.",
+  nodes: [{
+    nodeId: "N01",
+    title: "Verify compatible API contract",
+    purpose: "Record the existing compatible method and path contract without modifying either repository.",
+    projectId: "backend",
+    role: "TESTING",
+    type: "VERIFICATION",
+    dependsOn: [],
+    acceptanceCriteria: ["Configured compatibility verification passes with no changed paths."],
+    allowedPaths: [],
+    verification: ["test:contract"],
+    risk: "LOW",
+    complexity: "LOW",
+    requiresChanges: false,
+    canRunInParallel: false,
+    writeConflictGroup: null,
+    contextFrom: [],
+    skills: [],
+  }],
+};
+assert.deepEqual(validateCrossProjectPlan(compatiblePlan, compatible, objective), []);
+assert.ok(validateCrossProjectPlan({ ...compatiblePlan, nodes: [{ ...compatiblePlan.nodes[0], type: "IMPLEMENTATION", requiresChanges: true, allowedPaths: ["src/api/**"] }] }, compatible, objective).some((message) => message.includes("COMPATIBLE")));
 
 const calls = [];
 const decomposed = await decomposeProject({

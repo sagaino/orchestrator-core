@@ -12,6 +12,7 @@ const PROVIDER_ENV = Object.freeze([
 
 export const CAPABILITY_PROFILES = Object.freeze({
   agent: { network: "provider", deadlineMs: 35 * 60_000, maxOutputBytes: 2_000_000, env: [...BASE_ENV, ...PROVIDER_ENV] },
+  diagnostic: { network: "provider", deadlineMs: 15 * 60_000, maxOutputBytes: 1_000_000, env: [...BASE_ENV, ...PROVIDER_ENV] },
   verification: { network: "deny", deadlineMs: 15 * 60_000, maxOutputBytes: 1_000_000, env: BASE_ENV },
   graphify: { network: "deny", deadlineMs: 10 * 60_000, maxOutputBytes: 1_000_000, env: BASE_ENV },
   updater: { network: "deny", deadlineMs: 5 * 60_000, maxOutputBytes: 500_000, env: BASE_ENV },
@@ -20,6 +21,7 @@ export const CAPABILITY_PROFILES = Object.freeze({
 
 export function capabilityForStage(stage = "") {
   const value = String(stage).toLowerCase();
+  if (value === "cross-project-diagnostic") return "diagnostic";
   if (
     value.includes("agent")
     || value === "implementation"
@@ -64,13 +66,13 @@ function sbplString(value) {
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-export function sandboxPolicy({ profileName, cwd, writableRoots = [cwd], readableRoots = [cwd], home = os.homedir(), deniedReadRoots = [], providerManagedSandbox = false, allowLoopback = false }) {
+export function sandboxPolicy({ profileName, cwd, writableRoots = [cwd], readableRoots = [cwd], home = os.homedir(), deniedReadRoots = [], providerManagedSandbox = false, enforceWriteBoundary = !providerManagedSandbox, allowLoopback = false }) {
   const profile = CAPABILITY_PROFILES[profileName];
   if (!profile) throw new Error(`Capability profile tidak dikenal: ${profileName}`);
   const reads = [...new Set(readableRoots.filter(Boolean).flatMap(rootAliases))];
   const writes = [...new Set(writableRoots.filter(Boolean).flatMap(rootAliases))];
   const sensitiveHomeRoots = [".ssh", ".aws", ".gnupg", ".kube", ".docker"];
-  if (profileName !== "agent") sensitiveHomeRoots.push("Library/Keychains");
+  if (profileName !== "agent" && profileName !== "diagnostic") sensitiveHomeRoots.push("Library/Keychains");
   const sensitiveRoots = [
     ...sensitiveHomeRoots.map((item) => path.join(home, item)),
     ...deniedReadRoots,
@@ -81,7 +83,7 @@ export function sandboxPolicy({ profileName, cwd, writableRoots = [cwd], readabl
     forms.push(`(deny file-write* (subpath ${sbplString(root)}))`);
   }
   for (const root of reads) forms.push(`(allow file-read* (subpath ${sbplString(root)}))`);
-  if (!providerManagedSandbox) {
+  if (enforceWriteBoundary) {
     const permittedWrites = [
       ...writes.map((root) => `(require-not (subpath ${sbplString(root)}))`),
       ...["/dev/null", "/dev/tty"].map((root) => `(require-not (literal ${sbplString(root)}))`),
@@ -113,13 +115,16 @@ export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.
   fs.chmodSync(temporaryRoot, 0o700);
   sanitizedEnv.TMPDIR = temporaryRoot;
   const effectiveWritableRoots = [...(writableRoots ?? [cwd]), temporaryRoot];
-  const providerManagedSandbox = profileName === "agent" && path.basename(command) === "agy";
-  if (profileName === "agent") effectiveWritableRoots.push(path.join(effectiveHome, ".gemini", "antigravity-cli"));
+  const providerManagedSandbox = ["agent", "diagnostic"].includes(profileName) && path.basename(command) === "agy";
+  if (profileName === "agent" || profileName === "diagnostic") {
+    effectiveWritableRoots.push(path.join(effectiveHome, ".gemini", "antigravity-cli"));
+  }
   const effectiveReadableRoots = [...(readableRoots ?? [cwd]), temporaryRoot];
   const effectiveArgs = providerManagedSandbox && !args.includes("--sandbox") ? [...args, "--sandbox"] : args;
+  const enforceWriteBoundary = !providerManagedSandbox;
   return {
     command: "/usr/bin/sandbox-exec",
-    args: ["-p", sandboxPolicy({ profileName, cwd, writableRoots: effectiveWritableRoots, readableRoots: effectiveReadableRoots, home: effectiveHome, deniedReadRoots, providerManagedSandbox, allowLoopback }), command, ...effectiveArgs],
+    args: ["-p", sandboxPolicy({ profileName, cwd, writableRoots: effectiveWritableRoots, readableRoots: effectiveReadableRoots, home: effectiveHome, deniedReadRoots, providerManagedSandbox, enforceWriteBoundary, allowLoopback }), command, ...effectiveArgs],
     env: sanitizedEnv,
     deadlineMs: profile.deadlineMs,
     maxOutputBytes: profile.maxOutputBytes,
