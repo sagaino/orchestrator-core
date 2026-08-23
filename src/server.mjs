@@ -39,6 +39,7 @@ import { getReleaseOperations } from "./release-operations.mjs";
 import { createObjectiveIntake, getObjectiveIntake, listObjectiveIntake, objectivesEnabled, crossProjectEnabled } from "./objective-intake.mjs";
 import { approveFreshProjectGenesis, auditGenesisApproval } from "./fresh-project-genesis.mjs";
 import { getObjective } from "./objective-store.mjs";
+import { buildObjectiveGraph } from "./objective-graph.mjs";
 import { listDecisions } from "./decision-store.mjs";
 import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
 import { materializeApprovedPlan } from "./task-materializer.mjs";
@@ -310,6 +311,15 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       sendJson(res, 200, { success: true, data: orchestrationId ? integrationEvidenceDto(getIntegrationEvidence({ runsRoot, orchestrationId })) : null });
     } catch (error) {
       sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.get("/api/objectives/:id/graph", async (req, res, { params }) => {
+    try {
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+      sendJson(res, 200, { success: true, data: buildObjectiveGraph({ runsRoot, objectiveId: params.id, page: parsedUrl.searchParams.get("page"), pageSize: parsedUrl.searchParams.get("pageSize") }) });
+    } catch (error) {
+      sendError(res, error.statusCode || 404, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
   });
 

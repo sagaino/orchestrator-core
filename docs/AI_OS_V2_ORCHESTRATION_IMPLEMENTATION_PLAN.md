@@ -955,7 +955,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 
 ### Phase V2.7 — Graph UI, Decision Inbox, Budget, and Operations
 
-#### V2-070 — Add objective graph and live events
+#### ✅ V2-070 — Add objective graph and live events
 
 - Model: `ECONOMY`.
 - Backend/dashboard paths: objective graph API, SSE event mapping, new objective graph components, browser tests.
