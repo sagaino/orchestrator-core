@@ -14,6 +14,7 @@ import { durableRuntimeStatus } from "./durable-runtime.mjs";
 import { assertExecutionAllowed } from "./recovery-mode.mjs";
 import { redactSensitive, redactText } from "./redaction.mjs";
 import { operationsReadiness } from "./operations-governance.mjs";
+import { orchestrationSchedulerEnabled, orchestrationSchedulerTick } from "./orchestration-scheduler.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -309,6 +310,7 @@ function launchAgentPlist({ vaultRoot, runsRoot, cliPath, outputPath }) {
     ["ORCHESTRATOR_KNOWLEDGE_AUTO_PROMOTE_CONFIDENCE", process.env.ORCHESTRATOR_KNOWLEDGE_AUTO_PROMOTE_CONFIDENCE],
     ["ORCHESTRATOR_TOKEN_WARNING_THRESHOLD", process.env.ORCHESTRATOR_TOKEN_WARNING_THRESHOLD],
     ["ORCHESTRATOR_MAX_PARALLEL_JOBS", process.env.ORCHESTRATOR_MAX_PARALLEL_JOBS],
+    ["ORCHESTRATOR_OBJECTIVE_SCHEDULER", process.env.ORCHESTRATOR_OBJECTIVE_SCHEDULER],
   ].filter(([, value]) => value !== undefined && value !== "");
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -573,6 +575,7 @@ export function daemonStatus({ runsRoot }) {
       errors: 0,
     },
     restartReconciliation: healthMatchesProcess ? health?.restartReconciliation ?? null : null,
+    scheduler: healthMatchesProcess ? health?.scheduler ?? null : null,
     lastEvent: healthMatchesProcess ? health?.lastEvent ?? null : null,
     parallel: parallelQueueStatus(jobs, maxWorkers, runs),
     durability: durableRuntimeStatus(runsRoot),
@@ -753,6 +756,13 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
       jobs: 0,
       error: null,
     },
+    scheduler: {
+      enabled: orchestrationSchedulerEnabled(),
+      lastTickAt: null,
+      lastQueuedCount: 0,
+      lastBlockedCount: 0,
+      lastError: null,
+    },
     lastEvent: { event: "DAEMON_STARTED", at: startedAt },
   };
   appendLog(paths.log, { event: "DAEMON_STARTED", pid: process.pid, vaultRoot, runsRoot });
@@ -887,6 +897,37 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
   try {
     const pollTick = () => {
       if (!isRunning) return;
+      if (orchestrationSchedulerEnabled()) {
+        try {
+          const scheduler = services?.orchestrationSchedulerTick ?? orchestrationSchedulerTick;
+          const result = scheduler({ vaultRoot, runsRoot, enabled: true });
+          health.scheduler = {
+            ...health.scheduler,
+            enabled: true,
+            lastTickAt: new Date().toISOString(),
+            lastQueuedCount: result.queued?.length ?? 0,
+            lastBlockedCount: result.blocked?.length ?? 0,
+            lastError: null,
+          };
+          if ((result.queued?.length ?? 0) > 0 || (result.blocked?.length ?? 0) > 0) {
+            appendLog(paths.log, {
+              event: "ORCHESTRATION_SCHEDULER_TICK",
+              queued: result.queued?.map((job) => job.jobId) ?? [],
+              blocked: result.blocked ?? [],
+            });
+          }
+        } catch (error) {
+          health.scheduler = {
+            ...health.scheduler,
+            enabled: true,
+            lastTickAt: new Date().toISOString(),
+            lastError: error.message,
+          };
+          health.counters.errors += 1;
+          appendLog(paths.log, { event: "ORCHESTRATION_SCHEDULER_ERROR", error: error.message });
+        }
+        persistHealth();
+      }
       fillWorkerPool();
       const snapshot = workerPool.snapshot();
       const jobs = listJobs(runsRoot);
