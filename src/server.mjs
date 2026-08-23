@@ -112,7 +112,7 @@ export function idempotencyScopeKey({ key, method, requestTarget, rawBody = "" }
     .digest("hex");
 }
 
-export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRoot = process.cwd(), releaseCandidateRoot = process.env.ORCHESTRATOR_RELEASE_CANDIDATE_ROOT ?? null }) {
+export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRoot = process.cwd(), releaseCandidateRoot = process.env.ORCHESTRATOR_RELEASE_CANDIDATE_ROOT ?? null, env = process.env }) {
   const router = new Router();
 
   // --- 1. System & Health ---
@@ -774,6 +774,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         assignedBy: req.operatorIdentity,
         registryPath: defaultSkillRegistryPath(runsRoot),
         projectSignalsByProject: projectSignalsForProjects(listProjects(vaultRoot)),
+        env,
       });
       appendAuditEntry(runsRoot, {
         event: "PLAN_SKILLS_ASSIGNED",
@@ -2487,6 +2488,7 @@ export function createOrchestratorServer({
   rateLimiter = null,
   sourceRoot = process.cwd(),
   releaseCandidateRoot = process.env.ORCHESTRATOR_RELEASE_CANDIDATE_ROOT ?? null,
+  env = process.env,
   services: customServices = {},
 } = {}) {
   const recoveryAtStart = readRecoveryMode(runsRoot);
@@ -2533,7 +2535,7 @@ export function createOrchestratorServer({
     ...customServices,
   };
 
-  const router = createRouter({ vaultRoot, runsRoot, eventHub: hub, services, sourceRoot, releaseCandidateRoot });
+  const router = createRouter({ vaultRoot, runsRoot, eventHub: hub, services, sourceRoot, releaseCandidateRoot, env });
 
   const requestListener = async (req, res) => {
     // 1. Origin validation applies to preflight and regular requests.

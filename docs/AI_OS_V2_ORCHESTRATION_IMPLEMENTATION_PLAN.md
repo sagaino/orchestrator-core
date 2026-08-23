@@ -1080,6 +1080,17 @@ No earlier phase may depend on this phase. Existing role prompts must already su
 - Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
 - Pilot: one FE, one BE, one diagnostic, and one integration node. Prove correct selection, no incompatible selection, general-agent fallback, checksum rejection, and unchanged scope safety.
 
+#### ✅ V2-105 — Enforce rollout flags after certification
+
+- Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
+- Scope: enforce `ORCHESTRATOR_SKILLS_ENABLED`, `ORCHESTRATOR_SKILL_AUTO_ROUTING`, and `ORCHESTRATOR_PARALLEL_OBJECTIVES` at runtime; unknown values remain disabled.
+- Acceptance:
+  - new skill assignment is rejected while skills are disabled;
+  - automatic routing is skipped while auto-routing is disabled, while human-approved assignments remain intact;
+  - a disabled parallel-objective flag prevents new objective execution from joining an already active objective, while active-state recovery remains allowed;
+  - tests cover enabled, disabled, and unknown values;
+  - backend and dashboard certification gates remain green.
+
 ## 14. Required Test Matrix
 
 Every phase adds focused tests. Before phase acceptance, run the complete applicable gates.

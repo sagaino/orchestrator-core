@@ -7,6 +7,7 @@ import { validatePlanRecord } from "./orchestration-schema.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 import { assignmentMetadata, defaultSkillRegistryPath, validateAssignedSkill, validatePlanSkillAssignments } from "./skill-assignment.mjs";
 import { readSkillRegistry } from "./skill-registry.mjs";
+import { skillsEnabled as skillsFeatureEnabled } from "./rollout-flags.mjs";
 
 const PLAN_STATE_PENDING = "PENDING_APPROVAL";
 const PLAN_STATE_APPROVED = "APPROVED";
@@ -293,11 +294,12 @@ export function requestScopeExpansion({ runsRoot, objectiveId, reason, candidate
   });
 }
 
-export function assignPlanSkills({ runsRoot, objectiveId, assignments, assignedBy, registryPath = defaultSkillRegistryPath(runsRoot), projectSignalsByProject = {}, now = new Date() } = {}) {
+export function assignPlanSkills({ runsRoot, objectiveId, assignments, assignedBy, registryPath = defaultSkillRegistryPath(runsRoot), projectSignalsByProject = {}, now = new Date(), env = process.env } = {}) {
   const initial = objectiveOrFail(runsRoot, objectiveId);
   const identity = String(assignedBy ?? "").trim();
   if (!identity) fail("Skill assignment membutuhkan identitas human operator.", { statusCode: 403, code: "SKILL_ASSIGNER_REQUIRED", details: { code: "SKILL_ASSIGNER_REQUIRED" } });
   if (!Array.isArray(assignments) || assignments.length === 0) fail("Minimal satu skill assignment wajib dipilih.", { code: "SKILL_ASSIGNMENTS_REQUIRED", details: { code: "SKILL_ASSIGNMENTS_REQUIRED" } });
+  if (!skillsFeatureEnabled(env)) fail("Skill orchestration belum diaktifkan.", { statusCode: 409, code: "FEATURE_DISABLED", details: { code: "FEATURE_DISABLED", feature: "SKILLS" } });
   return withDurableLease({ runsRoot, ...lifecycleLease(initial.objectiveId) }, () => {
     const objective = objectiveOrFail(runsRoot, initial.objectiveId);
     const previous = activePlanOrFail(runsRoot, objective);

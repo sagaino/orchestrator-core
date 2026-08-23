@@ -152,7 +152,7 @@ function createFixture({ maxParallelAgents = 3 } = {}) {
 }
 
 const fixture = createFixture();
-const env = { ORCHESTRATOR_MAX_PARALLEL_JOBS: "2" };
+const env = { ORCHESTRATOR_MAX_PARALLEL_JOBS: "2", ORCHESTRATOR_PARALLEL_OBJECTIVES: "1" };
 const first = schedulerTick({ runsRoot: fixture.runsRoot, vaultRoot: fixture.vaultRoot, enabled: true, env, now: new Date(timestamp) });
 assert.deepEqual(first.queued.map((job) => job.nodeId), ["N01", "N02"]);
 assert.equal(new Set(first.queued.map((job) => job.projectId)).size, 2);

@@ -64,6 +64,7 @@ try {
     expectedSkillByNode: { "P-FE": "frontend-review", "P-BE": "backend-review", "P-DIAG": "diagnostic-review", "P-INT": "integration-review" },
     projectSignalsByProject: { "frontend-app": ["frontend"], "backend-api": ["backend"], "diagnostic-app": ["diagnostic"], "integration-app": ["integration"] },
     allowedCapabilitiesByNode: { "P-FE": ["context.read"], "P-BE": ["context.read"], "P-DIAG": ["context.read"], "P-INT": ["context.read"] },
+    env: { ORCHESTRATOR_SKILLS_ENABLED: "1", ORCHESTRATOR_SKILL_AUTO_ROUTING: "1" },
     now: new Date(now),
   });
   assert.equal(certification.status, "HUMAN_GATE_REQUIRED", JSON.stringify(certification, null, 2));

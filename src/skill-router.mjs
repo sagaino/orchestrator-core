@@ -5,6 +5,7 @@ import {
   readSkillRegistry,
   validateSkill,
 } from "./skill-registry.mjs";
+import { skillAutoRoutingEnabled, skillsEnabled as skillsFeatureEnabled } from "./rollout-flags.mjs";
 
 const RISK_RANK = Object.freeze({ LOW: 0, MEDIUM: 1, HIGH: 2, UNKNOWN: 3 });
 const NO_MATCH = "NO_COMPATIBLE_SKILL";
@@ -183,8 +184,24 @@ export function routeInstalledSkill({ node, registryPath, projectSignals = [], a
   };
 }
 
-export function routePlanSkills({ plan, runsRoot, registryPath = defaultSkillRegistryPath(runsRoot), projectSignalsByProject = {}, allowedCapabilitiesByNode = {}, allowedToolsByNode = {}, noMatchPolicy = "GENERAL_ROLE_AGENT" } = {}) {
+export function routePlanSkills({ plan, runsRoot, registryPath = defaultSkillRegistryPath(runsRoot), projectSignalsByProject = {}, allowedCapabilitiesByNode = {}, allowedToolsByNode = {}, noMatchPolicy = "GENERAL_ROLE_AGENT", env = process.env } = {}) {
   if (!plan || typeof plan !== "object" || !Array.isArray(plan.nodes)) throw routerError("Skill router membutuhkan plan dengan nodes.", "SKILL_ROUTER_PLAN_REQUIRED");
+  if (!skillsFeatureEnabled(env)) {
+    return {
+      plan: structuredClone(plan),
+      registryState: "DISABLED",
+      registryRevision: null,
+      routes: plan.nodes.map((node) => ({ nodeId: node.nodeId, status: "SKILLS_DISABLED", deterministic: true, fallback: noMatchPolicy === "HUMAN_DECISION" ? "HUMAN_DECISION" : "GENERAL_ROLE_AGENT", selectedSkills: [], reason: "Skill orchestration disabled by rollout flag." })),
+    };
+  }
+  if (!skillAutoRoutingEnabled(env)) {
+    return {
+      plan: structuredClone(plan),
+      registryState: fs.existsSync(registryPath) ? "AVAILABLE" : "EMPTY",
+      registryRevision: null,
+      routes: plan.nodes.map((node) => ({ nodeId: node.nodeId, status: "AUTO_ROUTING_DISABLED", deterministic: true, fallback: node.skills?.length ? null : (noMatchPolicy === "HUMAN_DECISION" ? "HUMAN_DECISION" : "GENERAL_ROLE_AGENT"), selectedSkills: node.skills ?? [], reason: node.skills?.length ? "Preserve the human-approved skill assignment." : "Automatic skill routing disabled by rollout flag." })),
+    };
+  }
   if (!registryPath || !fs.existsSync(registryPath)) {
     return {
       plan: structuredClone(plan),

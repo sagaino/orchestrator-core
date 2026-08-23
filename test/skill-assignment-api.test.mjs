@@ -82,7 +82,7 @@ async function request(method, requestPath, { body = null, idempotencyKey = null
 }
 
 try {
-  service = createOrchestratorServer({ vaultRoot, runsRoot, port: 0, host: "127.0.0.1", apiToken: "s".repeat(64) });
+  service = createOrchestratorServer({ vaultRoot, runsRoot, port: 0, host: "127.0.0.1", apiToken: "s".repeat(64), env: { ORCHESTRATOR_SKILLS_ENABLED: "1" } });
   await service.start();
   operatorSession = (await (await fetch(`http://127.0.0.1:${service.server.address().port}/api/auth/session`, { headers: { Authorization: `Bearer ${service.token}` } })).json()).data;
 

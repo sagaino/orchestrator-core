@@ -177,7 +177,8 @@ try {
   assert.equal(schedulerTick({ runsRoot, enabled: false }).action, "DISABLED");
 
   const fixture = createFixture("obj-scheduler");
-  const first = schedulerTick({ vaultRoot, runsRoot, enabled: true, now: new Date(timestamp) });
+  const schedulerEnv = { ORCHESTRATOR_PARALLEL_OBJECTIVES: "1" };
+  const first = schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv, now: new Date(timestamp) });
   assert.equal(first.queued.length, 1);
   assert.equal(first.queued[0].taskId, "TASK-001");
   assert.equal(first.queued[0].objectiveId, "obj-scheduler");
@@ -190,13 +191,13 @@ try {
   assert.equal(getOrchestration(runsRoot, fixture.orchestrationId).nodes.N02.state, "BLOCKED");
   assert.equal(listJobs(runsRoot).length, 1);
 
-  const repeated = schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const repeated = schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   assert.equal(repeated.queued.length, 0);
   assert.equal(listJobs(runsRoot).length, 1);
 
   const firstJob = listJobs(runsRoot)[0];
   updateJob(runsRoot, firstJob.jobId, { state: JOB_STATES.DONE, runState: "DONE" });
-  const second = schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const second = schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   assert.equal(second.queued.length, 1);
   assert.equal(second.queued[0].taskId, "TASK-002");
   assert.equal(getOrchestration(runsRoot, fixture.orchestrationId).nodes.N01.state, "DONE");
@@ -204,10 +205,10 @@ try {
   assert.equal(listJobs(runsRoot).length, 2);
 
   const failed = createFixture("obj-scheduler-failed");
-  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   const failedRootJob = listJobs(runsRoot).find((job) => job.orchestrationId === failed.orchestrationId);
   updateJob(runsRoot, failedRootJob.jobId, { state: JOB_STATES.FAILED, error: "diagnostic failed" });
-  const afterFailure = schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const afterFailure = schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   assert.equal(afterFailure.queued.some((job) => job.orchestrationId === failed.orchestrationId), false);
   const failedState = getOrchestration(runsRoot, failed.orchestrationId);
   assert.equal(failedState.state, "BLOCKED");
@@ -216,10 +217,10 @@ try {
   assert.equal(failedState.nodes.N02.lastError.code, "PREDECESSOR_FAILED");
 
   const retryFixture = createFixture("obj-scheduler-retry", { maxRetriesPerNode: 1 });
-  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   const retryJob = listJobs(runsRoot).find((job) => job.orchestrationId === retryFixture.orchestrationId);
   updateJob(runsRoot, retryJob.jobId, { state: JOB_STATES.FAILED, error: "transient diagnostic failure" });
-  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   const retryRequest = requestNodeRetry({
     runsRoot,
     objectiveId: "obj-scheduler-retry",
@@ -238,20 +239,20 @@ try {
   assert.equal(retryResolution.decision.retryAttempt, 2);
   assert.equal(getOrchestration(runsRoot, retryFixture.orchestrationId).nodes.N01.state, "READY");
   assert.equal(getOrchestration(runsRoot, retryFixture.orchestrationId).nodes.N01.attempt, 2);
-  const retryTick = schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const retryTick = schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   const retriedJob = retryTick.queued.find((job) => job.orchestrationId === retryFixture.orchestrationId);
   assert.equal(retriedJob.taskId, "TASK-001");
   assert.equal(retriedJob.attempt, 2);
   assert.equal(listJobs(runsRoot).find((job) => job.jobId === retryJob.jobId).state, JOB_STATES.FAILED);
   updateJob(runsRoot, retriedJob.jobId, { state: JOB_STATES.FAILED, error: "retry failed" });
-  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   assert.throws(
     () => requestNodeRetry({ runsRoot, objectiveId: "obj-scheduler-retry", nodeId: "N01", reason: "Retry again", requestedBy: "human:reviewer" }),
     (error) => error.code === "MAX_RETRIES_EXCEEDED",
   );
 
   const queuedCancelFixture = createFixture("obj-scheduler-cancel-queued");
-  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   const queuedCancelJob = listJobs(runsRoot).find((job) => job.orchestrationId === queuedCancelFixture.orchestrationId);
   const queuedCancellation = cancelOrchestration({ runsRoot, objectiveId: "obj-scheduler-cancel-queued", cancelledBy: "human:operator" });
   assert.equal(queuedCancellation.orchestration.state, "CANCELLED");
@@ -261,7 +262,7 @@ try {
   assert.equal(fs.existsSync(path.join(vaultRoot, "02-Projects/scheduler-project/tasks/task-001.md")), true);
 
   const activeCancelFixture = createFixture("obj-scheduler-cancel-active");
-  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   const activeCancelJob = listJobs(runsRoot).find((job) => job.orchestrationId === activeCancelFixture.orchestrationId);
   updateJob(runsRoot, activeCancelJob.jobId, { state: JOB_STATES.RUNNING });
   const activeCancellation = cancelOrchestration({ runsRoot, objectiveId: "obj-scheduler-cancel-active", cancelledBy: "human:operator" });
@@ -291,7 +292,7 @@ try {
       N02: { state: "BLOCKED", taskId: "TASK-002", jobId: null, runId: null, attempt: 1, blockedBy: ["TASK-001"], lastError: null },
     },
   });
-  const restart = schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const restart = schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
   assert.equal(restart.queued.some((job) => job.orchestrationId === uncertain.orchestrationId), false);
   const restartState = getOrchestration(runsRoot, uncertain.orchestrationId);
   assert.equal(restartState.state, "BLOCKED");
