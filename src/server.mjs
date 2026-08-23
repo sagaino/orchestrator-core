@@ -46,6 +46,7 @@ import { materializeApprovedPlan } from "./task-materializer.mjs";
 import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
 import { getIntegrationEvidence, recoverIntegration, startIntegration } from "./integration-manager.mjs";
 import { acceptObjective, buildObjectiveEvidence } from "./objective-evidence.mjs";
+import { buildObjectiveVisualEvidence } from "./objective-visual-evidence.mjs";
 import { getProjectRelationships, replaceProjectRelationships } from "./project-relations.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
@@ -407,6 +408,85 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
     } catch (error) {
       sendError(res, error.statusCode || 404, error.message, error.details);
     }
+  });
+
+  router.get("/api/objectives/:id/visual-evidence", async (req, res, { params }) => {
+    try {
+      const evidence = buildObjectiveEvidence({ runsRoot, objectiveId: params.id });
+      sendJson(res, 200, { success: true, data: evidence.visualEvidence ?? buildObjectiveVisualEvidence({ runsRoot, objective: evidence.objective, nodes: evidence.nodes }) });
+    } catch (error) {
+      sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/visual-evidence/request-changes", async (req, res, { params }) => {
+    const body = await parseJsonBody(req);
+    const nodeId = typeof body?.nodeId === "string" ? body.nodeId : null;
+    const requestedBy = typeof body?.requestedBy === "string" && body.requestedBy.trim() ? body.requestedBy.trim() : (req.operatorIdentity ?? "user");
+    const rawReason = typeof body?.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
+    if (!nodeId) return sendError(res, 400, "Missing required field: nodeId", { code: "OBJECTIVE_NODE_REQUIRED" });
+    if (!rawReason) return sendError(res, 400, "Missing required field: reason", { code: "REASON_REQUIRED" });
+    if (body?.inlineComments !== undefined && body.inlineComments !== null && !Array.isArray(body.inlineComments)) return sendError(res, 400, "Invalid field: inlineComments must be an array");
+    if (body?.visualAnnotations !== undefined && body.visualAnnotations !== null && !Array.isArray(body.visualAnnotations)) return sendError(res, 400, "Invalid field: visualAnnotations must be an array");
+
+    let evidence;
+    try {
+      evidence = buildObjectiveEvidence({ runsRoot, objectiveId: params.id });
+    } catch (error) {
+      return sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+    const visualNode = evidence.visualEvidence?.nodes?.find((item) => item.nodeId === nodeId);
+    if (!visualNode?.runId) return sendError(res, 409, `Node ${nodeId} belum memiliki run visual evidence.`, { code: "VISUAL_RUN_NOT_FOUND", nodeId });
+
+    let run;
+    try { run = getRun(runsRoot, visualNode.runId); } catch (error) { return sendError(res, 404, error.message); }
+    if (![RUN_STATES.REVIEW, RUN_STATES.RETROSPECTIVE].includes(run.state)) return sendError(res, 409, `Request changes requires run in REVIEW or RETROSPECTIVE; current state: ${run.state}`, { code: "RUN_NOT_REVIEWABLE", runId: run.runId, nodeId });
+
+    const inlineComments = Array.isArray(body?.inlineComments) ? body.inlineComments : [];
+    const visualAnnotations = Array.isArray(body?.visualAnnotations) ? body.visualAnnotations : [];
+    const effectiveReason = formatReviewRevisionFeedback({ reason: rawReason, inlineComments });
+    const revisionIteration = (run.execution?.reviewChanges?.length ?? 0) + 1;
+    const visualFeedback = {
+      iteration: revisionIteration,
+      inlineComments,
+      visualAnnotations,
+      beforeEvidenceIds: visualNode.evidenceRefs.map((item) => item.evidenceId),
+    };
+    const repairPath = {
+      schemaVersion: 1,
+      mode: "objective-visual-repair",
+      status: "APPROVED_FOR_REPAIR",
+      objectiveId: params.id,
+      nodeId,
+      projectId: visualNode.projectId,
+      runId: visualNode.runId,
+      revisionIteration,
+      requestedBy,
+      sourceEvidenceIds: visualFeedback.beforeEvidenceIds,
+      requestChangesHref: `/api/objectives/${encodeURIComponent(params.id)}/visual-evidence/request-changes`,
+      approval: { status: "APPROVED_FOR_REPAIR", source: "HUMAN_VISUAL_REVIEW", approvedBy: requestedBy, approvedAt: new Date().toISOString() },
+      nextAction: "Repair revision sudah diotorisasi dan sedang diproses melalui run lifecycle.",
+    };
+    eventHub.broadcast("OBJECTIVE_VISUAL_REPAIR_REQUESTED", { objectiveId: params.id, nodeId, runId: visualNode.runId, revisionIteration, requestedBy });
+    sendJson(res, 202, { success: true, data: repairPath });
+
+    (async () => {
+      try {
+        const manifest = await requestChangesTaskRun({
+          vaultRoot,
+          runsRoot,
+          runId: visualNode.runId,
+          requestedBy,
+          reason: effectiveReason,
+          visualFeedback,
+          onProgress: (m) => eventHub.broadcast("RUN_PROGRESS", { runId: m.runId, state: m.state }),
+        });
+        updateJobForRun(runsRoot, manifest.runId, { state: manifest.state === RUN_STATES.REVIEW ? JOB_STATES.REVIEW : JOB_STATES.RUNNING, runState: manifest.state });
+        eventHub.broadcast("RUN_PROGRESS", { runId: manifest.runId, state: manifest.state });
+      } catch (error) {
+        eventHub.broadcast("RUN_FAILED", { runId: visualNode.runId, error: error.message, objectiveId: params.id, nodeId });
+      }
+    })();
   });
 
   router.post("/api/objectives/:id/final-acceptance", async (req, res, { params }) => {

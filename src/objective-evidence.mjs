@@ -7,6 +7,7 @@ import { getRun, listRuns } from "./run-manager.mjs";
 import { buildRunEvidence } from "./interaction.mjs";
 import { getIntegrationEvidence } from "./integration-manager.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
+import { buildObjectiveVisualEvidence } from "./objective-visual-evidence.mjs";
 
 export class ObjectiveEvidenceError extends Error {
   constructor(message, { statusCode = 400, code = "OBJECTIVE_EVIDENCE_INVALID", details = null } = {}) {
@@ -171,6 +172,7 @@ export function buildObjectiveEvidence({ runsRoot, objectiveId } = {}) {
     plan,
     orchestration,
     nodes,
+    visualEvidence: buildObjectiveVisualEvidence({ runsRoot, objective, nodes }),
     integration,
     diffs: nodes.filter((node) => node.runId).map((node) => ({ nodeId: node.nodeId, runId: node.runId, projectId: node.projectId, href: node.links.diff, changedPaths: node.changedPaths })),
     previews: nodes.filter((node) => node.runId).map((node) => ({ nodeId: node.nodeId, runId: node.runId, projectId: node.projectId, href: node.links.preview })),
