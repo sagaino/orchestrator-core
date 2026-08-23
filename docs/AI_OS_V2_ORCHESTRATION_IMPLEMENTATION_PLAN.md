@@ -777,7 +777,7 @@ Phase V2.2 exit: one prompt produces a human-reviewable, validated DAG, but appr
   - no direct state mutation endpoint accepts arbitrary target state.
 - Verification: transition/fault/API tests.
 
-#### V2-033 — Certify sequential objective execution
+#### ✅ V2-033 — Certify sequential objective execution
 
 - Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
 - Pilot: one real objective with at least three nodes and one dependency chain.

@@ -75,6 +75,7 @@ function parseArguments(args) {
     projectIdOverride: null,
     reason: null,
     projectId: null,
+    orchestrationId: null,
     autoStart: false,
     force: false,
     confirm: false,
@@ -129,6 +130,9 @@ function parseArguments(args) {
       index += 1;
     } else if (args[index] === "--project") {
       options.projectId = args[index + 1];
+      index += 1;
+    } else if (args[index] === "--orchestration") {
+      options.orchestrationId = args[index + 1];
       index += 1;
     } else if (args[index] === "--port") {
       options.port = Number(args[index + 1]);
@@ -213,6 +217,7 @@ Disaster recovery:
   recovery-drill-record --reason <evidence> [--decision PASS|FAIL] [--by <name>]
   soak-harness [<duration-hours>] [--soak-root <absolute-path>]
   operations-certification [--soak-report <absolute-report-path>]
+  orchestration-certification <objective-id> [--orchestration <orchestration-id>]
   release-manifest [<version>] [--dashboard <absolute-path>]
   release-artifact [<version>] [--dashboard <absolute-path>]
   release-manifest-verify <absolute-manifest-path>
@@ -408,6 +413,12 @@ export async function main(argv = process.argv.slice(2)) {
       const { createOperationsCertification } = await import("./operations-certification.mjs");
       const soakReportPath = options.soakReport ?? path.join(options.runs, "runtime", "soak", "last-report.json");
       result = createOperationsCertification({ runsRoot: options.runs, vaultRoot: options.vault, soakReportPath, maxRecoveryRtoMinutes: options.maxRtoMinutes ?? 15 });
+      if (result.status !== "CERTIFICATION_READY") process.exitCode = 1;
+    } else if (command === "orchestration-certification") {
+      const [objectiveId] = options.positional;
+      if (!objectiveId) fail("orchestration-certification membutuhkan <objective-id>.");
+      const { createSequentialOrchestrationCertification } = await import("./orchestration-certification.mjs");
+      result = createSequentialOrchestrationCertification({ runsRoot: options.runs, vaultRoot: options.vault, objectiveId, orchestrationId: options.orchestrationId });
       if (result.status !== "CERTIFICATION_READY") process.exitCode = 1;
     } else if (command === "release-manifest") {
       const [releaseVersion = "1.0.0"] = options.positional;
