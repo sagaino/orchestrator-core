@@ -834,7 +834,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 
 ### Phase V2.5 — Role-Based Sub-Agents and Parallel Execution
 
-#### V2-050 — Add role assignment without skills
+#### V2-050 — Add role assignment without skills ✅
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: `src/executor.mjs`, `src/context-compactor.mjs`, new role tests.

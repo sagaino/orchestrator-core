@@ -206,6 +206,12 @@ export function buildRunEvidence(run, { runsRoot = null } = {}) {
       status: run.task?.status ?? null,
       path: run.task?.path ?? null,
     },
+    agent: {
+      role: run.execution?.agent?.role ?? run.task?.role ?? "GENERAL",
+      responsibility: run.execution?.agent?.roleResponsibility ?? null,
+      lifetime: run.execution?.agent?.lifetime ?? "RUN_SCOPED",
+      temporary: run.execution?.agent?.temporary ?? true,
+    },
     policy: {
       allowedPaths: run.task?.allowedPaths ?? [],
       verificationCommands: run.plan?.verificationCommands
