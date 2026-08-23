@@ -584,7 +584,7 @@ Run packets in order. A later phase cannot start until the previous phase exit g
 
 ### Phase V2.0 — Scope, threat model, and schemas
 
-#### V2-000 — Freeze the v2 scope contract
+#### ✅ V2-000 — Freeze the v2 scope contract
 
 - Model: `ECONOMY + STRONG REVIEW`; acceptance: `HUMAN GATE`.
 - Objective: convert this proposal into an approved v2 scope and threat model without changing runtime behavior.
@@ -593,7 +593,7 @@ Run packets in order. A later phase cannot start until the previous phase exit g
 - Tests: documentation link/check script only if an existing convention exists; no runtime code.
 - Exit: human records approval of scope and threat model.
 
-#### V2-001 — Add strict objective, plan, orchestration, and decision validators
+#### ✅ V2-001 — Add strict objective, plan, orchestration, and decision validators
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Objective: implement pure validation with no API, planner, queue, or filesystem mutation.
@@ -606,7 +606,7 @@ Run packets in order. A later phase cannot start until the previous phase exit g
   - `skills` accepts only an empty array in schema version 1.
 - Verification: new focused test, then `npm run test:unit`.
 
-#### V2-002 — Add durable stores with revision and lease guards
+#### ✅ V2-002 — Add durable stores with revision and lease guards
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Objective: CRUD for state files without planning or execution.
@@ -625,7 +625,7 @@ Phase V2.0 exit: schema and persistence are accepted before any AI-generated pla
 
 ### Phase V2.1 — Unified Objective Intake and Fresh Project
 
-#### V2-010 — Add objective intake service and read-only API
+#### ✅ V2-010 — Add objective intake service and read-only API
 
 - Model: `ECONOMY`.
 - Objective: create/list/read objectives without decomposition.
@@ -640,7 +640,7 @@ Phase V2.0 exit: schema and persistence are accepted before any AI-generated pla
   - no task/job/run is created.
 - Verification: API tests plus `npm run test:unit`.
 
-#### V2-011 — Add Fresh Project proposal and approved chaining
+#### ✅ V2-011 — Add Fresh Project proposal and approved chaining
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Objective: chain an approved Fresh Project genesis proposal to the existing `onboardNewProject`; master-plan decomposition is added later in Phase V2.2.
@@ -655,7 +655,7 @@ Phase V2.0 exit: schema and persistence are accepted before any AI-generated pla
 - Acceptance: retry cannot create a second repository or duplicate registry entry.
 - Verification: injected failure before/after onboarding registration, API test, full unit gate.
 
-#### V2-012 — Extend dashboard Task Intake with target modes
+#### ✅ V2-012 — Extend dashboard Task Intake with target modes
 
 - Model: `ECONOMY`.
 - Dashboard paths: `src/pages/Tasks/`, `src/services/orchestrator.ts`, `src/hooks/use-orchestrator.ts`, browser fixtures/tests.
@@ -673,7 +673,7 @@ Phase V2.1 exit: one prompt can create a reviewed Fresh Project objective using 
 
 ### Phase V2.2 — Project Decomposition and DAG
 
-#### V2-020 — Implement pure DAG validation and deterministic ordering
+#### ✅ V2-020 — Implement pure DAG validation and deterministic ordering
 
 - Model: `ECONOMY`.
 - Backend paths: new `src/task-graph.mjs`, new `test/task-graph.test.mjs`.
@@ -691,7 +691,7 @@ Phase V2.1 exit: one prompt can create a reviewed Fresh Project objective using 
   - no filesystem or provider calls.
 - Verification: focused tests and unit gate.
 
-#### V2-021 — Add read-only decomposition planner
+#### ✅ V2-021 — Add read-only decomposition planner
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: new `src/project-decomposer.mjs`, `src/agent-config.mjs`, `src/agent-routing.mjs`, `src/context-compactor.mjs`, tests.
@@ -707,7 +707,7 @@ Phase V2.1 exit: one prompt can create a reviewed Fresh Project objective using 
   - low budget cannot be silently exceeded.
 - Verification: mocked provider tests, routing tests, context-budget tests, unit gate.
 
-#### V2-022 — Add plan revision and approval lifecycle
+#### ✅ V2-022 — Add plan revision and approval lifecycle
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: objective/plan stores, `src/server.mjs`, audit/events, tests.
@@ -720,7 +720,7 @@ Phase V2.1 exit: one prompt can create a reviewed Fresh Project objective using 
   - model output cannot populate approval fields.
 - Verification: transition and API tests, unit gate.
 
-#### V2-023 — Add Plan Review dashboard
+#### ✅ V2-023 — Add Plan Review dashboard
 
 - Model: `ECONOMY`.
 - Dashboard paths: new objective types/hooks/components, Task Intake plan modal or objective page, browser tests.
@@ -731,7 +731,7 @@ Phase V2.2 exit: one prompt produces a human-reviewable, validated DAG, but appr
 
 ### Phase V2.3 — Canonical Task Materialization and Sequential Scheduler
 
-#### V2-030 — Materialize approved nodes into canonical tasks
+#### ✅ V2-030 — Materialize approved nodes into canonical tasks
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: `src/task-intake.mjs`, new `src/task-materializer.mjs`, stores, tests.
