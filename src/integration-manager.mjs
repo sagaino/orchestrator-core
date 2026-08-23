@@ -113,13 +113,20 @@ function sourceRunEvidence({ runsRoot, jobs, runs, orchestration, nodes }) {
     if (!run) errors.push({ nodeId: node.nodeId, code: "SOURCE_RUN_MISSING", jobId: job?.jobId ?? null });
     if (run && run.state !== RUN_STATES.DONE) errors.push({ nodeId: node.nodeId, code: "SOURCE_RUN_NOT_DONE", runId: run.runId, state: run.state });
     const evidence = run ? buildRunEvidence(run, { runsRoot }) : null;
-    const commit = run?.execution?.result?.gitCommit ?? run?.execution?.workspace?.gitCommit ?? null;
+    const changedPaths = run?.execution?.scopeAudit?.changedPaths ?? [];
+    const recordedCommit = run?.execution?.result?.gitCommit ?? run?.execution?.workspace?.gitCommit ?? null;
+    const baselineCommit = run?.execution?.workspace?.baseCommit ?? null;
+    const commit = recordedCommit?.commitHash
+      ? recordedCommit
+      : node.requiresChanges === false && changedPaths.length === 0 && baselineCommit
+        ? { committed: false, commitHash: baselineCommit, parentCommit: baselineCommit, readOnlyBaseline: true }
+        : null;
     if (run && !commit?.commitHash) errors.push({ nodeId: node.nodeId, code: "SOURCE_COMMIT_MISSING", runId: run.runId });
     sourceRuns.push({
       nodeId: node.nodeId,
       projectId: run?.project?.id ?? node.projectId ?? null,
       allowedPaths: node.allowedPaths ?? [],
-      changedPaths: run?.execution?.scopeAudit?.changedPaths ?? [],
+      changedPaths,
       job,
       run,
       evidence,
@@ -177,24 +184,19 @@ function crossProjectVerificationRequests({ plan, projects }) {
 }
 
 function needsLocalServices({ plan, requests }) {
-  if (Array.isArray(plan.integration?.localServices) && plan.integration.localServices.length > 0) return true;
-  return requests.some((request) => /(?:e2e|browser|playwright|cypress|visual)/i.test(request.script));
+  return Array.isArray(plan.integration?.localServices) && plan.integration.localServices.length > 0 && requests.length > 0;
 }
 
 function requestedServiceProjectIds({ plan, projects }) {
   const configured = Array.isArray(plan.integration?.localServices) ? plan.integration.localServices : [];
   const ids = configured.map((item) => typeof item === "string" ? item : item?.projectId).filter(Boolean);
-  if (ids.length) return projects.filter((project) => ids.includes(project.id));
-  return projects.filter((project) => {
-    const devScript = String(getPackageScripts(project.repository).dev ?? "").trim();
-    return devScript && !/(?:^|\s)(?:bash\s+)?(?:\.\/)?start\.sh(?:\s|$)/.test(devScript);
-  });
+  return ids.length ? projects.filter((project) => ids.includes(project.id)) : [];
 }
 
 function repositoryAcceptance({ projects, sourceRuns, verification }) {
   return projects.map((project) => {
     const runs = sourceRuns.filter((source) => source.projectId === project.id);
-    const checks = verification.filter((result) => result.projectId === project.id && result.scope !== "CROSS_PROJECT");
+    const checks = verification.filter((result) => result.projectId === project.id);
     const runIds = runs.map((run) => run.run?.runId ?? run.job?.runId).filter(Boolean);
     const diffs = runs.map((run) => ({ runId: run.run?.runId ?? run.job?.runId ?? null, changedPaths: run.changedPaths ?? [], allowedPaths: run.allowedPaths ?? [] }));
     const status = runs.length > 0
@@ -649,6 +651,8 @@ export async function startIntegration({ runsRoot, vaultRoot, objectiveId, orche
   const projects = listProjects(vaultRoot).projects.filter((project) => contextValue.plan.projects.includes(project.id));
   const requests = verificationRequests({ plan: contextValue.plan, projects });
   const crossRequests = crossProjectVerificationRequests({ plan: contextValue.plan, projects });
+  const crossRequestKeys = new Set(crossRequests.map((request) => `${request.projectId}:${request.script}`));
+  const projectRequests = requests.filter((request) => !crossRequestKeys.has(`${request.projectId}:${request.script}`));
   const verification = [];
   const services = [];
   const startedServices = [];
@@ -677,7 +681,7 @@ export async function startIntegration({ runsRoot, vaultRoot, objectiveId, orche
       }
     }
     if (!requests.length) verification.push({ projectId: null, script: null, scope: "PROJECT", command: null, exitCode: null, status: "FAIL", error: "No approved project verification script is configured." });
-    for (const request of requests) {
+    for (const request of projectRequests) {
       const project = projects.find((candidate) => candidate.id === request.projectId);
       const scripts = project ? getPackageScripts(project.repository) : {};
       if (!project || !scripts[request.script]) {
@@ -713,7 +717,7 @@ export async function startIntegration({ runsRoot, vaultRoot, objectiveId, orche
       objective: contextValue.objective,
       plan: contextValue.plan,
       orchestration: contextValue.orchestration,
-      sourceRuns: sourceEvidence.sourceRuns.map((item) => ({ ...item, run: item.run, allowedPaths: item.allowedPaths })),
+      sourceRuns: sourceEvidence.sourceRuns.map((item) => ({ ...item, run: item.run, allowedPaths: item.allowedPaths, commit: item.commit })),
       verification,
       artifactPath: artifactFile,
       projectBaselines,

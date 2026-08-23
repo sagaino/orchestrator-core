@@ -264,7 +264,7 @@ export function buildRunEvidence(run, { runsRoot = null } = {}) {
 export function buildIntegrationEvidence({ objective, plan, orchestration, sourceRuns = [], verification = [], artifactPath = null, projectBaselines = {}, services = [], repositoryAcceptance = [] } = {}) {
   const source = sourceRuns.map((item) => {
     const run = item.run ?? item;
-    const git = run.execution?.result?.gitCommit ?? run.execution?.workspace?.gitCommit ?? null;
+    const git = item.commit ?? run.execution?.result?.gitCommit ?? run.execution?.workspace?.gitCommit ?? null;
     return {
       nodeId: item.nodeId ?? null,
       runId: run.runId ?? null,

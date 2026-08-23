@@ -71,10 +71,11 @@ function createFixture() {
       required: true,
       projectVerification: ["test"],
       crossProjectVerification: ["backend:test:contract", "frontend:test:e2e"],
+      localServices: ["frontend", "backend"],
       previewRequired: true,
     },
     nodes: [
-      { nodeId: "N01", title: "Frontend change", purpose: "Apply the frontend fix.", projectId: "frontend", role: "FRONTEND", type: "IMPLEMENTATION", dependsOn: [], acceptanceCriteria: ["Frontend fix is committed."], allowedPaths: ["src.js"], verification: ["test"], risk: "MEDIUM", complexity: "MEDIUM", requiresChanges: true, canRunInParallel: true, writeConflictGroup: "frontend", contextFrom: [], skills: [] },
+      { nodeId: "N01", title: "Frontend audit", purpose: "Inspect the frontend without changing it.", projectId: "frontend", role: "FRONTEND", type: "VERIFICATION", dependsOn: [], acceptanceCriteria: ["Frontend baseline is verified."], allowedPaths: [], verification: ["test"], risk: "MEDIUM", complexity: "MEDIUM", requiresChanges: false, canRunInParallel: true, writeConflictGroup: null, contextFrom: [], skills: [] },
       { nodeId: "N02", title: "Backend change", purpose: "Apply the backend fix.", projectId: "backend", role: "BACKEND", type: "IMPLEMENTATION", dependsOn: [], acceptanceCriteria: ["Backend fix is committed."], allowedPaths: ["src.js"], verification: ["test"], risk: "MEDIUM", complexity: "MEDIUM", requiresChanges: true, canRunInParallel: true, writeConflictGroup: "backend", contextFrom: [], skills: [] },
       { nodeId: "N03", title: "Cross-project verification", purpose: "Verify the coordinated release.", projectId: "backend", role: "INTEGRATION", type: "INTEGRATION", dependsOn: ["N01", "N02"], acceptanceCriteria: ["Per-repository and cross-project checks pass."], allowedPaths: [], verification: ["test:contract"], risk: "MEDIUM", complexity: "HIGH", requiresChanges: false, canRunInParallel: false, writeConflictGroup: null, contextFrom: ["N01", "N02"], skills: [] },
     ],
@@ -100,7 +101,8 @@ function createFixture() {
     fs.writeFileSync(path.join(vaultRoot, taskPath), `---\ntask_id: ${taskId}\nproject: ${projectId}\nstatus: DONE\n---\n# ${taskId}\n`);
     const job = enqueueTaskJob({ runsRoot, projectId, taskId, taskPath, requestedBy: "human:verification", orchestrationManaged: true, schedulerAuthorized: true, orchestrationMetadata: { objectiveId, planId: plan.planId, orchestrationId: `orch-${objectiveId}`, nodeId, attempt: 1, planFingerprint: plan.planFingerprint, approvalDecisionId: `decision-plan-approval-${plan.planId}`, approvedBy: "human:verification", approvedAt: timestamp } });
     const runId = `run-${projectId}`;
-    writeJson(path.join(runsRoot, `${runId}.json`), { schemaVersion: 1, revision: 0, runId, state: "DONE", createdAt: timestamp, updatedAt: timestamp, project: { id: projectId, repository: repositories[projectId] }, task: { id: taskId, path: taskPath, allowedPaths: ["src.js"] }, execution: { scopeAudit: { passed: true, changedPaths: ["src.js"], allowedPaths: ["src.js"], outOfScopePaths: [], deniedPaths: [] }, result: { gitCommit: { committed: true, commitHash: `${projectId}-commit` } }, workspace: { baseCommit: `${projectId}-base`, state: "CLEANED", appliedPaths: ["src.js"] }, verification: [{ command: "test", exitCode: 0 }] }, history: [] });
+    const readOnly = projectId === "frontend";
+    writeJson(path.join(runsRoot, `${runId}.json`), { schemaVersion: 1, revision: 0, runId, state: "DONE", createdAt: timestamp, updatedAt: timestamp, project: { id: projectId, repository: repositories[projectId] }, task: { id: taskId, path: taskPath, allowedPaths: readOnly ? [] : ["src.js"] }, execution: { scopeAudit: { passed: true, changedPaths: readOnly ? [] : ["src.js"], allowedPaths: readOnly ? [] : ["src.js"], outOfScopePaths: [], deniedPaths: [] }, result: readOnly ? {} : { gitCommit: { committed: true, commitHash: `${projectId}-commit` } }, workspace: { baseCommit: `${projectId}-base`, state: "CLEANED", appliedPaths: readOnly ? [] : ["src.js"] }, verification: [{ command: "test", exitCode: 0 }] }, history: [] });
     runtimeNodes[nodeId] = { state: "DONE", taskId, jobId: job.jobId ?? null, runId, attempt: 1, blockedBy: [], lastError: null };
   }
   runtimeNodes.N03 = { state: "READY", taskId: null, jobId: null, runId: null, attempt: 1, blockedBy: [], lastError: null };
@@ -133,17 +135,17 @@ const result = await startIntegration({
 });
 assert.equal(result.action, "INTEGRATION_COMPLETED");
 assert.equal(result.integration.state, "PASSED");
-assert.equal(serviceStarts.length, 1);
-assert.equal(serviceStarts[0].projectId, "frontend");
-assert.equal(serviceStops.length, 1);
+assert.equal(serviceStarts.length, 2);
+assert.equal(serviceStops.length, 2);
 assert.equal(verificationCalls.length, 4);
 assert.deepEqual(new Set(verificationCalls.map((input) => input.scope)), new Set(["PROJECT", "CROSS_PROJECT"]));
-assert.ok(verificationCalls.filter((input) => input.scope === "CROSS_PROJECT").every((input) => input.serviceUrls.frontend.startsWith("http://127.0.0.1:") && input.serviceUrls.backend === undefined));
+assert.ok(verificationCalls.filter((input) => input.scope === "CROSS_PROJECT").every((input) => input.serviceUrls.frontend.startsWith("http://127.0.0.1:") && input.serviceUrls.backend.startsWith("http://127.0.0.1:")));
 assert.ok(verificationCalls.filter((input) => input.scope === "CROSS_PROJECT").every((input) => input.command.startsWith("npm run ")));
 
 const evidence = getIntegrationEvidence({ runsRoot: fixture.runsRoot, orchestrationId: fixture.orchestrationId });
 assert.deepEqual(Object.keys(evidence.projectBaselines).sort(), ["backend", "frontend"]);
 assert.equal(evidence.sourceRuns.length, 2);
+assert.equal(evidence.sourceRuns.find((item) => item.projectId === "frontend").commitHash, "frontend-base");
 assert.equal(evidence.repositoryAcceptance.every((item) => item.acceptance.status === "PASS"), true);
 assert.equal(evidence.crossProjectVerification.status, "PASS");
 assert.equal(evidence.crossProjectVerification.results.length, 2);
