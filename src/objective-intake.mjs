@@ -128,6 +128,21 @@ function objectiveSummary(objective) {
   };
 }
 
+function normalizeAttachments(input) {
+  if (input === undefined) return [];
+  if (!Array.isArray(input) || input.length > 20) throw new ObjectiveIntakeError("attachments harus berupa array maksimal 20 item.", { details: { code: "INVALID_ATTACHMENTS" } });
+  return input.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new ObjectiveIntakeError(`attachments[${index}] tidak valid.`, { details: { code: "INVALID_ATTACHMENTS", index } });
+    const type = String(item.type ?? "").trim();
+    const fileName = String(item.fileName ?? "").trim();
+    if (!["MOCKUP", "PROJECT_ASSET"].includes(type) || !fileName || fileName.length > 255) throw new ObjectiveIntakeError(`attachments[${index}] tidak valid.`, { details: { code: "INVALID_ATTACHMENTS", index } });
+    const relativeVaultPath = item.relativeVaultPath ? String(item.relativeVaultPath).trim() : null;
+    const relativeProjectPath = item.relativeProjectPath ? String(item.relativeProjectPath).trim() : null;
+    if (!relativeVaultPath && !relativeProjectPath) throw new ObjectiveIntakeError(`attachments[${index}] tidak memiliki durable reference.`, { details: { code: "INVALID_ATTACHMENTS", index } });
+    return { type, fileName, relativeVaultPath, relativeProjectPath, sizeBytes: Number.isInteger(item.sizeBytes) && item.sizeBytes >= 0 ? item.sizeBytes : null };
+  });
+}
+
 export function createObjectiveIntake({ vaultRoot, runsRoot, body, requestedBy = "user", now = new Date(), isCrossProjectEnabled = crossProjectEnabled } = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new ObjectiveIntakeError("Objective body harus berupa object.");
   const request = String(body.request ?? "").trim();
@@ -146,6 +161,7 @@ export function createObjectiveIntake({ vaultRoot, runsRoot, body, requestedBy =
     if (missing.length > 0) throw new ObjectiveIntakeError(`Project tidak ditemukan di registry: ${missing.join(", ")}`, { statusCode: 404, code: "PROJECT_NOT_FOUND", details: { code: "PROJECT_NOT_FOUND", missing } });
   }
   const budget = normalizeBudget(body.budget);
+  const attachments = normalizeAttachments(body.attachments ?? body.attachedAssets);
   const objectiveId = `obj-${now.toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8)}`;
   const freshProject = mode === "FRESH_PROJECT" ? freshProjectProposal(body, projectIds) : null;
   const effectiveProjectIds = freshProject ? [freshProject.projectId] : projectIds;
@@ -159,6 +175,7 @@ export function createObjectiveIntake({ vaultRoot, runsRoot, body, requestedBy =
     requestedBy: String(requestedBy || "user"),
     projectIds: effectiveProjectIds,
     freshProject,
+    attachments,
     activePlanId: null,
     activeOrchestrationId: null,
     budget,
