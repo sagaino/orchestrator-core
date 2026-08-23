@@ -382,12 +382,16 @@ export function isSafeInfrastructureFailure({ rawError = "", manifest = {} } = {
     && scopeAudit.outOfScopePaths.every(isGeneratedVerificationArtifact)
     && agentChangedPaths.every((candidate) => pathWithinAllowed(candidate, allowedPaths))
     && deniedPaths.length === 0;
+  const verificationScripts = Object.entries(manifest.execution?.frozenVerificationScripts ?? {});
+  const includesNetworkedTest = verificationScripts.some(([name, command]) =>
+    /^(?:test|verify)(?:$|[:_-])/i.test(String(name)) || /playwright|cypress/i.test(String(command)));
   const loopbackSandboxFailure = /listen EPERM: operation not permitted\s+127\.0\.0\.1:/i.test(rawError)
-    && Object.values(manifest.execution?.frozenVerificationScripts ?? {}).some((command) => /playwright|cypress/i.test(String(command)));
+    && includesNetworkedTest;
+  const nestedSandboxFailure = /sandbox-exec:\s*sandbox_apply:\s*Operation not permitted/i.test(rawError);
   const legacySafeFailure = /\bENOENT\b|executable.*not found|command not found/i.test(rawError)
     && !manifest.execution?.agent
     && !(manifest.execution?.scopeAudit?.changedPaths?.length > 0);
-  return legacySafeFailure || artifactScopeFailure || loopbackSandboxFailure;
+  return legacySafeFailure || artifactScopeFailure || loopbackSandboxFailure || nestedSandboxFailure;
 }
 
 async function discardWorkspace({ runsRoot, manifest }) {

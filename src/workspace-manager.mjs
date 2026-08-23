@@ -355,7 +355,8 @@ export function activateWorkspace(workspace) {
 }
 
 export function verificationRequiresLoopback(scriptName, scriptCommand = "") {
-  return /(?:^|[:_-])(?:e2e|browser)(?:$|[:_-])/i.test(String(scriptName))
+  return /^(?:test|verify)(?:$|[:_-])/i.test(String(scriptName))
+    || /(?:^|[:_-])(?:e2e|browser)(?:$|[:_-])/i.test(String(scriptName))
     || /playwright|cypress/i.test(String(scriptCommand));
 }
 
