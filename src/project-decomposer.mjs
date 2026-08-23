@@ -14,6 +14,7 @@ const DEFAULT_BUDGET = Object.freeze({
   maxSubtasks: 8,
   maxParallelAgents: 1,
   maxRetriesPerNode: 2,
+  maxRepairCycles: 1,
   maxTotalTokens: null,
   deadlineAt: null,
 });
@@ -157,7 +158,7 @@ export function parseDecompositionResult(result) {
 
 function normalizedBudget(budget = {}) {
   const output = { ...DEFAULT_BUDGET, ...(isRecord(budget) ? budget : {}) };
-  for (const field of ["maxSubtasks", "maxParallelAgents", "maxRetriesPerNode"]) {
+  for (const field of ["maxSubtasks", "maxParallelAgents", "maxRetriesPerNode", "maxRepairCycles"]) {
     if (!Number.isInteger(output[field]) || output[field] <= 0) throw errorWithCode(`budget.${field} tidak valid.`, "INVALID_BUDGET", { field });
   }
   if (output.maxTotalTokens !== null && (!Number.isInteger(output.maxTotalTokens) || output.maxTotalTokens <= 0)) {

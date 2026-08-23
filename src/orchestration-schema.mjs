@@ -86,6 +86,9 @@ function validateBudget(budget, label, errors) {
   for (const field of ["maxSubtasks", "maxParallelAgents", "maxRetriesPerNode"]) {
     add(errors, positiveInteger(budget[field]), `${label}.${field} must be a positive integer`);
   }
+  if (budget.maxRepairCycles !== undefined) {
+    add(errors, positiveInteger(budget.maxRepairCycles), `${label}.maxRepairCycles must be a positive integer`);
+  }
   if (budget.maxTotalTokens !== null && budget.maxTotalTokens !== undefined) {
     add(errors, positiveInteger(budget.maxTotalTokens), `${label}.maxTotalTokens must be null or a positive integer`);
   }

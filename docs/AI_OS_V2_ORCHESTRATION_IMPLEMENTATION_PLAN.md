@@ -807,7 +807,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - aggregate result never hides a failed/missing node.
 - Verification: aggregate evidence fixtures, failure tests, unit gate.
 
-#### V2-041 — Add integration recovery and targeted repair planning
+#### ✅ V2-041 — Add integration recovery and targeted repair planning
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: integration manager, decomposer, scheduler, tests.
