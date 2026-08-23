@@ -878,7 +878,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - one aggregate acceptance applies to main only after all gates pass.
 - Verification: forced concurrent edits, semantic conflict fixture, restart during both agents, rollback after partial integration.
 
-#### V2-054 — Multi-agent certification
+#### ✅ V2-054 — Multi-agent certification
 
 - Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
 - Pilot: at least four nodes, two genuinely parallel, one dependent integration node, one restart point.

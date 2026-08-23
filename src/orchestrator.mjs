@@ -76,6 +76,7 @@ function parseArguments(args) {
     reason: null,
     projectId: null,
     orchestrationId: null,
+    restartEvidencePath: null,
     autoStart: false,
     force: false,
     confirm: false,
@@ -172,6 +173,9 @@ function parseArguments(args) {
     } else if (args[index] === "--soak-report") {
       options.soakReport = path.resolve(args[index + 1]);
       index += 1;
+    } else if (args[index] === "--restart-evidence") {
+      options.restartEvidencePath = path.resolve(args[index + 1]);
+      index += 1;
     } else if (args[index] === "--max-rto-minutes") {
       options.maxRtoMinutes = Number(args[index + 1]);
       index += 1;
@@ -218,6 +222,7 @@ Disaster recovery:
   soak-harness [<duration-hours>] [--soak-root <absolute-path>]
   operations-certification [--soak-report <absolute-report-path>]
   orchestration-certification <objective-id> [--orchestration <orchestration-id>]
+  multi-agent-certification <objective-id> [--orchestration <orchestration-id>] [--restart-evidence <absolute-json-path>]
   release-manifest [<version>] [--dashboard <absolute-path>]
   release-artifact [<version>] [--dashboard <absolute-path>]
   release-manifest-verify <absolute-manifest-path>
@@ -305,6 +310,7 @@ Options:
   --sse-clients <n>     Koneksi SSE bersamaan (1-20)
   --restart-every <n>   Restart deterministik setiap N langkah
   --soak-report <path>  Report P8.4 yang dipakai untuk certification
+  --restart-evidence <path>  Bukti restart/recoverable reject dalam JSON
   --max-rto-minutes <n> Batas RTO recovery drill (default 15)
   --dashboard <path>    Root dashboard untuk release manifest
   --release-version <v> Versi release manifest (default 1.0.0)
@@ -419,6 +425,20 @@ export async function main(argv = process.argv.slice(2)) {
       if (!objectiveId) fail("orchestration-certification membutuhkan <objective-id>.");
       const { createSequentialOrchestrationCertification } = await import("./orchestration-certification.mjs");
       result = createSequentialOrchestrationCertification({ runsRoot: options.runs, vaultRoot: options.vault, objectiveId, orchestrationId: options.orchestrationId });
+      if (result.status !== "CERTIFICATION_READY") process.exitCode = 1;
+    } else if (command === "multi-agent-certification") {
+      const [objectiveId] = options.positional;
+      if (!objectiveId) fail("multi-agent-certification membutuhkan <objective-id>.");
+      let restartEvidence = null;
+      if (options.restartEvidencePath) {
+        try {
+          restartEvidence = JSON.parse(fs.readFileSync(options.restartEvidencePath, "utf8"));
+        } catch (error) {
+          fail(`restart evidence JSON tidak valid: ${error.message}`);
+        }
+      }
+      const { createMultiAgentCertification } = await import("./multi-agent-certification.mjs");
+      result = createMultiAgentCertification({ runsRoot: options.runs, vaultRoot: options.vault, objectiveId, orchestrationId: options.orchestrationId, restartEvidence });
       if (result.status !== "CERTIFICATION_READY") process.exitCode = 1;
     } else if (command === "release-manifest") {
       const [releaseVersion = "1.0.0"] = options.positional;
