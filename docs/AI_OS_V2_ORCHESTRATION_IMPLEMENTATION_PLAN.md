@@ -1034,7 +1034,7 @@ This phase is optional and must not block core orchestration. It requires the v2
 
 No earlier phase may depend on this phase. Existing role prompts must already support the complete orchestration lifecycle.
 
-#### V2-100 — Define skill package and registry contract
+#### ✅ V2-100 — Define skill package and registry contract
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: new `docs/AI_OS_SKILL_CONTRACT.md`, new schemas, new `src/skill-registry.mjs`, tests.
