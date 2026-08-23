@@ -846,7 +846,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - temporary sub-agent ends with its run.
 - Verification: prompt golden tests, scope tests, unit gate.
 
-#### V2-051 — Enable parallel nodes across distinct projects
+#### V2-051 — Enable parallel nodes across distinct projects ✅
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: scheduler, existing queue/daemon pool, tests.
