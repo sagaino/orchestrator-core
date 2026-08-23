@@ -898,7 +898,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - relationship grants no write access.
 - Verification: registry migration/backward compatibility tests and API tests.
 
-#### V2-061 — Expose project relationships and Linked Projects intake
+#### ✅ V2-061 — Expose project relationships and Linked Projects intake
 
 - Model: `ECONOMY`.
 - Dashboard paths: Task Intake components/hooks/types, project management components, service client, browser fixtures/tests.
