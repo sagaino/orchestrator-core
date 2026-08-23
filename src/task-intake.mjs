@@ -408,6 +408,7 @@ export function taskDocument({ taskId, projectId, request, draft, requestedBy, a
       `node_type: ${JSON.stringify(orchestration.nodeType)}`,
       `write_conflict_group: ${JSON.stringify(orchestration.writeConflictGroup ?? null)}`,
       `context_from: ${yamlArray(orchestration.contextFrom ?? [])}`,
+      `skill_assignments: ${yamlArray((orchestration.skills ?? []).map((skill) => `${skill.skillId}@${skill.version}#${skill.checksum}`))}`,
     ] : []),
     "---",
     "",

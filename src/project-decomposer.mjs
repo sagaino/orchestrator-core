@@ -6,6 +6,8 @@ import { validatePlanRecord } from "./orchestration-schema.mjs";
 import { validateTaskGraph } from "./task-graph.mjs";
 import { runProcess } from "./executor.mjs";
 import { diagnoseCrossProject, validateCrossProjectPlan } from "./cross-project-diagnostics.mjs";
+import { projectSignalsForProjects } from "./skill-assignment.mjs";
+import { routePlanSkills, routingEvidence } from "./skill-router.mjs";
 
 export const PROJECT_DECOMPOSITION_STAGE = "project-decomposition";
 export const PROJECT_DECOMPOSITION_REVISION = 1;
@@ -396,12 +398,21 @@ export async function decomposeProject({
       estimatedTokens: validation.estimatedTokens,
     });
   }
+  const skillRouting = runsRoot
+    ? routePlanSkills({
+      plan: parsed,
+      runsRoot,
+      projectSignalsByProject: projectSignalsForProjects(projectContexts),
+    })
+    : { plan: parsed, registryState: "UNAVAILABLE", registryRevision: null, routes: [] };
   return {
     status: "PLAN_REVIEW",
     objectiveState: "PLAN_REVIEW",
     clarificationNeeded: false,
     clarificationQuestion: null,
-    plan: parsed,
+    plan: skillRouting.plan,
+    skillRouting: routingEvidence(skillRouting.routes),
+    skillRegistry: { state: skillRouting.registryState, revision: skillRouting.registryRevision },
     diagnostic: crossProjectDiagnosis,
     decomposition: diagnosticMetadata,
     readOnly: true,

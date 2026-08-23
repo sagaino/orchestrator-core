@@ -40,6 +40,14 @@ function fingerprintTask(document) {
     .slice(0, 20);
 }
 
+function parseSkillAssignments(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => {
+    const match = String(entry).match(/^([^@]+)@([^#]+)#([a-f0-9]{64})$/);
+    return match ? { skillId: match[1], version: match[2], checksum: match[3] } : null;
+  }).filter(Boolean);
+}
+
 export class ReadyTaskDeduplicator {
   #fingerprints = new Map();
 
@@ -103,6 +111,7 @@ export function createReadyTaskEvent(vaultRoot, filePath, services) {
       complexity: String(document.metadata.complexity ?? "UNKNOWN").toUpperCase(),
       role: String(document.metadata.role ?? "GENERAL").toUpperCase(),
       acceptanceCriteria,
+      skills: parseSkillAssignments(document.metadata.skill_assignments),
       sources: Array.isArray(document.metadata.sources)
         ? document.metadata.sources.map(String)
         : [],
