@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import net from "node:net";
+import { randomUUID } from "node:crypto";
 import { getRun } from "./run-manager.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -166,6 +167,8 @@ export async function getRunDiff({ runsRoot, runId }) {
 export class DevServerManager {
   constructor() {
     this.servers = new Map();
+    this.aggregateSessions = new Map();
+    this.aggregateSessionByObjective = new Map();
   }
 
   async startDevServer({ runsRoot, runId, repository = null, projectId = null, host = "127.0.0.1" }) {
@@ -288,7 +291,144 @@ export class DevServerManager {
     };
   }
 
+  async startAggregateProjectPreview({
+    runsRoot,
+    objectiveId,
+    candidates = [],
+    maxProjects = 4,
+    maxServers = 4,
+    maxDurationMs = 15 * 60 * 1000,
+    host = "127.0.0.1",
+  } = {}) {
+    if (!objectiveId || typeof objectiveId !== "string") throw new Error("objectiveId wajib diisi.");
+    if (host !== "127.0.0.1") throw new Error("Aggregate preview hanya boleh bind ke loopback 127.0.0.1.");
+    if (!Number.isInteger(maxProjects) || maxProjects < 1 || maxProjects > 16) throw new Error("maxProjects harus integer antara 1 dan 16.");
+    if (!Number.isInteger(maxServers) || maxServers < 1 || maxServers > maxProjects) throw new Error("maxServers harus integer antara 1 dan maxProjects.");
+    if (!Number.isInteger(maxDurationMs) || maxDurationMs < 1_000 || maxDurationMs > 60 * 60 * 1000) throw new Error("maxDurationMs harus antara 1000 dan 3600000.");
+
+    const existingSessionId = this.aggregateSessionByObjective.get(objectiveId);
+    if (existingSessionId) {
+      const existing = this.aggregateSessions.get(existingSessionId);
+      if (existing?.cleanup?.status !== "CLEANED") return { ...this.getAggregatePreviewStatus(existingSessionId), reused: true };
+      this.aggregateSessionByObjective.delete(objectiveId);
+    }
+
+    const sessionId = `aggregate-preview-${randomUUID()}`;
+    const session = {
+      schemaVersion: 1,
+      action: "AGGREGATE_PROJECT_PREVIEW",
+      sessionId,
+      objectiveId,
+      host,
+      maxProjects,
+      maxServers,
+      maxDurationMs,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + maxDurationMs).toISOString(),
+      previews: [],
+      unavailable: [],
+      cleanup: { status: "ACTIVE", stoppedAt: null, stoppedRunIds: [], errors: [] },
+    };
+    this.aggregateSessions.set(sessionId, session);
+    this.aggregateSessionByObjective.set(objectiveId, sessionId);
+
+    const uniqueCandidates = [];
+    const seenProjects = new Set();
+    for (const candidate of Array.isArray(candidates) ? candidates : []) {
+      const projectId = typeof candidate?.projectId === "string" ? candidate.projectId : null;
+      if (!projectId || seenProjects.has(projectId)) continue;
+      seenProjects.add(projectId);
+      uniqueCandidates.push({ ...candidate, projectId });
+    }
+
+    for (const candidate of uniqueCandidates.slice(0, maxProjects)) {
+      if (candidate.unavailableReason) {
+        session.unavailable.push(this.unavailablePreview(candidate, candidate.unavailableReason, candidate.unavailableMessage));
+        continue;
+      }
+      if (session.previews.length >= maxServers) {
+        session.unavailable.push(this.unavailablePreview(candidate, "SERVER_LIMIT_REACHED"));
+        continue;
+      }
+      try {
+        const serverInfo = await this.startDevServer({
+          runsRoot,
+          runId: candidate.runId,
+          repository: candidate.repository ?? null,
+          projectId: candidate.projectId,
+          host,
+        });
+        session.previews.push({
+          projectId: candidate.projectId,
+          runId: candidate.runId,
+          url: serverInfo.url,
+          host: serverInfo.host,
+          port: serverInfo.port,
+          status: serverInfo.status,
+          startedAt: serverInfo.startedAt,
+        });
+      } catch (error) {
+        session.unavailable.push(this.unavailablePreview(candidate, "DEV_SERVER_UNAVAILABLE", error?.message));
+      }
+    }
+    for (const candidate of uniqueCandidates.slice(maxProjects)) {
+      session.unavailable.push(this.unavailablePreview(candidate, "PROJECT_LIMIT_REACHED"));
+    }
+
+    session.status = session.previews.length === 0 ? "UNAVAILABLE" : session.unavailable.length ? "PARTIAL" : "READY";
+    session.timer = setTimeout(() => this.stopAggregatePreview(sessionId), maxDurationMs);
+    session.timer.unref?.();
+    return this.getAggregatePreviewStatus(sessionId);
+  }
+
+  unavailablePreview(candidate, reason, message = null) {
+    return {
+      projectId: candidate?.projectId ?? null,
+      runId: candidate?.runId ?? null,
+      status: "UNAVAILABLE",
+      reason,
+      message: message ?? null,
+      verification: { status: "NOT_EVALUATED", failed: false, impact: "NO_VERIFICATION_FAILURE" },
+    };
+  }
+
+  stopAggregatePreview(sessionId, objectiveId = null) {
+    const session = this.aggregateSessions.get(sessionId);
+    if (!session) return { sessionId, stopped: false, reason: "Aggregate preview session tidak ditemukan." };
+    if (objectiveId && session.objectiveId !== objectiveId) return { sessionId, stopped: false, reason: "Aggregate preview session bukan milik objective ini." };
+    if (session.cleanup.status === "CLEANED") return this.getAggregatePreviewStatus(sessionId);
+    const stoppedRunIds = [];
+    const errors = [];
+    for (const preview of session.previews) {
+      try {
+        const result = this.stopDevServer(preview.runId);
+        if (result.stopped) stoppedRunIds.push(preview.runId);
+      } catch (error) {
+        errors.push({ runId: preview.runId, message: error?.message ?? String(error) });
+      }
+    }
+    if (session.timer) clearTimeout(session.timer);
+    session.timer = null;
+    session.cleanup = { status: "CLEANED", stoppedAt: new Date().toISOString(), stoppedRunIds, errors };
+    if (this.aggregateSessionByObjective.get(session.objectiveId) === sessionId) this.aggregateSessionByObjective.delete(session.objectiveId);
+    return this.getAggregatePreviewStatus(sessionId);
+  }
+
+  getAggregatePreviewStatus(sessionId) {
+    const session = this.aggregateSessions.get(sessionId);
+    if (!session) return { sessionId, status: "NOT_FOUND", previews: [], unavailable: [], cleanup: { status: "UNKNOWN" } };
+    const { timer, ...status } = session;
+    return {
+      ...status,
+      previews: status.previews.map((preview) => ({ ...preview, status: this.getDevServerStatus(preview.runId).status })),
+      cleanup: { ...status.cleanup },
+    };
+  }
+
   stopAll() {
+    for (const sessionId of this.aggregateSessions.keys()) {
+      this.stopAggregatePreview(sessionId);
+    }
     for (const [runId] of this.servers) {
       this.stopDevServer(runId);
     }

@@ -991,7 +991,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 
 ### Phase V2.8 — Aggregate Preview and Delivery
 
-#### V2-080 — Aggregate project preview
+#### ✅ V2-080 — Aggregate project preview
 
 - Model: `ECONOMY`.
 - Backend paths: extend `src/dev-server-manager.mjs` and visual evidence services; tests.
