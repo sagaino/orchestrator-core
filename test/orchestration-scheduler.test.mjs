@@ -221,6 +221,8 @@ try {
   const retryJob = listJobs(runsRoot).find((job) => job.orchestrationId === retryFixture.orchestrationId);
   updateJob(runsRoot, retryJob.jobId, { state: JOB_STATES.FAILED, error: "transient diagnostic failure" });
   schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });
+  const retryTaskPath = path.join(vaultRoot, "02-Projects", "scheduler-project", "tasks", "task-001.md");
+  fs.writeFileSync(retryTaskPath, fs.readFileSync(retryTaskPath, "utf8").replace("status: BACKLOG", "status: FAILED"));
   const retryRequest = requestNodeRetry({
     runsRoot,
     objectiveId: "obj-scheduler-retry",
@@ -234,9 +236,11 @@ try {
     () => resolveDecision({ runsRoot, decisionId: retryRequest.decision.decisionId, action: "DONE", resolvedBy: "human:reviewer" }),
     (error) => error.code === "DECISION_ACTION_NOT_ALLOWED",
   );
-  const retryResolution = resolveDecision({ runsRoot, decisionId: retryRequest.decision.decisionId, action: "RETRY", resolvedBy: "human:reviewer" });
+  const retryResolution = resolveDecision({ vaultRoot, runsRoot, decisionId: retryRequest.decision.decisionId, action: "RETRY", resolvedBy: "human:reviewer" });
   assert.equal(retryResolution.decision.resolution.action, "RETRY");
   assert.equal(retryResolution.decision.retryAttempt, 2);
+  assert.match(fs.readFileSync(retryTaskPath, "utf8"), /^status: BACKLOG$/m);
+  assert.match(fs.readFileSync(retryTaskPath, "utf8"), /FAILED → BACKLOG/);
   assert.equal(getOrchestration(runsRoot, retryFixture.orchestrationId).nodes.N01.state, "READY");
   assert.equal(getOrchestration(runsRoot, retryFixture.orchestrationId).nodes.N01.attempt, 2);
   const retryTick = schedulerTick({ vaultRoot, runsRoot, enabled: true, env: schedulerEnv });

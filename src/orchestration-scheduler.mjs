@@ -11,6 +11,7 @@ import { withDurableLease } from "./durable-runtime.mjs";
 import { classifyIntegrationFailure, getIntegrationEvidence } from "./integration-manager.mjs";
 import { budgetSnapshot, ensureBudgetExceededDecision, resolveBudgetExceededDecision } from "./orchestration-budget.mjs";
 import { parallelObjectivesEnabled } from "./rollout-flags.mjs";
+import { resetOrchestrationTaskToBacklog } from "./run-manager.mjs";
 
 const ACTIVE_NODE_STATES = new Set(["QUEUED", "RUNNING", "REVIEW"]);
 const TERMINAL_NODE_STATES = new Set(["DONE", "FAILED", "CANCELLED"]);
@@ -445,7 +446,7 @@ function clearFailedDescendantBlockers({ plan, nodes, failedNodeId }) {
   }
 }
 
-export function applyNodeRetryDecision({ runsRoot, decisionId, now = new Date() } = {}) {
+export function applyNodeRetryDecision({ vaultRoot, runsRoot, decisionId, now = new Date() } = {}) {
   return withDurableLease({
     runsRoot,
     namespace: "orchestration-scheduler",
@@ -471,6 +472,16 @@ export function applyNodeRetryDecision({ runsRoot, decisionId, now = new Date() 
     }
     const retryCount = Math.max(0, Number(runtime.attempt ?? 1) - 1);
     if (retryCount >= context.objective.budget.maxRetriesPerNode) fail("Batas retry node tercapai.", { statusCode: 409, code: "MAX_RETRIES_EXCEEDED", details: { code: "MAX_RETRIES_EXCEEDED", nodeId: decision.nodeId } });
+    const task = materializedTaskMap(context.orchestration).get(decision.nodeId);
+    if (!task) fail(`Materialized task untuk node ${decision.nodeId} tidak ditemukan.`, { code: "MATERIALIZED_TASK_MISSING", details: { code: "MATERIALIZED_TASK_MISSING", nodeId: decision.nodeId } });
+    resetOrchestrationTaskToBacklog({
+      vaultRoot,
+      task,
+      failedJobId: runtime.jobId,
+      retriedBy: decision.resolution.resolvedBy,
+      reason: decision.evidence?.reason,
+      now,
+    });
     const nodes = structuredClone(context.orchestration.nodes);
     nodes[decision.nodeId] = {
       ...nodes[decision.nodeId],
@@ -501,7 +512,7 @@ export function applyNodeRetryDecision({ runsRoot, decisionId, now = new Date() 
   });
 }
 
-export function resolveDecision({ runsRoot, decisionId, action, resolvedBy, budget = null, now = new Date() } = {}) {
+export function resolveDecision({ vaultRoot, runsRoot, decisionId, action, resolvedBy, budget = null, now = new Date() } = {}) {
   const selectedAction = String(action ?? "").trim().toUpperCase();
   const identity = String(resolvedBy ?? "").trim();
   if (!identity) fail("Human decision identity wajib berasal dari operator session.", { statusCode: 403, code: "DECISION_RESOLVER_REQUIRED", details: { code: "DECISION_RESOLVER_REQUIRED" } });
@@ -523,7 +534,7 @@ export function resolveDecision({ runsRoot, decisionId, action, resolvedBy, budg
   }
   if (decision.state === "RESOLVED") {
     if (decision.resolution?.action !== selectedAction) fail("Decision sudah resolved dengan action berbeda.", { statusCode: 409, code: "DECISION_ALREADY_RESOLVED", details: { code: "DECISION_ALREADY_RESOLVED", decisionId } });
-    if (decision.type === "NODE_RETRY" && selectedAction === "RETRY" && !decision.retryAppliedAt) return applyNodeRetryDecision({ runsRoot, decisionId, now });
+    if (decision.type === "NODE_RETRY" && selectedAction === "RETRY" && !decision.retryAppliedAt) return applyNodeRetryDecision({ vaultRoot, runsRoot, decisionId, now });
     return { decision, alreadyResolved: true };
   }
   if (decision.state !== "OPEN") fail(`Decision tidak dapat di-resolve dari state ${decision.state}.`, { code: "DECISION_NOT_OPEN", details: { code: "DECISION_NOT_OPEN", decisionId } });
@@ -548,7 +559,7 @@ export function resolveDecision({ runsRoot, decisionId, action, resolvedBy, budg
     now,
     update: (record) => ({ ...record, state: "RESOLVED", resolution: { action: selectedAction, resolvedBy: identity, resolvedAt: nowIso(now) } }),
   });
-  if (resolved.type === "NODE_RETRY" && selectedAction === "RETRY") return applyNodeRetryDecision({ runsRoot, decisionId, now });
+  if (resolved.type === "NODE_RETRY" && selectedAction === "RETRY") return applyNodeRetryDecision({ vaultRoot, runsRoot, decisionId, now });
   return { decision: resolved, alreadyResolved: false };
 }
 
