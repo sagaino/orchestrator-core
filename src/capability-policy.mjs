@@ -125,7 +125,10 @@ export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.
   const effectiveArgs = providerManagedSandbox && !args.includes("--sandbox") ? [...args, "--sandbox"] : args;
   const enforceWriteBoundary = !providerManagedSandbox;
   const inheritedProfile = String(env.ORCHESTRATOR_CAPABILITY_SANDBOX ?? "");
-  if (inheritedProfile === profileName) {
+  const inheritedCapability = CAPABILITY_PROFILES[inheritedProfile];
+  const canSafelyInherit = inheritedProfile === profileName
+    || inheritedCapability?.network === "deny";
+  if (canSafelyInherit) {
     return {
       command,
       args: effectiveArgs,
@@ -135,6 +138,7 @@ export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.
       profileName,
       temporaryRoot,
       inheritedSandbox: true,
+      inheritedProfile,
     };
   }
   return {
@@ -146,5 +150,6 @@ export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.
     profileName,
     temporaryRoot,
     inheritedSandbox: false,
+    inheritedProfile: null,
   };
 }
