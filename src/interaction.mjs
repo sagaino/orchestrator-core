@@ -80,8 +80,12 @@ function normalizedVerification(results) {
     const command = String(result?.command ?? result?.script ?? "").trim();
     return {
       command,
+      projectId: result?.projectId ?? null,
+      script: result?.script ?? null,
+      scope: result?.scope ?? "PROJECT",
+      serviceUrls: result?.serviceUrls ?? null,
       exitCode: Number.isFinite(exitCode) ? exitCode : null,
-      status: Number.isFinite(exitCode) ? (exitCode === 0 ? "PASS" : "FAIL") : "UNKNOWN",
+      status: Number.isFinite(exitCode) ? (exitCode === 0 ? "PASS" : "FAIL") : (result?.status ?? "UNKNOWN"),
       stdoutTail: result?.stdoutTail ?? null,
       stderrTail: result?.stderrTail ?? null,
     };
@@ -257,7 +261,7 @@ export function buildRunEvidence(run, { runsRoot = null } = {}) {
   };
 }
 
-export function buildIntegrationEvidence({ objective, plan, orchestration, sourceRuns = [], verification = [], artifactPath = null } = {}) {
+export function buildIntegrationEvidence({ objective, plan, orchestration, sourceRuns = [], verification = [], artifactPath = null, projectBaselines = {}, services = [], repositoryAcceptance = [] } = {}) {
   const source = sourceRuns.map((item) => {
     const run = item.run ?? item;
     const git = run.execution?.result?.gitCommit ?? run.execution?.workspace?.gitCommit ?? null;
@@ -293,6 +297,18 @@ export function buildIntegrationEvidence({ objective, plan, orchestration, sourc
     verification: {
       status: aggregateStatus(verificationResults),
       results: verificationResults,
+    },
+    projectBaselines,
+    services,
+    repositoryAcceptance,
+    crossProjectVerification: {
+      required: objective?.mode === "CROSS_PROJECT_INCIDENT" || (Array.isArray(plan?.integration?.crossProjectVerification) && plan.integration.crossProjectVerification.length > 0),
+      status: verificationResults.some((item) => item.scope === "CROSS_PROJECT" && item.status === "FAIL")
+        ? "FAIL"
+        : verificationResults.some((item) => item.scope === "CROSS_PROJECT")
+          ? "PASS"
+          : "NOT_REQUIRED",
+      results: verificationResults.filter((item) => item.scope === "CROSS_PROJECT"),
     },
     artifactPath,
     complete: source.length > 0 && source.every((item) => Boolean(item.runId && item.commitHash)),

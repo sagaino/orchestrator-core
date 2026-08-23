@@ -13,6 +13,7 @@ import { createPlanRevision } from "./plan-lifecycle.mjs";
 import { buildIntegrationEvidence, buildRunEvidence } from "./interaction.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 import { aiRepairApplicable, runProcess } from "./executor.mjs";
+import { globalDevServerManager } from "./dev-server-manager.mjs";
 import { topologicalOrder } from "./task-graph.mjs";
 import {
   applyIntegrationPatches,
@@ -158,11 +159,62 @@ function verificationRequests({ plan, projects }) {
   return requests;
 }
 
-async function runApprovedVerification({ project, script, verificationRunner }) {
+function crossProjectVerificationRequests({ plan, projects }) {
+  const requested = Array.isArray(plan.integration?.crossProjectVerification) ? plan.integration.crossProjectVerification : [];
+  const requests = [];
+  for (const raw of requested) {
+    const normalized = normalizeScript(raw);
+    if (!normalized) continue;
+    const separator = normalized.indexOf(":");
+    const scopedProject = separator > 0 && projects.some((candidate) => candidate.id === normalized.slice(0, separator))
+      ? normalized.slice(0, separator)
+      : null;
+    const script = scopedProject ? normalized.slice(separator + 1).trim() : normalized;
+    const targets = scopedProject ? projects.filter((project) => project.id === scopedProject) : projects;
+    for (const project of targets) requests.push({ projectId: project.id, script, scope: "CROSS_PROJECT" });
+  }
+  return requests;
+}
+
+function needsLocalServices({ plan, requests }) {
+  if (Array.isArray(plan.integration?.localServices) && plan.integration.localServices.length > 0) return true;
+  return requests.some((request) => /(?:e2e|browser|playwright|cypress|visual)/i.test(request.script));
+}
+
+function requestedServiceProjectIds({ plan, projects }) {
+  const configured = Array.isArray(plan.integration?.localServices) ? plan.integration.localServices : [];
+  const ids = configured.map((item) => typeof item === "string" ? item : item?.projectId).filter(Boolean);
+  return ids.length ? projects.filter((project) => ids.includes(project.id)) : projects;
+}
+
+function repositoryAcceptance({ projects, sourceRuns, verification }) {
+  return projects.map((project) => {
+    const runs = sourceRuns.filter((source) => source.projectId === project.id);
+    const checks = verification.filter((result) => result.projectId === project.id && result.scope !== "CROSS_PROJECT");
+    const runIds = runs.map((run) => run.run?.runId ?? run.job?.runId).filter(Boolean);
+    const diffs = runs.map((run) => ({ runId: run.run?.runId ?? run.job?.runId ?? null, changedPaths: run.changedPaths ?? [], allowedPaths: run.allowedPaths ?? [] }));
+    const status = runs.length > 0
+      && runs.every((run) => run.run?.state === "DONE" && Boolean(run.commit?.commitHash))
+      && checks.length > 0
+      && checks.every((check) => check.status === "PASS")
+      ? "PASS"
+      : "FAIL";
+    return {
+      projectId: project.id,
+      baseline: null,
+      runIds,
+      diffs,
+      checks,
+      acceptance: { gate: "PER_REPOSITORY", status },
+    };
+  });
+}
+
+async function runApprovedVerification({ project, script, scope = "PROJECT", verificationRunner, serviceUrls = {} }) {
   const command = `npm run ${script}`;
   if (verificationRunner) {
-    const response = await verificationRunner({ project, projectId: project.id, script, command, cwd: project.repository });
-    return { projectId: project.id, script, command, ...(response ?? {}), exitCode: response?.exitCode ?? null, status: response?.exitCode === 0 ? "PASS" : "FAIL" };
+    const response = await verificationRunner({ project, projectId: project.id, script, command, cwd: project.repository, scope, approved: true, serviceUrls });
+    return { projectId: project.id, script, scope, command, serviceUrls, ...(response ?? {}), exitCode: response?.exitCode ?? null, status: response?.exitCode === 0 ? "PASS" : "FAIL" };
   }
   const response = await runProcess({
     command: "npm",
@@ -171,8 +223,10 @@ async function runApprovedVerification({ project, script, verificationRunner }) 
     stage: "verification",
     writableRoots: [project.repository],
     readableRoots: [project.repository],
+    env: { ...process.env, ORCHESTRATOR_PROJECT_URLS: JSON.stringify(serviceUrls) },
+    allowLoopback: scope === "CROSS_PROJECT",
   });
-  return { projectId: project.id, script, command, ...response, status: response.exitCode === 0 ? "PASS" : "FAIL" };
+  return { projectId: project.id, script, scope, command, serviceUrls, ...response, status: response.exitCode === 0 ? "PASS" : "FAIL" };
 }
 
 function baseline(repository) {
@@ -221,7 +275,10 @@ function blockerDecision({ runsRoot, objective, orchestration, sourceRuns, sourc
 function finalizeIntegration({ runsRoot, contextValue, artifact, verification, sourceErrors, now }) {
   return withDurableLease({ runsRoot, ...INTEGRATION_LEASE, key: contextValue.orchestration.orchestrationId }, () => {
     const current = getOrchestration(runsRoot, contextValue.orchestration.orchestrationId);
-    const failed = sourceErrors.length > 0 || artifact.complete !== true || artifact.scope.changedPathsWithinUnion !== true || artifact.verification.status !== "PASS";
+    const crossProject = contextValue.objective.mode === "CROSS_PROJECT_INCIDENT";
+    const repositoryAcceptanceFailed = crossProject && (!Array.isArray(artifact.repositoryAcceptance) || artifact.repositoryAcceptance.length !== contextValue.objective.projectIds.length || artifact.repositoryAcceptance.some((item) => item.acceptance?.status !== "PASS"));
+    const crossVerificationFailed = crossProject && artifact.crossProjectVerification?.required === true && artifact.crossProjectVerification.status !== "PASS";
+    const failed = sourceErrors.length > 0 || artifact.complete !== true || artifact.scope.changedPathsWithinUnion !== true || artifact.verification.status !== "PASS" || repositoryAcceptanceFailed || crossVerificationFailed;
     const integrationNode = contextValue.plan.nodes.find((node) => node.type === "INTEGRATION");
     const decision = failed
       ? blockerDecision({ runsRoot, objective: contextValue.objective, orchestration: current, sourceRuns: artifact.sourceRuns ?? [], sourceErrors, verification, evidence: artifact, now })
@@ -558,7 +615,7 @@ export function recoverIntegration({ runsRoot, objectiveId, orchestrationId = nu
   return proposeIntegrationRepair({ runsRoot, objectiveId, orchestrationId: contextValue.orchestration.orchestrationId, now });
 }
 
-export async function startIntegration({ runsRoot, vaultRoot, objectiveId, orchestrationId = null, integrationNodeId = null, verificationRunner = null, processRunner = null, now = new Date() } = {}) {
+export async function startIntegration({ runsRoot, vaultRoot, objectiveId, orchestrationId = null, integrationNodeId = null, verificationRunner = null, processRunner = null, devServerManager = globalDevServerManager, now = new Date() } = {}) {
   if (!runsRoot || !vaultRoot || !objectiveId) fail("Integration membutuhkan runsRoot, vaultRoot, dan objectiveId.", { code: "INTEGRATION_ARGUMENTS_REQUIRED" });
   const prepared = withDurableLease({ runsRoot, ...INTEGRATION_LEASE, key: orchestrationId ?? objectiveId }, () => {
     const contextValue = context({ runsRoot, objectiveId, orchestrationId });
@@ -587,33 +644,85 @@ export async function startIntegration({ runsRoot, vaultRoot, objectiveId, orche
   const sourceEvidence = sourceRunEvidence({ runsRoot, jobs, runs, orchestration: contextValue.orchestration, nodes: source.nodes });
   const projects = listProjects(vaultRoot).projects.filter((project) => contextValue.plan.projects.includes(project.id));
   const requests = verificationRequests({ plan: contextValue.plan, projects });
+  const crossRequests = crossProjectVerificationRequests({ plan: contextValue.plan, projects });
   const verification = [];
-  if (!requests.length) verification.push({ projectId: null, script: null, command: null, exitCode: null, status: "FAIL", error: "No approved project verification script is configured." });
-  for (const request of requests) {
-    const project = projects.find((candidate) => candidate.id === request.projectId);
-    const scripts = project ? getPackageScripts(project.repository) : {};
-    if (!project || !scripts[request.script]) {
-      verification.push({ ...request, command: `npm run ${request.script}`, exitCode: null, status: "FAIL", error: "Verification script is not available in the approved project package scripts." });
-      continue;
+  const services = [];
+  const startedServices = [];
+  const serviceUrls = {};
+  const projectBaselines = Object.fromEntries(projects.map((project) => [project.id, baseline(project.repository)]));
+  try {
+    if (needsLocalServices({ plan: contextValue.plan, requests: crossRequests })) {
+      for (const project of requestedServiceProjectIds({ plan: contextValue.plan, projects })) {
+        const scripts = getPackageScripts(project.repository);
+        const serviceRunId = `integration-${contextValue.orchestration.orchestrationId}-${project.id}`;
+        if (!scripts.dev) {
+          services.push({ projectId: project.id, status: "FAIL", host: "127.0.0.1", port: null, url: null, error: "Approved local service requires a dev script in package.json." });
+          continue;
+        }
+        try {
+          const started = await devServerManager.startDevServer({ runsRoot, runId: serviceRunId, projectId: project.id, repository: project.repository, host: "127.0.0.1" });
+          services.push({ projectId: project.id, status: "PASS", host: started.host ?? "127.0.0.1", port: started.port, url: started.url, startedAt: started.startedAt });
+          serviceUrls[project.id] = started.url;
+          startedServices.push(serviceRunId);
+        } catch (error) {
+          services.push({ projectId: project.id, status: "FAIL", host: "127.0.0.1", port: null, url: null, error: error.message });
+        }
+      }
+      for (const service of services.filter((item) => item.status !== "PASS")) {
+        verification.push({ projectId: service.projectId, script: "dev", scope: "CROSS_PROJECT", command: "npm run dev", serviceUrls, exitCode: 1, status: "FAIL", error: service.error });
+      }
     }
-    try {
-      verification.push(await runApprovedVerification({ project, script: request.script, verificationRunner: verificationRunner ?? processRunner }));
-    } catch (error) {
-      verification.push({ ...request, command: `npm run ${request.script}`, exitCode: null, status: "FAIL", error: error.message });
+    if (!requests.length) verification.push({ projectId: null, script: null, scope: "PROJECT", command: null, exitCode: null, status: "FAIL", error: "No approved project verification script is configured." });
+    for (const request of requests) {
+      const project = projects.find((candidate) => candidate.id === request.projectId);
+      const scripts = project ? getPackageScripts(project.repository) : {};
+      if (!project || !scripts[request.script]) {
+        verification.push({ ...request, scope: "PROJECT", command: `npm run ${request.script}`, exitCode: null, status: "FAIL", error: "Verification script is not available in the approved project package scripts." });
+        continue;
+      }
+      try {
+        verification.push(await runApprovedVerification({ project, script: request.script, scope: "PROJECT", verificationRunner: verificationRunner ?? processRunner, serviceUrls }));
+      } catch (error) {
+        verification.push({ ...request, scope: "PROJECT", command: `npm run ${request.script}`, exitCode: null, status: "FAIL", error: error.message });
+      }
+    }
+    if (!crossRequests.length && contextValue.objective.mode === "CROSS_PROJECT_INCIDENT") {
+      verification.push({ projectId: null, script: null, scope: "CROSS_PROJECT", command: null, exitCode: 1, status: "FAIL", error: "No approved cross-project verification script is configured." });
+    }
+    for (const request of crossRequests) {
+      const project = projects.find((candidate) => candidate.id === request.projectId);
+      const scripts = project ? getPackageScripts(project.repository) : {};
+      if (!project || !scripts[request.script]) {
+        verification.push({ ...request, command: `npm run ${request.script}`, serviceUrls, exitCode: null, status: "FAIL", error: "Cross-project verification script is not available in the approved project package scripts." });
+        continue;
+      }
+      try {
+        verification.push(await runApprovedVerification({ project, script: request.script, scope: "CROSS_PROJECT", verificationRunner: verificationRunner ?? processRunner, serviceUrls }));
+      } catch (error) {
+        verification.push({ ...request, command: `npm run ${request.script}`, serviceUrls, exitCode: null, status: "FAIL", error: error.message });
+      }
+    }
+    const acceptance = repositoryAcceptance({ projects, sourceRuns: sourceEvidence.sourceRuns, verification });
+    for (const item of acceptance) item.baseline = projectBaselines[item.projectId] ?? null;
+    const artifactFile = artifactPath(runsRoot, contextValue.orchestration.orchestrationId);
+    const artifact = buildIntegrationEvidence({
+      objective: contextValue.objective,
+      plan: contextValue.plan,
+      orchestration: contextValue.orchestration,
+      sourceRuns: sourceEvidence.sourceRuns.map((item) => ({ ...item, run: item.run, allowedPaths: item.allowedPaths })),
+      verification,
+      artifactPath: artifactFile,
+      projectBaselines,
+      services,
+      repositoryAcceptance: acceptance,
+    });
+    artifact.sourceErrors = sourceEvidence.errors;
+    return finalizeIntegration({ runsRoot, contextValue, artifact, verification, sourceErrors: sourceEvidence.errors, now });
+  } finally {
+    for (const serviceRunId of startedServices.reverse()) {
+      try { devServerManager.stopDevServer(serviceRunId); } catch {}
     }
   }
-  const artifactFile = artifactPath(runsRoot, contextValue.orchestration.orchestrationId);
-  const artifact = buildIntegrationEvidence({
-    objective: contextValue.objective,
-    plan: contextValue.plan,
-    orchestration: contextValue.orchestration,
-    sourceRuns: sourceEvidence.sourceRuns.map((item) => ({ ...item, run: item.run, allowedPaths: item.allowedPaths })),
-    verification,
-    artifactPath: artifactFile,
-  });
-  artifact.sourceErrors = sourceEvidence.errors;
-  artifact.projectBaselines = Object.fromEntries(projects.map((project) => [project.id, baseline(project.repository)]));
-  return finalizeIntegration({ runsRoot, contextValue, artifact, verification, sourceErrors: sourceEvidence.errors, now });
 }
 
 function aggregateSourcePatches({ source, sourceEvidence, plan, projectId }) {

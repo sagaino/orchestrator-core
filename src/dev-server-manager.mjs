@@ -168,7 +168,7 @@ export class DevServerManager {
     this.servers = new Map();
   }
 
-  async startDevServer({ runsRoot, runId }) {
+  async startDevServer({ runsRoot, runId, repository = null, projectId = null, host = "127.0.0.1" }) {
     const existing = this.servers.get(runId);
     if (existing && existing.status === "RUNNING") {
       return {
@@ -180,7 +180,8 @@ export class DevServerManager {
       };
     }
 
-    const workspacePath = findWorkspacePath(runsRoot, runId);
+    if (host !== "127.0.0.1") throw new Error("Dev server hanya boleh bind ke loopback 127.0.0.1.");
+    const workspacePath = repository || findWorkspacePath(runsRoot, runId);
     if (!workspacePath) {
       throw new Error(`Isolated workspace untuk run ${runId} tidak ditemukan.`);
     }
@@ -194,7 +195,7 @@ export class DevServerManager {
 
     pushLog(`Memulai dev server pada port ${port}...`);
 
-    const child = spawn("npm", ["run", "dev", "--", "--port", String(port), "--host", "127.0.0.1"], {
+    const child = spawn("npm", ["run", "dev", "--", "--port", String(port), "--host", host], {
       cwd: workspacePath,
       env: {
         ...process.env,
@@ -207,7 +208,9 @@ export class DevServerManager {
       runId,
       process: child,
       port,
-      url: `http://127.0.0.1:${port}`,
+      projectId,
+      host,
+      url: `http://${host}:${port}`,
       status: "STARTING",
       startedAt: new Date().toISOString(),
       logTail,
@@ -237,10 +240,13 @@ export class DevServerManager {
 
     // Wait a brief moment to confirm it boots
     await new Promise((resolve) => setTimeout(resolve, 1500));
+    if (!this.servers.has(runId)) throw new Error(`Dev server untuk ${projectId ?? runId} berhenti saat startup.`);
     serverEntry.status = "RUNNING";
 
     return {
       runId,
+      projectId: serverEntry.projectId,
+      host: serverEntry.host,
       port: serverEntry.port,
       url: serverEntry.url,
       status: serverEntry.status,
