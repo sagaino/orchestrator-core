@@ -37,15 +37,20 @@ assert.equal(capabilityForStage("cross-project-diagnostic"), "diagnostic");
 assert.equal(capabilityForStage("verification:npm-test"), "verification");
 assert.equal(verificationRequiresLoopback("test:e2e", "playwright test"), true);
 assert.equal(verificationRequiresLoopback("test:browser", "vitest run"), true);
-assert.equal(verificationRequiresLoopback("test", "vitest run"), false);
+assert.equal(verificationRequiresLoopback("test", "vitest run"), true);
 assert.equal(postApplyVerificationRequiresLoopback("test:e2e", "playwright test"), true);
-assert.equal(postApplyVerificationRequiresLoopback("test", "vitest run"), false);
+assert.equal(postApplyVerificationRequiresLoopback("test", "vitest run"), true);
 assert.equal(aiRepairApplicable(new Error("listen EPERM: operation not permitted 127.0.0.1:4173")), false);
+assert.equal(aiRepairApplicable(new Error("sandbox-exec: sandbox_apply: Operation not permitted")), false);
 assert.equal(aiRepairApplicable(new Error("Scope guard menolak automatic recovery di luar allowed_paths: test-results/playwright/.last-run.json")), false);
 assert.equal(aiRepairApplicable(new Error("Verification gagal: unit assertion mismatch")), true);
 assert.equal(isSafeInfrastructureFailure({
   rawError: "Verification gagal: listen EPERM: operation not permitted 127.0.0.1:4173",
-  manifest: { execution: { frozenVerificationScripts: { "test:e2e": "playwright test" } } },
+  manifest: { execution: { frozenVerificationScripts: { test: "node --test" } } },
+}), true);
+assert.equal(isSafeInfrastructureFailure({
+  rawError: "Verification gagal: sandbox-exec: sandbox_apply: Operation not permitted",
+  manifest: {},
 }), true);
 assert.equal(isSafeInfrastructureFailure({
   rawError: "Scope guard menolak automatic recovery di luar allowed_paths: test-results/playwright/.last-run.json",
@@ -88,6 +93,35 @@ try {
   fs.rmSync(preparedDiagnostic.temporaryRoot, { recursive: true, force: true });
 }
 
+const preparedInheritedVerification = prepareCapabilitySpawn({
+  command: process.execPath,
+  args: ["-e", "process.exit(0)"],
+  cwd: "/tmp",
+  env: { PATH: "/bin", HOME: "/Users/fixture", ORCHESTRATOR_CAPABILITY_SANDBOX: "verification" },
+  capabilityProfile: "verification",
+});
+try {
+  assert.equal(preparedInheritedVerification.command, process.execPath);
+  assert.equal(preparedInheritedVerification.inheritedSandbox, true);
+  assert.equal(preparedInheritedVerification.env.ORCHESTRATOR_CAPABILITY_SANDBOX, "verification");
+} finally {
+  fs.rmSync(preparedInheritedVerification.temporaryRoot, { recursive: true, force: true });
+}
+
+const preparedDifferentProfile = prepareCapabilitySpawn({
+  command: process.execPath,
+  args: ["-e", "process.exit(0)"],
+  cwd: "/tmp",
+  env: { PATH: "/bin", HOME: "/Users/fixture", ORCHESTRATOR_CAPABILITY_SANDBOX: "agent" },
+  capabilityProfile: "verification",
+});
+try {
+  assert.equal(preparedDifferentProfile.command, "/usr/bin/sandbox-exec");
+  assert.equal(preparedDifferentProfile.inheritedSandbox, false);
+} finally {
+  fs.rmSync(preparedDifferentProfile.temporaryRoot, { recursive: true, force: true });
+}
+
 const knownSecret = "phase42-known-secret-value";
 assert.equal(redactText(`Bearer ${knownSecret}`, { env: { TEST_TOKEN: knownSecret } }), "Bearer [REDACTED]");
 assert.deepEqual(redactSensitive({ password: knownSecret, nested: `token=${knownSecret}` }, { env: { TEST_TOKEN: knownSecret } }), {
@@ -116,7 +150,8 @@ try {
     "socket.on('connect',()=>{result.network=true;socket.destroy();console.log(JSON.stringify(result))});",
     "socket.on('error',(e)=>{result.networkError=e.code;console.log(JSON.stringify(result))});",
   ].join("");
-  const processResult = await runProcess({
+  const runningInsideCapabilitySandbox = Boolean(process.env.ORCHESTRATOR_CAPABILITY_SANDBOX);
+  const processResult = runningInsideCapabilitySandbox ? null : await runProcess({
     command: process.execPath,
     args: ["-e", script],
     cwd: workspace,
@@ -126,19 +161,21 @@ try {
     home: hostHome,
     deadlineMs: 10_000,
   });
-  assert.equal(processResult.exitCode, 0, processResult.stderrTail);
-  const observation = JSON.parse(processResult.stdoutTail.trim());
-  assert.equal(observation.home, hostHome);
-  assert.equal(observation.envSecret, null);
-  assert.equal(observation.hostSecret, undefined);
-  assert.equal(observation.hostReadError, "EPERM");
-  assert.equal(observation.outsideWrite, undefined);
-  assert.equal(observation.outsideWriteError, "EPERM");
-  assert.equal(observation.insideWrite, true, observation.insideWriteError);
-  assert.equal(fs.readFileSync(inside, "utf8"), "allowed");
-  assert.equal(observation.network, undefined);
-  assert.ok(observation.networkError);
-  assert.equal(fs.existsSync(outside), false);
+  if (processResult) {
+    assert.equal(processResult.exitCode, 0, processResult.stderrTail);
+    const observation = JSON.parse(processResult.stdoutTail.trim());
+    assert.equal(observation.home, hostHome);
+    assert.equal(observation.envSecret, null);
+    assert.equal(observation.hostSecret, undefined);
+    assert.equal(observation.hostReadError, "EPERM");
+    assert.equal(observation.outsideWrite, undefined);
+    assert.equal(observation.outsideWriteError, "EPERM");
+    assert.equal(observation.insideWrite, true, observation.insideWriteError);
+    assert.equal(fs.readFileSync(inside, "utf8"), "allowed");
+    assert.equal(observation.network, undefined);
+    assert.ok(observation.networkError);
+    assert.equal(fs.existsSync(outside), false);
+  }
 
   const loopbackScript = [
     "const net=require('net');const result={};",
@@ -149,7 +186,7 @@ try {
     "local.on('error',(error)=>{result.loopbackError=error.code;server.close();console.log(JSON.stringify(result))});",
     "});server.on('error',(error)=>{result.bindError=error.code;console.log(JSON.stringify(result))});",
   ].join("");
-  const loopbackResult = await runProcess({
+  const loopbackResult = runningInsideCapabilitySandbox ? null : await runProcess({
     command: process.execPath,
     args: ["-e", loopbackScript],
     cwd: workspace,
@@ -160,11 +197,13 @@ try {
     home: hostHome,
     deadlineMs: 10_000,
   });
-  assert.equal(loopbackResult.exitCode, 0, loopbackResult.stderrTail);
-  const loopbackObservation = JSON.parse(loopbackResult.stdoutTail.trim());
-  assert.equal(loopbackObservation.loopback, true, loopbackObservation.loopbackError);
-  assert.equal(loopbackObservation.external, undefined);
-  assert.equal(loopbackObservation.externalError, "EPERM");
+  if (loopbackResult) {
+    assert.equal(loopbackResult.exitCode, 0, loopbackResult.stderrTail);
+    const loopbackObservation = JSON.parse(loopbackResult.stdoutTail.trim());
+    assert.equal(loopbackObservation.loopback, true, loopbackObservation.loopbackError);
+    assert.equal(loopbackObservation.external, undefined);
+    assert.equal(loopbackObservation.externalError, "EPERM");
+  }
 
   const snapshotBeforeArtifacts = repositorySnapshot(workspace);
   const playwrightArtifact = path.join(workspace, "test-results", "playwright", ".last-run.json");

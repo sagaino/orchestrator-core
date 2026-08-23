@@ -4,6 +4,7 @@ import path from "node:path";
 
 const BASE_ENV = Object.freeze([
   "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "SHELL", "USER", "LOGNAME", "NO_COLOR", "ORCHESTRATOR_PROJECT_URLS",
+  "ORCHESTRATOR_CAPABILITY_SANDBOX",
 ]);
 const PROVIDER_ENV = Object.freeze([
   "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -104,6 +105,7 @@ export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.
   const profile = CAPABILITY_PROFILES[profileName];
   if (!profile) throw new Error(`Capability profile tidak dikenal: ${profileName}`);
   const sanitizedEnv = allowlistedEnvironment(env, profileName);
+  sanitizedEnv.ORCHESTRATOR_CAPABILITY_SANDBOX = profileName;
   const effectiveHome = path.resolve(home ?? sanitizedEnv.HOME ?? os.homedir());
   sanitizedEnv.HOME = effectiveHome;
   if (process.platform !== "darwin" || !fs.existsSync("/usr/bin/sandbox-exec")) {
@@ -122,6 +124,19 @@ export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.
   const effectiveReadableRoots = [...(readableRoots ?? [cwd]), temporaryRoot];
   const effectiveArgs = providerManagedSandbox && !args.includes("--sandbox") ? [...args, "--sandbox"] : args;
   const enforceWriteBoundary = !providerManagedSandbox;
+  const inheritedProfile = String(env.ORCHESTRATOR_CAPABILITY_SANDBOX ?? "");
+  if (inheritedProfile === profileName) {
+    return {
+      command,
+      args: effectiveArgs,
+      env: sanitizedEnv,
+      deadlineMs: profile.deadlineMs,
+      maxOutputBytes: profile.maxOutputBytes,
+      profileName,
+      temporaryRoot,
+      inheritedSandbox: true,
+    };
+  }
   return {
     command: "/usr/bin/sandbox-exec",
     args: ["-p", sandboxPolicy({ profileName, cwd, writableRoots: effectiveWritableRoots, readableRoots: effectiveReadableRoots, home: effectiveHome, deniedReadRoots, providerManagedSandbox, enforceWriteBoundary, allowLoopback }), command, ...effectiveArgs],
@@ -130,5 +145,6 @@ export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.
     maxOutputBytes: profile.maxOutputBytes,
     profileName,
     temporaryRoot,
+    inheritedSandbox: false,
   };
 }

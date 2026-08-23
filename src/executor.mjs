@@ -560,7 +560,8 @@ function parseVerificationCommand(command) {
 }
 
 export function verificationRequiresLoopback(scriptName, scriptCommand = "") {
-  return /(?:^|[:_-])(?:e2e|browser)(?:$|[:_-])/i.test(String(scriptName))
+  return /^(?:test|verify)(?:$|[:_-])/i.test(String(scriptName))
+    || /(?:^|[:_-])(?:e2e|browser)(?:$|[:_-])/i.test(String(scriptName))
     || /playwright|cypress/i.test(String(scriptCommand));
 }
 
@@ -729,7 +730,7 @@ function canAutomaticallyRecover(manifest, error) {
 
 export function aiRepairApplicable(error) {
   const message = String(error?.message ?? error ?? "");
-  return !/listen EPERM: operation not permitted|CAPABILITY_SANDBOX_UNAVAILABLE|Scope guard menolak automatic recovery di luar allowed_paths: .*?(?:test-results|playwright-report|blob-report)/i.test(message);
+  return !/listen EPERM: operation not permitted|sandbox-exec:\s*sandbox_apply:\s*Operation not permitted|CAPABILITY_SANDBOX_UNAVAILABLE|Scope guard menolak automatic recovery di luar allowed_paths: .*?(?:test-results|playwright-report|blob-report)/i.test(message);
 }
 
 async function rerunRecoveryChecks({
