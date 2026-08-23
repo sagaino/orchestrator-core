@@ -126,6 +126,33 @@ function projectRow(registry, projectId) {
   return row;
 }
 
+function inverseRelationship(relationship, sourceProjectId) {
+  const inverseType = INVERSE_RELATIONSHIP_TYPES[String(relationship?.type ?? "").toUpperCase()];
+  if (!inverseType || !relationship?.targetProjectId) return null;
+  return {
+    type: inverseType,
+    targetProjectId: sourceProjectId,
+    contractPaths: Array.isArray(relationship.contractPaths) ? [...relationship.contractPaths] : [],
+    verification: Array.isArray(relationship.verification) ? [...relationship.verification] : [],
+  };
+}
+
+function effectiveRelationships(registry, projectId, explicitRelationships) {
+  const relationships = [...explicitRelationships];
+  for (const row of registry.rows) {
+    if (row.id === projectId) continue;
+    for (const relationship of row.relationships) {
+      if (relationship?.targetProjectId !== projectId) continue;
+      const inverse = inverseRelationship(relationship, row.id);
+      if (inverse) relationships.push(inverse);
+    }
+  }
+  return normalizeRelationships(relationships, {
+    sourceProjectId: projectId,
+    registeredProjectIds: new Set(registry.rows.map((candidate) => candidate.id)),
+  });
+}
+
 function inverseConflict({ sourceProjectId, relationship, rows }) {
   const inverseType = INVERSE_RELATIONSHIP_TYPES[relationship.type];
   for (const row of rows) {
@@ -184,13 +211,18 @@ export function getProjectRelationships({ vaultRoot, projectId: requestedProject
   const projectId = safeProjectId(requestedProjectId);
   const registry = readRegistry(vaultRoot);
   const row = projectRow(registry, projectId);
+  const relationships = normalizeRelationships(row.relationships, {
+    sourceProjectId: projectId,
+    registeredProjectIds: new Set(registry.rows.map((candidate) => candidate.id)),
+  });
+  const effective = effectiveRelationships(registry, projectId, relationships);
+  const incomingRelationships = effective.filter((relationship) => !relationships.some((explicit) => relationshipKey(explicit) === relationshipKey(relationship)));
   return {
     schemaVersion: PROJECT_RELATIONSHIP_SCHEMA_VERSION,
     projectId,
-    relationships: normalizeRelationships(row.relationships, {
-      sourceProjectId: projectId,
-      registeredProjectIds: new Set(registry.rows.map((candidate) => candidate.id)),
-    }),
+    relationships,
+    incomingRelationships,
+    effectiveRelationships: effective,
     allowedTypes: PROJECT_RELATIONSHIP_TYPES,
     registeredProjectIds: registry.rows.map((candidate) => candidate.id).sort(),
   };

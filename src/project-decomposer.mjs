@@ -15,7 +15,7 @@ export const PROJECT_DECOMPOSITION_REVISION = 1;
 const PLAN_STATE = "PENDING_APPROVAL";
 const DEFAULT_BUDGET = Object.freeze({
   maxSubtasks: 8,
-  maxParallelAgents: 1,
+  maxParallelAgents: 3,
   maxRetriesPerNode: 2,
   maxRepairCycles: 1,
   maxTotalTokens: null,

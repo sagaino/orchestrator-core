@@ -58,7 +58,7 @@ function normalizeBudget(input = {}) {
   }
   const budget = {
     maxSubtasks: input.maxSubtasks ?? 8,
-    maxParallelAgents: input.maxParallelAgents ?? 1,
+    maxParallelAgents: input.maxParallelAgents ?? 3,
     maxRetriesPerNode: input.maxRetriesPerNode ?? 2,
     maxRepairCycles: input.maxRepairCycles ?? 1,
     maxTotalTokens: input.maxTotalTokens ?? null,
