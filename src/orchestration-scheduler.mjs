@@ -9,6 +9,7 @@ import { enqueueTaskJob, JOB_STATES, listJobs, sameProjectParallelEnabled, updat
 import { detectWriteConflicts, topologicalOrder } from "./task-graph.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 import { classifyIntegrationFailure, getIntegrationEvidence } from "./integration-manager.mjs";
+import { budgetSnapshot, ensureBudgetExceededDecision, resolveBudgetExceededDecision } from "./orchestration-budget.mjs";
 
 const ACTIVE_NODE_STATES = new Set(["QUEUED", "RUNNING", "REVIEW"]);
 const TERMINAL_NODE_STATES = new Set(["DONE", "FAILED", "CANCELLED"]);
@@ -377,7 +378,17 @@ export function requestNodeRetry({ runsRoot, objectiveId, orchestrationId = null
     if (runtime.state !== "FAILED") fail(`Retry hanya dapat diminta untuk node FAILED; state saat ini ${runtime.state}.`, { code: "NODE_RETRY_NOT_ALLOWED", details: { code: "NODE_RETRY_NOT_ALLOWED", nodeId: requestedNodeId, state: runtime.state } });
     const retryCount = Math.max(0, Number(runtime.attempt ?? 1) - 1);
     if (retryCount >= context.objective.budget.maxRetriesPerNode) {
-      fail(`Batas retry node tercapai: ${retryCount}/${context.objective.budget.maxRetriesPerNode}.`, { statusCode: 409, code: "MAX_RETRIES_EXCEEDED", details: { code: "MAX_RETRIES_EXCEEDED", nodeId: requestedNodeId, retryCount, maxRetriesPerNode: context.objective.budget.maxRetriesPerNode } });
+      const snapshot = budgetSnapshot({ runsRoot, objective: context.objective, orchestration: context.orchestration, plan: context.plan, now });
+      const blocker = ensureBudgetExceededDecision({
+        runsRoot,
+        objective: context.objective,
+        orchestration: context.orchestration,
+        plan: context.plan,
+        violation: { code: "RETRY_CEILING", field: "maxRetriesPerNode", observed: retryCount, ceiling: context.objective.budget.maxRetriesPerNode, nodeId: requestedNodeId },
+        snapshot,
+        now,
+      });
+      fail(`Batas retry node tercapai: ${retryCount}/${context.objective.budget.maxRetriesPerNode}.`, { statusCode: 409, code: "MAX_RETRIES_EXCEEDED", details: { code: "MAX_RETRIES_EXCEEDED", nodeId: requestedNodeId, retryCount, maxRetriesPerNode: context.objective.budget.maxRetriesPerNode, decisionId: blocker.decision.decisionId } });
     }
     const nextAttempt = Number(runtime.attempt ?? 1) + 1;
     const decisionId = retryDecisionId(context.orchestration.orchestrationId, requestedNodeId, nextAttempt);
@@ -489,7 +500,7 @@ export function applyNodeRetryDecision({ runsRoot, decisionId, now = new Date() 
   });
 }
 
-export function resolveDecision({ runsRoot, decisionId, action, resolvedBy, now = new Date() } = {}) {
+export function resolveDecision({ runsRoot, decisionId, action, resolvedBy, budget = null, now = new Date() } = {}) {
   const selectedAction = String(action ?? "").trim().toUpperCase();
   const identity = String(resolvedBy ?? "").trim();
   if (!identity) fail("Human decision identity wajib berasal dari operator session.", { statusCode: 403, code: "DECISION_RESOLVER_REQUIRED", details: { code: "DECISION_RESOLVER_REQUIRED" } });
@@ -515,6 +526,20 @@ export function resolveDecision({ runsRoot, decisionId, action, resolvedBy, now 
     return { decision, alreadyResolved: true };
   }
   if (decision.state !== "OPEN") fail(`Decision tidak dapat di-resolve dari state ${decision.state}.`, { code: "DECISION_NOT_OPEN", details: { code: "DECISION_NOT_OPEN", decisionId } });
+  if (decision.type === "BUDGET_EXCEEDED" && selectedAction === "INCREASE_BUDGET") {
+    return resolveBudgetExceededDecision({ runsRoot, decisionId, budget, resolvedBy: identity, now });
+  }
+  if (decision.type === "BUDGET_EXCEEDED" && selectedAction === "CANCEL") {
+    const cancellation = cancelOrchestration({ runsRoot, objectiveId: decision.objectiveId, orchestrationId: decision.evidence?.orchestrationId ?? null, cancelledBy: identity, now });
+    const resolved = updateDecision({
+      runsRoot,
+      decisionId,
+      expectedRevision: decision.revision,
+      now,
+      update: (record) => ({ ...record, state: "RESOLVED", resolution: { action: selectedAction, resolvedBy: identity, resolvedAt: nowIso(now) } }),
+    });
+    return { decision: resolved, orchestration: cancellation.orchestration, alreadyResolved: false };
+  }
   const resolved = updateDecision({
     runsRoot,
     decisionId,
@@ -606,18 +631,43 @@ function scheduleOne({ vaultRoot = null, runsRoot, orchestration, now, env = pro
   const frozen = sameProjectFlag
     ? freezeSameProjectBaselines({ vaultRoot, runsRoot, plan, orchestration, now })
     : { orchestration, active: false, projectIds: [] };
-  const activeOrchestration = frozen.orchestration;
+  let activeOrchestration = frozen.orchestration;
   const reconciled = reconcileRuntimeNodes({ plan, orchestration: activeOrchestration, jobs });
   let nodes = reconciled.nodes;
   let state = orchestrationState(nodes, orchestration.state);
   const queued = [];
   const globalCeiling = configuredGlobalParallelJobs(env);
+  const budgetTasks = materializedTaskMap(activeOrchestration);
+  const hasReadyWork = plan.nodes.some((node) => nodes[node.nodeId]?.state === "READY" && node.dependsOn.every((dependency) => nodes[dependency]?.state === "DONE") && budgetTasks.get(node.nodeId)?.projectId);
+  const initialBudget = budgetSnapshot({ runsRoot, objective, orchestration: activeOrchestration, plan, jobs, now, objectiveParallelLimit: objective.budget?.maxParallelAgents });
+  if (JSON.stringify(initialBudget.usage) !== JSON.stringify(activeOrchestration.usage)) {
+    activeOrchestration = updateOrchestration({
+      runsRoot,
+      orchestrationId: activeOrchestration.orchestrationId,
+      expectedRevision: activeOrchestration.revision,
+      now,
+      update: (record) => ({ ...record, usage: initialBudget.usage }),
+      validationOptions: { plan },
+    });
+  }
+  const budgetBlockers = [];
+  for (const violation of initialBudget.violations) {
+    if (!hasReadyWork) continue;
+    const blocker = ensureBudgetExceededDecision({ runsRoot, objective, orchestration: activeOrchestration, plan, violation, snapshot: initialBudget, now });
+    budgetBlockers.push({ code: "BUDGET_EXCEEDED", budgetCode: violation.code, decisionId: blocker.decision.decisionId, nodeId: violation.nodeId ?? null });
+  }
+  if (budgetBlockers.length) {
+    state = "BLOCKED";
+    const persisted = persistOrchestration({ runsRoot, orchestration: activeOrchestration, plan, nodes, state, now });
+    updateObjectiveState({ runsRoot, objective, orchestration: persisted });
+    return { orchestration: persisted, queued, changed: reconciled.changed || persisted !== orchestration, budgetBlockers };
+  }
   const activeJobs = jobs.filter(activeQueueJob);
   const objectiveJobs = activeJobs.filter((job) => job.objectiveId === objective.objectiveId);
   let globalOccupancy = activeJobs.length;
   let objectiveOccupancy = objectiveJobs.length;
   const maxObjectiveParallel = Number(objective.budget?.maxParallelAgents ?? 1);
-  const tasks = materializedTaskMap(orchestration);
+  const tasks = budgetTasks;
   const sameProjectMode = frozen.active;
   const sameProjectBaseline = new Map(Object.entries(activeOrchestration.integration?.projectBaselines ?? {}));
   const sameProjectNode = (nodeId) => {
@@ -652,12 +702,22 @@ function scheduleOne({ vaultRoot = null, runsRoot, orchestration, now, env = pro
   const selectedSameProjectNodeIds = new Set();
 
   for (const nodeId of ordered) {
-    if (globalOccupancy >= globalCeiling || objectiveOccupancy >= maxObjectiveParallel) break;
     const candidate = plan.nodes.find((node) => node.nodeId === nodeId);
     const runtime = nodes[nodeId];
     if (runtime?.state !== "READY" || !candidate.dependsOn.every((dependency) => nodes[dependency]?.state === "DONE")) continue;
     const task = tasks.get(candidate.nodeId);
     if (!task?.projectId) continue;
+    if (globalOccupancy >= globalCeiling) break;
+    if (objectiveOccupancy >= maxObjectiveParallel) {
+      const snapshot = budgetSnapshot({ runsRoot, objective, orchestration: activeOrchestration, plan, jobs, now, candidateNodeId: candidate.nodeId, objectiveParallelLimit: maxObjectiveParallel, activeAgents: objectiveOccupancy });
+      const violation = snapshot.violations.find((item) => item.code === "CONCURRENCY_CEILING");
+      if (violation) {
+        const blocker = ensureBudgetExceededDecision({ runsRoot, objective, orchestration: activeOrchestration, plan, violation, snapshot, now });
+        budgetBlockers.push({ code: "BUDGET_EXCEEDED", budgetCode: violation.code, decisionId: blocker.decision.decisionId, nodeId: candidate.nodeId });
+        state = "BLOCKED";
+      }
+      break;
+    }
     const candidateSameProject = sameProjectNode(candidate.nodeId);
     if (candidateSameProject) {
       if (occupiedProjects.has(task.projectId)) continue;
@@ -691,12 +751,12 @@ function scheduleOne({ vaultRoot = null, runsRoot, orchestration, now, env = pro
   }
   const persisted = persistOrchestration({ runsRoot, orchestration: activeOrchestration, plan, nodes, state, now });
   updateObjectiveState({ runsRoot, objective, orchestration: persisted });
-  return { orchestration: persisted, queued, changed: reconciled.changed || queued.length > 0 || persisted !== orchestration };
+  return { orchestration: persisted, queued, changed: reconciled.changed || queued.length > 0 || persisted !== orchestration, budgetBlockers };
 }
 
 export function schedulerTick({ vaultRoot = null, runsRoot, enabled = orchestrationSchedulerEnabled(), now = new Date(), env = process.env } = {}) {
   if (!runsRoot) fail("runsRoot wajib disediakan.", { code: "SCHEDULER_ROOT_REQUIRED" });
-  if (!enabled) return { schemaVersion: 1, enabled: false, action: "DISABLED", queued: [], blocked: [], completed: [] };
+  if (!enabled) return { schemaVersion: 1, enabled: false, action: "DISABLED", queued: [], blocked: [], budgetBlockers: [], completed: [] };
   return withDurableLease({
     runsRoot,
     namespace: "orchestration-scheduler",
@@ -721,6 +781,7 @@ export function schedulerTick({ vaultRoot = null, runsRoot, enabled = orchestrat
       action: "TICK_COMPLETED",
       queued: results.flatMap((result) => result.queued ?? []).map((item) => item.job),
       blocked: results.filter((result) => result.orchestration?.state === "BLOCKED").map((result) => result.orchestrationId),
+      budgetBlockers: results.flatMap((result) => result.budgetBlockers ?? []),
       completed: results.filter((result) => result.orchestration?.state === "DONE").map((result) => result.orchestrationId),
       results,
     };

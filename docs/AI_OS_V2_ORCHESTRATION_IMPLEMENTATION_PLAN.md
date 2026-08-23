@@ -967,7 +967,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 - Backend/dashboard paths: decision store/API, navigation/page/components, tests.
 - Acceptance: unresolved decisions are ordered by risk/time; only enumerated actions are accepted; resolution is auditable and idempotent; external messages cannot synthesize local identity.
 
-#### V2-072 — Enforce objective budgets
+#### ✅ V2-072 — Enforce objective budgets
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: new `src/orchestration-budget.mjs`, scheduler, telemetry, operations, tests.
