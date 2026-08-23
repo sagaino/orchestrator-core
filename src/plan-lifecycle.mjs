@@ -176,10 +176,14 @@ function createRevisionDecision({ runsRoot, objective, plan, action, resolvedBy,
       objectiveId: objective.objectiveId,
       nodeId: null,
       runId: null,
-      type: "PLAN_CLARIFICATION",
+      type: action === "SCOPE_EXPANSION" ? "SCOPE_EXPANSION" : "PLAN_CLARIFICATION",
       state: "RESOLVED",
       evidence,
-      requestedAction: action === "CLARIFY" ? "Apply user clarification to create a new plan revision" : "Request changes to create a new plan revision",
+      requestedAction: action === "CLARIFY"
+        ? "Apply user clarification to create a new plan revision"
+        : action === "SCOPE_EXPANSION"
+          ? "Expand objective scope through a new plan revision"
+          : "Request changes to create a new plan revision",
       allowedChoices: [action, "CANCEL"],
       creator: "SYSTEM",
       createdAt: iso(now),
@@ -255,6 +259,30 @@ export function requestPlanChanges({ runsRoot, objectiveId, reason, candidate = 
     resolvedBy: requestedBy,
     decisionAction: "REQUEST_CHANGES",
     evidence: { reason: text, previousPlanId: previous.planId },
+  });
+}
+
+export function requestScopeExpansion({ runsRoot, objectiveId, reason, candidate = null, requestedBy = "user", now = new Date() } = {}) {
+  const objective = objectiveOrFail(runsRoot, objectiveId);
+  const previous = activePlanOrFail(runsRoot, objective);
+  const text = String(reason ?? "").trim();
+  if (!text) fail("Alasan scope expansion wajib diisi.", { code: "SCOPE_EXPANSION_REASON_REQUIRED", details: { code: "SCOPE_EXPANSION_REASON_REQUIRED" } });
+  const nextCandidate = candidate ?? revisionFromPrevious(previous, {
+    revision: planRevision(previous) + 1,
+    now,
+    clarificationNeeded: false,
+    clarificationQuestion: null,
+    note: `Scope expansion: ${text}`,
+  });
+  return createRevision({
+    runsRoot,
+    objectiveId,
+    candidate: nextCandidate,
+    state: "PLANNING",
+    now,
+    resolvedBy: requestedBy,
+    decisionAction: "SCOPE_EXPANSION",
+    evidence: { reason: text, previousPlanId: previous.planId, previousPlanFingerprint: previous.planFingerprint },
   });
 }
 

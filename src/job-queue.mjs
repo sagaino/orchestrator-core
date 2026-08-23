@@ -20,6 +20,7 @@ export const JOB_STATES = Object.freeze({
   REVIEW: "REVIEW",
   DONE: "DONE",
   FAILED: "FAILED",
+  CANCELLED: "CANCELLED",
 });
 
 function jobsRoot(runsRoot) {
@@ -184,6 +185,7 @@ export function enqueueTaskJob({
         planId: orchestrationMetadata?.planId ?? null,
         orchestrationId: orchestrationMetadata?.orchestrationId ?? null,
         nodeId: orchestrationMetadata?.nodeId ?? null,
+        attempt: orchestrationMetadata?.attempt ?? null,
         planFingerprint: orchestrationMetadata?.planFingerprint ?? null,
         planApproval: orchestrationMetadata ? {
           decisionId: orchestrationMetadata.approvalDecisionId ?? null,
@@ -197,6 +199,7 @@ export function enqueueTaskJob({
           planId: orchestrationMetadata.planId,
           orchestrationId: orchestrationMetadata.orchestrationId,
           nodeId: orchestrationMetadata.nodeId,
+          attempt: orchestrationMetadata.attempt ?? 1,
         } : null,
         runId: null,
         runState: null,

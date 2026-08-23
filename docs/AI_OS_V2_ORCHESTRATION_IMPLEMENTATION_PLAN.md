@@ -765,7 +765,7 @@ Phase V2.2 exit: one prompt produces a human-reviewable, validated DAG, but appr
   - restart reconstructs state without replaying uncertain work.
 - Verification: scheduler table tests, daemon restart tests, reliability fault tests, unit/smoke gates.
 
-#### V2-032 — Add node retry, cancellation, and blocker decisions
+#### ✅ V2-032 — Add node retry, cancellation, and blocker decisions
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: scheduler, decision store, server routes, tests.

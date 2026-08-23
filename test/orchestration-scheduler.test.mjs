@@ -7,9 +7,12 @@ import { createPlan } from "../src/plan-store.mjs";
 import { createDecision } from "../src/decision-store.mjs";
 import { createOrchestration, getOrchestration } from "../src/orchestration-store.mjs";
 import { enqueueTaskJob, getJob, JOB_STATES, listJobs, updateJob } from "../src/job-queue.mjs";
-import { planFingerprint } from "../src/plan-lifecycle.mjs";
+import { planFingerprint, requestScopeExpansion } from "../src/plan-lifecycle.mjs";
 import {
+  cancelOrchestration,
   orchestrationSchedulerEnabled,
+  requestNodeRetry,
+  resolveDecision,
   schedulerTick,
 } from "../src/orchestration-scheduler.mjs";
 
@@ -21,8 +24,8 @@ const runsRoot = path.join(root, "runs");
 const vaultRoot = path.join(root, "vault");
 fs.mkdirSync(vaultRoot, { recursive: true });
 
-function budget() {
-  return { maxSubtasks: 4, maxParallelAgents: 1, maxRetriesPerNode: 2, maxTotalTokens: null, deadlineAt: null };
+function budget(maxRetriesPerNode = 2) {
+  return { maxSubtasks: 4, maxParallelAgents: 1, maxRetriesPerNode, maxTotalTokens: null, deadlineAt: null };
 }
 
 function planFor(objectiveId, planId) {
@@ -89,7 +92,7 @@ function planFor(objectiveId, planId) {
   return { ...plan, planFingerprint: planFingerprint(plan) };
 }
 
-function createFixture(objectiveId, { initialState = "CREATED", initialNodes = null } = {}) {
+function createFixture(objectiveId, { initialState = "CREATED", initialNodes = null, maxRetriesPerNode = 2 } = {}) {
   const planId = `plan-${objectiveId}-r1`;
   const plan = planFor(objectiveId, planId);
   createObjective({
@@ -106,12 +109,12 @@ function createFixture(objectiveId, { initialState = "CREATED", initialNodes = n
       freshProject: null,
       activePlanId: planId,
       activeOrchestrationId: `orch-${objectiveId}`,
-      budget: budget(),
+      budget: budget(maxRetriesPerNode),
       createdAt: timestamp,
       updatedAt: timestamp,
     },
   });
-  createPlan({ runsRoot, record: plan, validationOptions: { knownProjectIds: ["scheduler-project"], budget: budget() } });
+  createPlan({ runsRoot, record: plan, validationOptions: { knownProjectIds: ["scheduler-project"], budget: budget(maxRetriesPerNode) } });
   createDecision({
     runsRoot,
     record: {
@@ -211,6 +214,75 @@ try {
   assert.equal(failedState.nodes.N01.state, "FAILED");
   assert.equal(failedState.nodes.N02.state, "BLOCKED");
   assert.equal(failedState.nodes.N02.lastError.code, "PREDECESSOR_FAILED");
+
+  const retryFixture = createFixture("obj-scheduler-retry", { maxRetriesPerNode: 1 });
+  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const retryJob = listJobs(runsRoot).find((job) => job.orchestrationId === retryFixture.orchestrationId);
+  updateJob(runsRoot, retryJob.jobId, { state: JOB_STATES.FAILED, error: "transient diagnostic failure" });
+  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const retryRequest = requestNodeRetry({
+    runsRoot,
+    objectiveId: "obj-scheduler-retry",
+    nodeId: "N01",
+    reason: "Transient dependency was unavailable; retry after human review.",
+    requestedBy: "human:reviewer",
+  });
+  assert.equal(retryRequest.decision.state, "OPEN");
+  assert.equal(retryRequest.decision.type, "NODE_RETRY");
+  assert.throws(
+    () => resolveDecision({ runsRoot, decisionId: retryRequest.decision.decisionId, action: "DONE", resolvedBy: "human:reviewer" }),
+    (error) => error.code === "DECISION_ACTION_NOT_ALLOWED",
+  );
+  const retryResolution = resolveDecision({ runsRoot, decisionId: retryRequest.decision.decisionId, action: "RETRY", resolvedBy: "human:reviewer" });
+  assert.equal(retryResolution.decision.resolution.action, "RETRY");
+  assert.equal(retryResolution.decision.retryAttempt, 2);
+  assert.equal(getOrchestration(runsRoot, retryFixture.orchestrationId).nodes.N01.state, "READY");
+  assert.equal(getOrchestration(runsRoot, retryFixture.orchestrationId).nodes.N01.attempt, 2);
+  const retryTick = schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const retriedJob = retryTick.queued.find((job) => job.orchestrationId === retryFixture.orchestrationId);
+  assert.equal(retriedJob.taskId, "TASK-001");
+  assert.equal(retriedJob.attempt, 2);
+  assert.equal(listJobs(runsRoot).find((job) => job.jobId === retryJob.jobId).state, JOB_STATES.FAILED);
+  updateJob(runsRoot, retriedJob.jobId, { state: JOB_STATES.FAILED, error: "retry failed" });
+  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  assert.throws(
+    () => requestNodeRetry({ runsRoot, objectiveId: "obj-scheduler-retry", nodeId: "N01", reason: "Retry again", requestedBy: "human:reviewer" }),
+    (error) => error.code === "MAX_RETRIES_EXCEEDED",
+  );
+
+  const queuedCancelFixture = createFixture("obj-scheduler-cancel-queued");
+  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const queuedCancelJob = listJobs(runsRoot).find((job) => job.orchestrationId === queuedCancelFixture.orchestrationId);
+  const queuedCancellation = cancelOrchestration({ runsRoot, objectiveId: "obj-scheduler-cancel-queued", cancelledBy: "human:operator" });
+  assert.equal(queuedCancellation.orchestration.state, "CANCELLED");
+  assert.equal(getJob(runsRoot, queuedCancelJob.jobId).state, JOB_STATES.CANCELLED);
+  assert.equal(getOrchestration(runsRoot, queuedCancelFixture.orchestrationId).nodes.N01.state, "CANCELLED");
+  assert.equal(getOrchestration(runsRoot, queuedCancelFixture.orchestrationId).nodes.N02.state, "CANCELLED");
+  assert.equal(fs.existsSync(path.join(vaultRoot, "02-Projects/scheduler-project/tasks/task-001.md")), true);
+
+  const activeCancelFixture = createFixture("obj-scheduler-cancel-active");
+  schedulerTick({ vaultRoot, runsRoot, enabled: true });
+  const activeCancelJob = listJobs(runsRoot).find((job) => job.orchestrationId === activeCancelFixture.orchestrationId);
+  updateJob(runsRoot, activeCancelJob.jobId, { state: JOB_STATES.RUNNING });
+  const activeCancellation = cancelOrchestration({ runsRoot, objectiveId: "obj-scheduler-cancel-active", cancelledBy: "human:operator" });
+  assert.equal(activeCancellation.orchestration.state, "CANCELLED");
+  assert.equal(getJob(runsRoot, activeCancelJob.jobId).state, JOB_STATES.RUNNING);
+  assert.equal(getOrchestration(runsRoot, activeCancelFixture.orchestrationId).nodes.N01.state, "RUNNING");
+  assert.equal(getOrchestration(runsRoot, activeCancelFixture.orchestrationId).nodes.N01.lastError.code, "CANCELLATION_REQUESTED");
+  assert.equal(getOrchestration(runsRoot, activeCancelFixture.orchestrationId).nodes.N02.state, "BLOCKED");
+  assert.equal(getOrchestration(runsRoot, activeCancelFixture.orchestrationId).nodes.N02.lastError.code, "CANCELLATION_ACTIVE_NODE");
+
+  const expansion = requestScopeExpansion({
+    runsRoot,
+    objectiveId: "obj-scheduler",
+    reason: "Human review added an integration verification requirement.",
+    requestedBy: "human:reviewer",
+  });
+  assert.equal(expansion.revision, 2);
+  assert.equal(expansion.plan.planId, "plan-obj-scheduler-r2");
+  assert.equal(expansion.plan.state, "PENDING_APPROVAL");
+  assert.equal(expansion.previousPlan.planId, "plan-obj-scheduler-r1");
+  assert.equal(expansion.decision.type, "SCOPE_EXPANSION");
 
   const uncertain = createFixture("obj-scheduler-restart", {
     initialState: "RUNNING",

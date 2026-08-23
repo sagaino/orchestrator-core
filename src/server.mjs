@@ -38,8 +38,11 @@ import { backupRecoveryStatus, previewBackupSchedule, previewBackupRotation, ver
 import { getReleaseOperations } from "./release-operations.mjs";
 import { createObjectiveIntake, getObjectiveIntake, listObjectiveIntake, objectivesEnabled, crossProjectEnabled } from "./objective-intake.mjs";
 import { approveFreshProjectGenesis, auditGenesisApproval } from "./fresh-project-genesis.mjs";
-import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges } from "./plan-lifecycle.mjs";
+import { getObjective } from "./objective-store.mjs";
+import { listDecisions } from "./decision-store.mjs";
+import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
 import { materializeApprovedPlan } from "./task-materializer.mjs";
+import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -286,6 +289,20 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
     }
   });
 
+  router.get("/api/decisions", async (req, res) => {
+    try {
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+      const objectiveId = parsedUrl.searchParams.get("objectiveId");
+      const state = parsedUrl.searchParams.get("state");
+      const decisions = (services?.listDecisions ?? listDecisions)(runsRoot)
+        .filter((decision) => !objectiveId || decision.objectiveId === objectiveId)
+        .filter((decision) => !state || decision.state === state);
+      sendJson(res, 200, { success: true, data: decisions });
+    } catch (error) {
+      sendError(res, error.statusCode || 500, error.message, error.details);
+    }
+  });
+
   router.post("/api/objectives/:id/plan", async (req, res, { params }) => {
     try {
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk membuat plan revision.", { code: "IDEMPOTENCY_REQUIRED" });
@@ -408,6 +425,106 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
     }
   });
 
+  router.post("/api/objectives/:id/scope-expansion", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk scope expansion.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const requester = services?.requestScopeExpansion ?? requestScopeExpansion;
+      const result = requester({
+        runsRoot,
+        objectiveId: params.id,
+        reason: body?.reason ?? body?.feedback,
+        candidate: body?.plan ?? null,
+        requestedBy: req.operatorIdentity,
+      });
+      appendAuditEntry(runsRoot, {
+        event: "SCOPE_EXPANSION_REQUESTED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.plan.planFingerprint,
+        previousPlanId: result.previousPlan?.planId ?? null,
+      });
+      eventHub.broadcast("SCOPE_EXPANSION_REQUESTED", {
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.plan.planFingerprint,
+        previousPlanId: result.previousPlan?.planId ?? null,
+      });
+      sendJson(res, 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/objectives/:id/retry-node", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk request retry node.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const requester = services?.requestNodeRetry ?? requestNodeRetry;
+      const result = requester({
+        runsRoot,
+        objectiveId: params.id,
+        orchestrationId: body?.orchestrationId ?? null,
+        nodeId: body?.nodeId,
+        reason: body?.reason ?? body?.feedback,
+        requestedBy: req.operatorIdentity,
+      });
+      appendAuditEntry(runsRoot, {
+        event: result.alreadyRequested ? "NODE_RETRY_DECISION_IDEMPOTENT" : "NODE_RETRY_DECISION_REQUESTED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: params.id,
+        orchestrationId: result.orchestration?.orchestrationId ?? null,
+        nodeId: result.decision?.nodeId ?? body?.nodeId ?? null,
+        decisionId: result.decision?.decisionId ?? null,
+        outcome: "DECISION_REQUIRED",
+      });
+      eventHub.broadcast(result.alreadyRequested ? "NODE_RETRY_DECISION_IDEMPOTENT" : "NODE_RETRY_DECISION_REQUESTED", {
+        objectiveId: params.id,
+        orchestrationId: result.orchestration?.orchestrationId ?? null,
+        nodeId: result.decision?.nodeId ?? body?.nodeId ?? null,
+        decisionId: result.decision?.decisionId ?? null,
+        alreadyRequested: result.alreadyRequested,
+      });
+      sendJson(res, result.alreadyRequested ? 200 : 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/decisions/:id/resolve", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk resolve decision.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const resolver = services?.resolveDecision ?? resolveDecision;
+      const result = resolver({
+        runsRoot,
+        decisionId: params.id,
+        action: body?.action,
+        resolvedBy: req.operatorIdentity,
+      });
+      appendAuditEntry(runsRoot, {
+        event: result.alreadyResolved ? "DECISION_RESOLUTION_IDEMPOTENT" : "DECISION_RESOLVED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.decision?.objectiveId ?? null,
+        nodeId: result.decision?.nodeId ?? null,
+        decisionId: result.decision?.decisionId ?? params.id,
+        action: result.decision?.resolution?.action ?? body?.action ?? null,
+      });
+      eventHub.broadcast(result.alreadyResolved ? "DECISION_RESOLUTION_IDEMPOTENT" : "DECISION_RESOLVED", {
+        decisionId: result.decision?.decisionId ?? params.id,
+        objectiveId: result.decision?.objectiveId ?? null,
+        action: result.decision?.resolution?.action ?? body?.action ?? null,
+        alreadyResolved: result.alreadyResolved,
+      });
+      sendJson(res, result.alreadyResolved ? 200 : 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
   router.post("/api/objectives/:id/materialize", async (req, res, { params }) => {
     try {
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk materialization task.", { code: "IDEMPOTENCY_REQUIRED" });
@@ -446,18 +563,26 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   router.post("/api/objectives/:id/cancel", async (req, res, { params }) => {
     try {
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk cancel objective.", { code: "IDEMPOTENCY_REQUIRED" });
+      const currentObjective = getObjective(runsRoot, params.id);
+      const orchestrationCanceller = services?.cancelOrchestration ?? cancelOrchestration;
+      const orchestrationResult = currentObjective?.activeOrchestrationId
+        ? orchestrationCanceller({ runsRoot, objectiveId: params.id, orchestrationId: currentObjective.activeOrchestrationId, cancelledBy: req.operatorIdentity })
+        : null;
       const canceller = services?.cancelObjective ?? cancelObjective;
       const result = canceller({ runsRoot, objectiveId: params.id, cancelledBy: req.operatorIdentity });
+      result.orchestration = orchestrationResult?.orchestration ?? null;
       appendAuditEntry(runsRoot, {
         event: result.alreadyCancelled ? "OBJECTIVE_CANCEL_IDEMPOTENT" : "OBJECTIVE_CANCELLED",
         actor: req.operatorIdentity ?? "local:unknown",
         objectiveId: result.objective.objectiveId,
         planId: result.plan?.planId ?? null,
+        orchestrationId: result.orchestration?.orchestrationId ?? null,
         outcome: result.alreadyCancelled ? "ALREADY_CANCELLED" : "CANCELLED",
       });
       eventHub.broadcast(result.alreadyCancelled ? "OBJECTIVE_CANCEL_IDEMPOTENT" : "OBJECTIVE_CANCELLED", {
         objectiveId: result.objective.objectiveId,
         planId: result.plan?.planId ?? null,
+        orchestrationId: result.orchestration?.orchestrationId ?? null,
         alreadyCancelled: result.alreadyCancelled,
       });
       sendJson(res, result.alreadyCancelled ? 200 : 201, { success: true, data: result });
@@ -1889,7 +2014,12 @@ export function createOrchestratorServer({
     clarifyPlan,
     approvePlan,
     requestPlanChanges,
+    requestScopeExpansion,
     materializeApprovedPlan,
+    requestNodeRetry,
+    resolveDecision,
+    cancelOrchestration,
+    listDecisions,
     cancelObjective,
     approveFreshProjectGenesis,
     ...customServices,
