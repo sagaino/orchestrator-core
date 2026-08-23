@@ -77,6 +77,7 @@ function parseArguments(args) {
     projectId: null,
     orchestrationId: null,
     restartEvidencePath: null,
+    diagnosisPath: null,
     autoStart: false,
     force: false,
     confirm: false,
@@ -176,6 +177,9 @@ function parseArguments(args) {
     } else if (args[index] === "--restart-evidence") {
       options.restartEvidencePath = path.resolve(args[index + 1]);
       index += 1;
+    } else if (args[index] === "--diagnosis") {
+      options.diagnosisPath = path.resolve(args[index + 1]);
+      index += 1;
     } else if (args[index] === "--max-rto-minutes") {
       options.maxRtoMinutes = Number(args[index + 1]);
       index += 1;
@@ -223,6 +227,7 @@ Disaster recovery:
   operations-certification [--soak-report <absolute-report-path>]
   orchestration-certification <objective-id> [--orchestration <orchestration-id>]
   multi-agent-certification <objective-id> [--orchestration <orchestration-id>] [--restart-evidence <absolute-json-path>]
+  cross-project-certification <objective-id> [--orchestration <orchestration-id>] [--diagnosis <absolute-json-path>]
   release-manifest [<version>] [--dashboard <absolute-path>]
   release-artifact [<version>] [--dashboard <absolute-path>]
   release-manifest-verify <absolute-manifest-path>
@@ -311,6 +316,7 @@ Options:
   --restart-every <n>   Restart deterministik setiap N langkah
   --soak-report <path>  Report P8.4 yang dipakai untuk certification
   --restart-evidence <path>  Bukti restart/recoverable reject dalam JSON
+  --diagnosis <path>         Cross-project diagnosis JSON untuk V2-065 certification
   --max-rto-minutes <n> Batas RTO recovery drill (default 15)
   --dashboard <path>    Root dashboard untuk release manifest
   --release-version <v> Versi release manifest (default 1.0.0)
@@ -440,6 +446,20 @@ export async function main(argv = process.argv.slice(2)) {
       const { createMultiAgentCertification } = await import("./multi-agent-certification.mjs");
       result = createMultiAgentCertification({ runsRoot: options.runs, vaultRoot: options.vault, objectiveId, orchestrationId: options.orchestrationId, restartEvidence });
       if (result.status !== "CERTIFICATION_READY") process.exitCode = 1;
+    } else if (command === "cross-project-certification") {
+      const [objectiveId] = options.positional;
+      if (!objectiveId) fail("cross-project-certification membutuhkan <objective-id>.");
+      let diagnosis = null;
+      if (options.diagnosisPath) {
+        try {
+          diagnosis = JSON.parse(fs.readFileSync(options.diagnosisPath, "utf8"));
+        } catch (error) {
+          fail(`diagnosis JSON tidak valid: ${error.message}`);
+        }
+      }
+      const { createCrossProjectIncidentCertification } = await import("./cross-project-incident-certification.mjs");
+      result = createCrossProjectIncidentCertification({ runsRoot: options.runs, vaultRoot: options.vault, objectiveId, orchestrationId: options.orchestrationId, diagnosis });
+      if (result.status !== "HUMAN_GATE_REQUIRED") process.exitCode = 1;
     } else if (command === "release-manifest") {
       const [releaseVersion = "1.0.0"] = options.positional;
       const { writeReleaseManifest } = await import("./release-manifest.mjs");
