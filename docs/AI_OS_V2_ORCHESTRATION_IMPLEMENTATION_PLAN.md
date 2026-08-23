@@ -941,7 +941,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - first release uses per-repository acceptance plus final objective gate.
 - Verification: loopback/security tests, contract/E2E fixture, backend unit/smoke gates.
 
-#### V2-064 — Add cross-project result review
+#### ✅ V2-064 — Add cross-project result review
 
 - Model: `ECONOMY`.
 - Dashboard paths: Objective page, integration evidence components, service/types, browser tests.
