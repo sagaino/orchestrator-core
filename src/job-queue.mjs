@@ -135,7 +135,7 @@ export function enqueueTaskJob({
   orchestrationMetadata = null,
 }) {
   if (orchestrationManaged && !schedulerAuthorized) {
-    const error = new Error("Task orchestration-managed hanya boleh diantrekan oleh sequential orchestration scheduler.");
+    const error = new Error("Task orchestration-managed hanya boleh diantrekan oleh orchestration scheduler.");
     error.code = "ORCHESTRATION_MANAGED_TASK";
     error.details = { code: error.code, taskId, projectId };
     throw error;

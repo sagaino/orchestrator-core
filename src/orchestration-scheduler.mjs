@@ -10,6 +10,8 @@ import { classifyIntegrationFailure, getIntegrationEvidence } from "./integratio
 const ACTIVE_NODE_STATES = new Set(["QUEUED", "RUNNING", "REVIEW"]);
 const TERMINAL_NODE_STATES = new Set(["DONE", "FAILED", "CANCELLED"]);
 const TERMINAL_ORCHESTRATION_STATES = new Set(["DONE", "FAILED", "CANCELLED"]);
+const DEFAULT_GLOBAL_PARALLEL_JOBS = 2;
+const MAX_GLOBAL_PARALLEL_JOBS = 8;
 
 export class OrchestrationSchedulerError extends Error {
   constructor(message, { statusCode = 409, code = "ORCHESTRATION_SCHEDULER_ERROR", details = null } = {}) {
@@ -31,6 +33,19 @@ export function orchestrationSchedulerEnabled(env = process.env) {
 
 function nowIso(now) {
   return (now instanceof Date ? now : new Date(now)).toISOString();
+}
+
+function configuredGlobalParallelJobs(env = process.env) {
+  const raw = env.ORCHESTRATOR_MAX_PARALLEL_JOBS;
+  if (raw === undefined || raw === "") return DEFAULT_GLOBAL_PARALLEL_JOBS;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > MAX_GLOBAL_PARALLEL_JOBS) {
+    fail(`ORCHESTRATOR_MAX_PARALLEL_JOBS harus integer antara 1 dan ${MAX_GLOBAL_PARALLEL_JOBS}.`, {
+      code: "INVALID_GLOBAL_PARALLEL_CEILING",
+      details: { code: "INVALID_GLOBAL_PARALLEL_CEILING", value: raw },
+    });
+  }
+  return value;
 }
 
 function planOptions(objective) {
@@ -142,9 +157,10 @@ function reconcileRuntimeNodes({ plan, orchestration, jobs }) {
 
 function orchestrationState(nodes, currentState) {
   const states = Object.values(nodes).map((node) => node.state);
-  if (states.some((state) => state === "FAILED") || Object.values(nodes).some((node) => node.state === "BLOCKED" && node.lastError)) return "BLOCKED";
   if (states.length > 0 && states.every((state) => state === "DONE")) return "DONE";
   if (states.some((state) => ACTIVE_NODE_STATES.has(state))) return "RUNNING";
+  if (states.some((state) => state === "READY")) return "RUNNING";
+  if (states.some((state) => state === "FAILED") || Object.values(nodes).some((node) => node.state === "BLOCKED" && node.lastError)) return "BLOCKED";
   return currentState === "CREATED" ? "CREATED" : "RUNNING";
 }
 
@@ -479,11 +495,15 @@ export function cancelOrchestration({ runsRoot, objectiveId, orchestrationId = n
   });
 }
 
-function scheduleOne({ runsRoot, orchestration, now }) {
-  if (TERMINAL_ORCHESTRATION_STATES.has(orchestration.state)) return { orchestration, queued: null, changed: false };
+function activeQueueJob(job) {
+  return [JOB_STATES.QUEUED, JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job?.state);
+}
+
+function scheduleOne({ runsRoot, orchestration, now, env = process.env }) {
+  if (TERMINAL_ORCHESTRATION_STATES.has(orchestration.state)) return { orchestration, queued: [], changed: false };
   const objective = getObjective(runsRoot, orchestration.objectiveId);
   if (!objective) fail(`Objective scheduler tidak ditemukan: ${orchestration.objectiveId}`, { code: "OBJECTIVE_NOT_FOUND", details: { code: "OBJECTIVE_NOT_FOUND", objectiveId: orchestration.objectiveId } });
-  if (objective.state === "CANCELLED") return { orchestration, queued: null, changed: false };
+  if (objective.state === "CANCELLED") return { orchestration, queued: [], changed: false };
   const plan = getPlan(runsRoot, orchestration.planId, planOptions(objective));
   if (!plan || plan.state !== "APPROVED" || plan.planFingerprint !== orchestration.planFingerprint) {
     fail(`Orchestration ${orchestration.orchestrationId} tidak memiliki plan approved yang cocok.`, { code: "STALE_APPROVED_PLAN", details: { code: "STALE_APPROVED_PLAN", orchestrationId: orchestration.orchestrationId } });
@@ -492,39 +512,62 @@ function scheduleOne({ runsRoot, orchestration, now }) {
   const reconciled = reconcileRuntimeNodes({ plan, orchestration, jobs });
   let nodes = reconciled.nodes;
   let state = orchestrationState(nodes, orchestration.state);
-  let queued = null;
-  const active = Object.values(nodes).some((node) => ACTIVE_NODE_STATES.has(node.state));
-  if (!active && !["BLOCKED", "DONE"].includes(state)) {
-    const ordered = topologicalOrder(plan.nodes);
-    const candidate = ordered
-      .map((nodeId) => plan.nodes.find((node) => node.nodeId === nodeId))
-      .find((node) => nodes[node.nodeId]?.state === "READY" && node.dependsOn.every((dependency) => nodes[dependency]?.state === "DONE"));
-    if (candidate) {
-      const tasks = materializedTaskMap(orchestration);
-      queued = queueCandidate({ runsRoot, objective, plan, orchestration, nodeId: candidate.nodeId, task: tasks.get(candidate.nodeId) });
-      nodes = structuredClone(nodes);
-      nodes[candidate.nodeId] = {
-        ...nodes[candidate.nodeId],
-        state: "QUEUED",
-        jobId: queued.job.jobId,
-        lastError: null,
-      };
-      state = "RUNNING";
+  const queued = [];
+  const globalCeiling = configuredGlobalParallelJobs(env);
+  const activeJobs = jobs.filter(activeQueueJob);
+  const objectiveJobs = activeJobs.filter((job) => job.objectiveId === objective.objectiveId);
+  let globalOccupancy = activeJobs.length;
+  let objectiveOccupancy = objectiveJobs.length;
+  const maxObjectiveParallel = Number(objective.budget?.maxParallelAgents ?? 1);
+  const tasks = materializedTaskMap(orchestration);
+  const occupiedProjects = new Set(
+    activeJobs
+      .filter((job) => [JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state))
+      .map((job) => job.projectId)
+      .filter(Boolean),
+  );
+  for (const [nodeId, runtime] of Object.entries(nodes)) {
+    if (ACTIVE_NODE_STATES.has(runtime.state)) {
+      const projectId = tasks.get(nodeId)?.projectId;
+      if (projectId) occupiedProjects.add(projectId);
     }
+  }
+  const ordered = topologicalOrder(plan.nodes);
+
+  for (const nodeId of ordered) {
+    if (globalOccupancy >= globalCeiling || objectiveOccupancy >= maxObjectiveParallel) break;
+    const candidate = plan.nodes.find((node) => node.nodeId === nodeId);
+    const runtime = nodes[nodeId];
+    if (runtime?.state !== "READY" || !candidate.dependsOn.every((dependency) => nodes[dependency]?.state === "DONE")) continue;
+    const task = tasks.get(candidate.nodeId);
+    if (!task?.projectId || occupiedProjects.has(task.projectId)) continue;
+    const queuedCandidate = queueCandidate({ runsRoot, objective, plan, orchestration, nodeId: candidate.nodeId, task });
+    queued.push(queuedCandidate);
+    nodes = structuredClone(nodes);
+    nodes[candidate.nodeId] = {
+      ...nodes[candidate.nodeId],
+      state: "QUEUED",
+      jobId: queuedCandidate.job.jobId,
+      lastError: null,
+    };
+    occupiedProjects.add(task.projectId);
+    globalOccupancy += 1;
+    objectiveOccupancy += 1;
+    state = "RUNNING";
   }
   const persisted = persistOrchestration({ runsRoot, orchestration, plan, nodes, state, now });
   updateObjectiveState({ runsRoot, objective, orchestration: persisted });
-  return { orchestration: persisted, queued, changed: reconciled.changed || Boolean(queued) || persisted !== orchestration };
+  return { orchestration: persisted, queued, changed: reconciled.changed || queued.length > 0 || persisted !== orchestration };
 }
 
-export function schedulerTick({ vaultRoot = null, runsRoot, enabled = orchestrationSchedulerEnabled(), now = new Date() } = {}) {
+export function schedulerTick({ vaultRoot = null, runsRoot, enabled = orchestrationSchedulerEnabled(), now = new Date(), env = process.env } = {}) {
   if (!runsRoot) fail("runsRoot wajib disediakan.", { code: "SCHEDULER_ROOT_REQUIRED" });
   if (!enabled) return { schemaVersion: 1, enabled: false, action: "DISABLED", queued: [], blocked: [], completed: [] };
   return withDurableLease({
     runsRoot,
     namespace: "orchestration-scheduler",
     key: "global",
-    purpose: "sequential orchestration scheduler tick",
+    purpose: "parallel orchestration scheduler tick",
     ttlMs: 60_000,
     reclaimDeadOwner: true,
     waitTimeoutMs: 0,
@@ -532,7 +575,7 @@ export function schedulerTick({ vaultRoot = null, runsRoot, enabled = orchestrat
     const results = [];
     for (const orchestration of listOrchestrations(runsRoot)) {
       try {
-        const result = scheduleOne({ runsRoot, orchestration, now });
+        const result = scheduleOne({ runsRoot, orchestration, now, env });
         results.push({ orchestrationId: orchestration.orchestrationId, ...result });
       } catch (error) {
         results.push({ orchestrationId: orchestration.orchestrationId, error: { code: error.code ?? "SCHEDULER_ERROR", message: error.message } });
@@ -542,7 +585,7 @@ export function schedulerTick({ vaultRoot = null, runsRoot, enabled = orchestrat
       schemaVersion: 1,
       enabled: true,
       action: "TICK_COMPLETED",
-      queued: results.filter((result) => result.queued).map((result) => result.queued.job),
+      queued: results.flatMap((result) => result.queued ?? []).map((item) => item.job),
       blocked: results.filter((result) => result.orchestration?.state === "BLOCKED").map((result) => result.orchestrationId),
       completed: results.filter((result) => result.orchestration?.state === "DONE").map((result) => result.orchestrationId),
       results,
