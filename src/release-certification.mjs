@@ -70,6 +70,11 @@ function writeFixtureSource(root, value) {
   fs.writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({ name: "p65-fixture", lockfileVersion: 3 }));
   fs.writeFileSync(path.join(root, "README.md"), `fixture ${value}: README.md\n`);
   fs.writeFileSync(path.join(root, "docs", "PHASE_6_RELEASE_CONTRACT.md"), `fixture ${value}: docs/PHASE_6_RELEASE_CONTRACT.md\n`);
+  for (const file of ["start.sh", "stop.sh"]) {
+    const filePath = path.join(root, file);
+    fs.writeFileSync(filePath, `#!/usr/bin/env bash\n# certification fixture: ${file}\n`);
+    fs.chmodSync(filePath, 0o755);
+  }
 }
 
 function humanGate(operatorIdentity, label) {
