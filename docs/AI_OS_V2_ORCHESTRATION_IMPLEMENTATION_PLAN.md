@@ -1003,7 +1003,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 - Backend/dashboard paths: existing visual QA modules, Objective review UI, tests.
 - Acceptance: existing per-run evidence is linked, not duplicated; aggregate report shows route/viewport/check ownership by node and project; request-changes creates an approved repair path.
 
-#### V2-082 — Delivery certification
+#### ✅ V2-082 — Delivery certification
 
 - Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
 - Exit: one objective completes plan, execution, integration, preview, visual/E2E evidence, human acceptance, cleanup, and knowledge capture.

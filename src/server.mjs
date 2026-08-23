@@ -47,6 +47,7 @@ import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orches
 import { getIntegrationEvidence, recoverIntegration, startIntegration } from "./integration-manager.mjs";
 import { acceptObjective, buildObjectiveEvidence } from "./objective-evidence.mjs";
 import { buildObjectiveVisualEvidence } from "./objective-visual-evidence.mjs";
+import { acceptDeliveryCertification, createDeliveryCertification, getDeliveryCertification, listDeliveryCertifications } from "./delivery-certification.mjs";
 import { getProjectRelationships, replaceProjectRelationships } from "./project-relations.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
@@ -487,6 +488,43 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         eventHub.broadcast("RUN_FAILED", { runId: visualNode.runId, error: error.message, objectiveId: params.id, nodeId });
       }
     })();
+  });
+
+  router.get("/api/objectives/:id/delivery-certification", async (req, res, { params }) => {
+    try {
+      getObjective(runsRoot, params.id);
+      const history = listDeliveryCertifications({ runsRoot, objectiveId: params.id });
+      sendJson(res, 200, { success: true, data: { latest: history[0] ?? null, history } });
+    } catch (error) {
+      sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/delivery-certification", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk delivery certification.", { code: "IDEMPOTENCY_REQUIRED" });
+      const result = createDeliveryCertification({ runsRoot, objectiveId: params.id });
+      appendAuditEntry(runsRoot, { event: "DELIVERY_CERTIFICATION_CREATED", actor: req.operatorIdentity ?? "local:unknown", objectiveId: params.id, certificationId: result.certificationId, status: result.status, blockers: result.blockers });
+      eventHub.broadcast("DELIVERY_CERTIFICATION_CREATED", { objectiveId: params.id, certificationId: result.certificationId, status: result.status, blockers: result.blockers });
+      sendJson(res, result.status === "HUMAN_GATE_REQUIRED" ? 201 : 409, { success: result.status === "HUMAN_GATE_REQUIRED", data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/delivery-certification/accept", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk delivery certification acceptance.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const history = listDeliveryCertifications({ runsRoot, objectiveId: params.id });
+      const selected = body?.certificationId ? getDeliveryCertification({ runsRoot, objectiveId: params.id, certificationId: body.certificationId }) : history[0] ? getDeliveryCertification({ runsRoot, objectiveId: params.id, certificationId: history[0].certificationId }) : null;
+      if (!selected) return sendError(res, 404, "Delivery certification bundle tidak ditemukan.", { code: "DELIVERY_CERTIFICATION_NOT_FOUND" });
+      const result = acceptDeliveryCertification({ bundlePath: selected.bundlePath, approvedBy: req.operatorIdentity });
+      eventHub.broadcast("DELIVERY_CERTIFICATION_ACCEPTED", { objectiveId: params.id, certificationId: result.certificationId, approvedBy: result.humanGate.approvedBy });
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 409, error.message, error.details);
+    }
   });
 
   router.post("/api/objectives/:id/final-acceptance", async (req, res, { params }) => {
