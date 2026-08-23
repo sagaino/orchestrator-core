@@ -135,7 +135,7 @@ function packageScripts(repository) {
   }
 }
 
-function existingTaskSummary(vaultRoot, projectId, readMarkdown) {
+export function existingTaskSummary(vaultRoot, projectId, readMarkdown) {
   const root = path.join(vaultRoot, "02-Projects", projectId, "tasks");
   if (!fs.existsSync(root)) return [];
   return fs.readdirSync(root, { withFileTypes: true })
@@ -331,7 +331,7 @@ function normalizeDraft(raw, project, request = "") {
   return draft;
 }
 
-function nextTaskIdentity(tasks) {
+export function nextTaskIdentity(tasks) {
   const numbered = tasks
     .map((task) => String(task.id).match(/^([A-Z][A-Z0-9]*)-(\d+)$/))
     .filter(Boolean)
@@ -349,7 +349,7 @@ function yamlArray(values) {
   return `[${values.map((value) => JSON.stringify(value)).join(", ")}]`;
 }
 
-function taskDocument({ taskId, projectId, request, draft, requestedBy, attachedAssets = [] }) {
+export function taskDocument({ taskId, projectId, request, draft, requestedBy, attachedAssets = [], orchestration = null }) {
   const today = new Date().toISOString().slice(0, 10);
   const bugTask = /\bbug\b|bug fix|fixing bug/i.test(`${draft.title}\n${request}`);
   
@@ -396,6 +396,19 @@ function taskDocument({ taskId, projectId, request, draft, requestedBy, attached
     `risk: ${draft.risk}`,
     `complexity: ${draft.complexity}`,
     `sources: ${yamlArray(sources)}`,
+    ...(orchestration ? [
+      `objective_id: ${JSON.stringify(orchestration.objectiveId)}`,
+      `plan_id: ${JSON.stringify(orchestration.planId)}`,
+      `orchestration_id: ${JSON.stringify(orchestration.orchestrationId)}`,
+      `node_id: ${JSON.stringify(orchestration.nodeId)}`,
+      `master_task: ${JSON.stringify(orchestration.objectiveId)}`,
+      "orchestration_managed: true",
+      `orchestration_dependencies: ${yamlArray(orchestration.orchestrationDependencies ?? [])}`,
+      `role: ${JSON.stringify(orchestration.role)}`,
+      `node_type: ${JSON.stringify(orchestration.nodeType)}`,
+      `write_conflict_group: ${JSON.stringify(orchestration.writeConflictGroup ?? null)}`,
+      `context_from: ${yamlArray(orchestration.contextFrom ?? [])}`,
+    ] : []),
     "---",
     "",
     `# ${draft.title}`,

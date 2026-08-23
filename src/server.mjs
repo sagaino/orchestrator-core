@@ -39,6 +39,7 @@ import { getReleaseOperations } from "./release-operations.mjs";
 import { createObjectiveIntake, getObjectiveIntake, listObjectiveIntake, objectivesEnabled, crossProjectEnabled } from "./objective-intake.mjs";
 import { approveFreshProjectGenesis, auditGenesisApproval } from "./fresh-project-genesis.mjs";
 import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges } from "./plan-lifecycle.mjs";
+import { materializeApprovedPlan } from "./task-materializer.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -402,6 +403,41 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       });
       eventHub.broadcast("PLAN_CHANGES_REQUESTED", { objectiveId: result.objective.objectiveId, planId: result.plan.planId, revision: planRevision(result.plan), planFingerprint: result.plan.planFingerprint, previousPlanId: result.previousPlan?.planId ?? null });
       sendJson(res, 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/objectives/:id/materialize", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk materialization task.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const materializer = services?.materializeApprovedPlan ?? materializeApprovedPlan;
+      const result = materializer({
+        vaultRoot,
+        runsRoot,
+        objectiveId: params.id,
+        planId: body?.planId ?? null,
+        expectedFingerprint: body?.planFingerprint ?? null,
+        orchestrationId: body?.orchestrationId ?? null,
+      });
+      appendAuditEntry(runsRoot, {
+        event: result.alreadyMaterialized ? "TASK_MATERIALIZATION_IDEMPOTENT" : "TASKS_MATERIALIZED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        orchestrationId: result.orchestration.orchestrationId,
+        planFingerprint: result.planFingerprint,
+        taskCount: result.tasks.length,
+      });
+      eventHub.broadcast(result.alreadyMaterialized ? "TASK_MATERIALIZATION_IDEMPOTENT" : "TASKS_MATERIALIZED", {
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        orchestrationId: result.orchestration.orchestrationId,
+        taskCount: result.tasks.length,
+        alreadyMaterialized: result.alreadyMaterialized,
+      });
+      sendJson(res, result.alreadyMaterialized ? 200 : 201, { success: true, data: result });
     } catch (error) {
       sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
@@ -1840,6 +1876,7 @@ export function createOrchestratorServer({
     clarifyPlan,
     approvePlan,
     requestPlanChanges,
+    materializeApprovedPlan,
     cancelObjective,
     approveFreshProjectGenesis,
     ...customServices,
