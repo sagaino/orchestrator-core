@@ -41,8 +41,9 @@ import { approveFreshProjectGenesis, auditGenesisApproval } from "./fresh-projec
 import { getObjective } from "./objective-store.mjs";
 import { buildObjectiveGraph } from "./objective-graph.mjs";
 import { listDecisions, listDecisionInbox } from "./decision-store.mjs";
+import { listPlans } from "./plan-store.mjs";
 import { approvePlan, assignPlanSkills, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
-import { defaultSkillRegistryPath, listInstalledSkills } from "./skill-registry.mjs";
+import { defaultSkillRegistryPath, listInstalledSkills, updateSkillEnabled } from "./skill-registry.mjs";
 import { projectSignalsForProjects } from "./skill-assignment.mjs";
 import { materializeApprovedPlan } from "./task-materializer.mjs";
 import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
@@ -58,7 +59,7 @@ const RUNTIME_VERSION = (() => {
 })();
 
 function validateRouteIdentifiers(params) {
-  for (const name of ["id", "projectId", "evidenceId"]) {
+  for (const name of ["id", "projectId", "evidenceId", "skillId"]) {
     if (!Object.hasOwn(params, name)) continue;
     const value = String(params[name] ?? "");
     if (!value || !/^[A-Za-z0-9._-]+$/.test(value) || [".", ".."].includes(value)) {
@@ -78,6 +79,27 @@ function integrationEvidenceDto(evidence) {
     repositoryAcceptance: Array.isArray(evidence.repositoryAcceptance) ? evidence.repositoryAcceptance : [],
     crossProjectVerification: evidence.crossProjectVerification ?? { required: false, status: "NOT_REQUIRED", results: [] },
   };
+}
+
+function skillUsage({ runsRoot, skills }) {
+  const usage = Object.fromEntries(skills.map((skill) => [`${skill.skillId}@${skill.version}`, {
+    planAssignments: 0,
+    runAssignments: 0,
+    lastSeenAt: null,
+  }]));
+  const touch = (assignment, field, timestamp) => {
+    const key = `${assignment?.skillId ?? ""}@${assignment?.version ?? ""}`;
+    if (!usage[key]) return;
+    usage[key][field] += 1;
+    if (timestamp && (!usage[key].lastSeenAt || timestamp > usage[key].lastSeenAt)) usage[key].lastSeenAt = timestamp;
+  };
+  for (const plan of listPlans(runsRoot)) {
+    for (const node of plan.nodes ?? []) for (const assignment of node.skills ?? []) touch(assignment, "planAssignments", plan.updatedAt ?? plan.createdAt);
+  }
+  for (const run of listRuns(runsRoot)) {
+    for (const assignment of run.task?.skills ?? []) touch(assignment, "runAssignments", run.updatedAt ?? run.createdAt);
+  }
+  return usage;
 }
 
 export function idempotencyScopeKey({ key, method, requestTarget, rawBody = "" }) {
@@ -678,7 +700,8 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   router.get("/api/skills", async (_req, res) => {
     try {
-      const skills = listInstalledSkills({ registryPath: defaultSkillRegistryPath(runsRoot), includeDisabled: false });
+      const skills = listInstalledSkills({ registryPath: defaultSkillRegistryPath(runsRoot), includeDisabled: true });
+      const usage = skillUsage({ runsRoot, skills });
       sendJson(res, 200, {
         success: true,
         data: {
@@ -699,12 +722,44 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
             verificationRequirements: skill.verificationRequirements,
             enabled: skill.enabled,
             provenance: skill.provenance,
+            usage: usage[`${skill.skillId}@${skill.version}`] ?? { planAssignments: 0, runAssignments: 0, lastSeenAt: null },
           })),
         },
       });
     } catch (error) {
       if (error.code === "SKILL_REGISTRY_NOT_FOUND") return sendJson(res, 200, { success: true, data: { schemaVersion: 1, mode: "read-only-skill-catalog", registryState: "EMPTY", skills: [] } });
       sendError(res, error.statusCode || 422, error.message, error.details);
+    }
+  });
+
+  router.put("/api/skills/:skillId", async (req, res, { params }) => {
+    try {
+      const body = await parseJsonBody(req);
+      const result = updateSkillEnabled({
+        registryPath: defaultSkillRegistryPath(runsRoot),
+        skillId: params.skillId,
+        version: body?.version ?? null,
+        enabled: body?.enabled,
+        changedBy: req.operatorIdentity,
+      });
+      appendAuditEntry(runsRoot, {
+        event: result.changed ? (result.skill.enabled ? "SKILL_ENABLED" : "SKILL_DISABLED") : "SKILL_ENABLEMENT_UNCHANGED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        skillId: result.skill.skillId,
+        version: result.skill.version,
+        enabled: result.skill.enabled,
+        previousEnabled: result.previousEnabled,
+        registryRevision: result.registry.revision,
+      });
+      eventHub.broadcast("SKILL_REGISTRY_UPDATED", {
+        skillId: result.skill.skillId,
+        version: result.skill.version,
+        enabled: result.skill.enabled,
+        registryRevision: result.registry.revision,
+      });
+      sendJson(res, result.changed ? 200 : 200, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || (error.code === "SKILL_REGISTRY_NOT_FOUND" ? 404 : 422), error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
   });
 

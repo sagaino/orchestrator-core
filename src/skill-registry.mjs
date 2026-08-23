@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 export const SKILL_SCHEMA_VERSION = 1;
 export const SKILL_KIND = "ai-os-skill";
@@ -243,4 +244,38 @@ export function loadSkillInstructions({ registryPath, registryRoot, skillId, ver
   const resolved = resolveSkillRequest({ registryPath, registryRoot, skillId, version });
   const filePath = fs.realpathSync(resolvedInstructionPath(registryRoot ?? path.dirname(registryPath), resolved.skill.instructions.resourcePath));
   return { ...resolved, instructionPath: filePath, instructions: fs.readFileSync(filePath, "utf8") };
+}
+
+function writeRegistryAtomically(registryPath, registry) {
+  const validation = validateSkillRegistry(registry, { registryRoot: path.dirname(registryPath), checkInstructions: true });
+  if (!validation.valid) throw registryError(`Skill registry update ditolak fail-closed: ${validation.errors.join("; ")}`, "SKILL_REGISTRY_INVALID", validation);
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  const temporaryPath = `${registryPath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(registry, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.renameSync(temporaryPath, registryPath);
+    try { fs.chmodSync(registryPath, 0o600); } catch {}
+  } catch (error) {
+    try { fs.unlinkSync(temporaryPath); } catch {}
+    throw error;
+  }
+}
+
+export function updateSkillEnabled({ registryPath, skillId, version, enabled, changedBy, now = new Date() } = {}) {
+  if (!registryPath) throw registryError("Skill registry path wajib diisi.", "SKILL_REGISTRY_PATH_REQUIRED");
+  if (typeof enabled !== "boolean") throw registryError("enabled harus boolean.", "SKILL_ENABLED_VALUE_REQUIRED");
+  if (typeof changedBy !== "string" || !changedBy.trim()) throw registryError("Perubahan skill membutuhkan human operator.", "SKILL_OPERATOR_REQUIRED");
+  const registry = readSkillRegistry({ registryPath, registryRoot: path.dirname(registryPath), checkInstructions: true });
+  const index = registry.skills.findIndex((skill) => skill.skillId === skillId && (!version || skill.version === version));
+  if (index < 0) throw registryError("Skill tidak ditemukan di registry.", "SKILL_NOT_FOUND", { skillId, version: version ?? null });
+  const previous = registry.skills[index];
+  if (previous.enabled === enabled) return { registry, skill: previous, changed: false, previousEnabled: previous.enabled, changedBy: changedBy.trim() };
+  const next = {
+    ...registry,
+    revision: registry.revision + 1,
+    updatedAt: (now instanceof Date ? now : new Date(now)).toISOString(),
+    skills: registry.skills.map((skill, itemIndex) => itemIndex === index ? { ...skill, enabled } : skill),
+  };
+  writeRegistryAtomically(registryPath, next);
+  return { registry: readSkillRegistry({ registryPath, registryRoot: path.dirname(registryPath), checkInstructions: true }), skill: next.skills[index], changed: true, previousEnabled: previous.enabled, changedBy: changedBy.trim() };
 }
