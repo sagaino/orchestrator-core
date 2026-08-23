@@ -978,7 +978,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
   - budgets may be increased only by recorded human decision;
   - model tier safety cannot be downgraded to meet budget.
 
-#### V2-073 — Extend operations, capacity, backup, and retention
+#### ✅ V2-073 — Extend operations, capacity, backup, and retention
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend/dashboard paths: operations governance, backup/retention enumerators, soak harness, Operations page, tests.

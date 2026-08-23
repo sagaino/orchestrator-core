@@ -150,7 +150,8 @@ export function backupRecoveryStatus({ runsRoot, vaultRoot, now = new Date(), co
   const schedule = readBackupSchedule({ runsRoot });
   const target = backupTargetStatus({ runsRoot, vaultRoot, backupRoot: schedule?.backupRoot ?? null });
   const drill = recoveryDrillStatus({ runsRoot, now, config });
-  return { schemaVersion: 1, action: "BACKUP_RECOVERY_STATUS", generatedAt: now.toISOString(), target, schedule, drill, registeredBackup: readBackupStatus(runsRoot), guardrails: { automaticRestore: false, automaticPromotion: false, permanentDelete: false } };
+  const registeredBackup = readBackupStatus(runsRoot);
+  return { schemaVersion: 1, action: "BACKUP_RECOVERY_STATUS", generatedAt: now.toISOString(), target, schedule, drill, registeredBackup, artifactCoverage: registeredBackup?.artifactCoverage ?? drill.artifactCoverage ?? null, guardrails: { automaticRestore: false, automaticPromotion: false, permanentDelete: false } };
 }
 
 export { recordRecoveryDrill };
