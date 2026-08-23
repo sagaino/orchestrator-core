@@ -206,6 +206,7 @@ function finalizeIntegration({ runsRoot, contextValue, artifact, verification, s
   return withDurableLease({ runsRoot, ...INTEGRATION_LEASE, key: contextValue.orchestration.orchestrationId }, () => {
     const current = getOrchestration(runsRoot, contextValue.orchestration.orchestrationId);
     const failed = sourceErrors.length > 0 || artifact.complete !== true || artifact.scope.changedPathsWithinUnion !== true || artifact.verification.status !== "PASS";
+    const integrationNode = contextValue.plan.nodes.find((node) => node.type === "INTEGRATION");
     const decision = failed
       ? blockerDecision({ runsRoot, objective: contextValue.objective, orchestration: current, sourceRuns: artifact.sourceRuns ?? [], sourceErrors, verification, evidence: artifact, now })
       : null;
@@ -225,7 +226,21 @@ function finalizeIntegration({ runsRoot, contextValue, artifact, verification, s
       orchestrationId: current.orchestrationId,
       expectedRevision: current.revision,
       now,
-      update: (record) => ({ ...record, state: failed ? "BLOCKED" : "DONE", integration: nextIntegration }),
+      update: (record) => ({
+        ...record,
+        state: failed ? "BLOCKED" : "DONE",
+        nodes: integrationNode
+          ? {
+            ...record.nodes,
+            [integrationNode.nodeId]: {
+              ...record.nodes[integrationNode.nodeId],
+              state: failed ? "FAILED" : "DONE",
+              lastError: failed ? { code: "INTEGRATION_VERIFICATION_FAILED", message: "Aggregate integration verification failed." } : null,
+            },
+          }
+          : record.nodes,
+        integration: nextIntegration,
+      }),
       validationOptions: { plan: contextValue.plan },
     });
     const persistedArtifact = { ...artifact, status: failed ? "BLOCKED" : "PASSED", blockerDecisionId: decision?.decisionId ?? null, completedAt: iso(now) };

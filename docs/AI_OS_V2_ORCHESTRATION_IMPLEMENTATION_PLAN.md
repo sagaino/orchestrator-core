@@ -826,7 +826,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 - Acceptance: shows node outcomes, aggregate diff links, verification, preview, unresolved blockers, usage, and separate final acceptance action.
 - Verification: dashboard full gate.
 
-#### V2-043 — Certify sequential integration
+#### ✅ V2-043 — Certify sequential integration
 
 - Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
 - Pilot: one objective where unit checks pass but integration initially fails, one approved repair revision, then final pass.
