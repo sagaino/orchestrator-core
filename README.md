@@ -12,6 +12,14 @@ Roadmap pasca-sertifikasi sampai Personal AI OS v1.0 GA, termasuk paket kerja
 yang dapat dieksekusi model economy, tersedia di
 [Phase 5 to v1.0 Execution Plan](./docs/PHASE_5_TO_V1_EXECUTION_PLAN.md).
 
+Rencana v2 untuk Fresh Project dari Task Intake, objective decomposition,
+dependency-aware multi-agent execution, cross-project incident handling, dan
+Skill Router tersedia di
+[AI OS v2 Orchestration Implementation Plan](./docs/AI_OS_V2_ORCHESTRATION_IMPLEMENTATION_PLAN.md).
+The initial v2 scope and threat model are documented in
+[AI OS v2 Scope Contract](./docs/AI_OS_V2_SCOPE.md) and
+[AI OS v2 Threat Model](./docs/AI_OS_V2_THREAT_MODEL.md).
+
 ---
 
 ## ⚡ Quick Start (1-Command Launcher)
@@ -105,6 +113,9 @@ ORCHESTRATOR_AGY_MODEL=gemini-3.7-flash-high
 ORCHESTRATOR_MIN_FREE_DISK_MB=1024
 ORCHESTRATOR_MAX_SSE_CLIENTS=20
 ORCHESTRATOR_MAX_BACKUP_AGE_HOURS=24
+
+# AI OS v2 objective intake tetap nonaktif sampai human gate
+ORCHESTRATOR_OBJECTIVES_ENABLED=0
 ```
 
 ## 🛡️ Operations Center

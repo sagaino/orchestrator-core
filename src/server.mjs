@@ -36,6 +36,9 @@ import { appendAuditEntry, verifyAuditChain } from "./audit-chain.mjs";
 import { RequestRateLimiter, operationsReadiness, previewRetention, applyRetentionPlan, listRetentionTrash, restoreRetentionTrash, acknowledgeOperationsAlert, listOperationsAlertAcknowledgements, listOperationsAlertResolutions, resolveOperationsAlert } from "./operations-governance.mjs";
 import { backupRecoveryStatus, previewBackupSchedule, previewBackupRotation, verifyRegisteredBackup, recordRecoveryDrill } from "./backup-operations.mjs";
 import { getReleaseOperations } from "./release-operations.mjs";
+import { createObjectiveIntake, getObjectiveIntake, listObjectiveIntake, objectivesEnabled, crossProjectEnabled } from "./objective-intake.mjs";
+import { approveFreshProjectGenesis, auditGenesisApproval } from "./fresh-project-genesis.mjs";
+import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges } from "./plan-lifecycle.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -203,6 +206,259 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   router.get("/api/projects", async (req, res) => {
     const data = listProjects(vaultRoot);
     sendJson(res, 200, { success: true, data });
+  });
+
+  // --- v2.0 Objective Intake (planning/read-only only) ---
+  router.post("/api/objectives", async (req, res) => {
+    try {
+      const enabled = services?.objectivesEnabled ?? objectivesEnabled;
+      if (!enabled()) return sendError(res, 409, "Objective orchestration belum diaktifkan.", { code: "FEATURE_DISABLED", feature: "OBJECTIVES" });
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk objective intake.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const intake = services?.createObjectiveIntake ?? createObjectiveIntake;
+      let result = intake({
+        vaultRoot,
+        runsRoot,
+        body,
+        requestedBy: req.operatorIdentity ?? body?.requestedBy ?? "user",
+        isCrossProjectEnabled: services?.crossProjectEnabled ?? crossProjectEnabled,
+      });
+      if (body?.plan && result.objective.state === "PLANNING") {
+        const planner = services?.createPlanRevision ?? createPlanRevision;
+        const revision = planner({ runsRoot, objectiveId: result.objective.objectiveId, candidate: body.plan });
+        result = {
+          ...result,
+          objective: revision.objective,
+          plan: revision.plan,
+          planning: { ...result.planning, started: true, planRevision: planRevision(revision.plan) },
+        };
+        appendAuditEntry(runsRoot, {
+          event: "PLAN_REVISION_CREATED",
+          actor: req.operatorIdentity ?? "local:unknown",
+          objectiveId: revision.objective.objectiveId,
+          planId: revision.plan.planId,
+          revision: planRevision(revision.plan),
+          planFingerprint: revision.plan.planFingerprint,
+          state: revision.objective.state,
+        });
+        eventHub.broadcast("PLAN_REVISION_CREATED", {
+          objectiveId: revision.objective.objectiveId,
+          planId: revision.plan.planId,
+          revision: planRevision(revision.plan),
+          planFingerprint: revision.plan.planFingerprint,
+          state: revision.objective.state,
+        });
+      }
+      appendAuditEntry(runsRoot, {
+        event: "OBJECTIVE_CREATED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        mode: result.objective.mode,
+        state: result.objective.state,
+      });
+      eventHub.broadcast("OBJECTIVE_CREATED", {
+        objectiveId: result.objective.objectiveId,
+        mode: result.objective.mode,
+        state: result.objective.state,
+      });
+      sendJson(res, 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.get("/api/objectives", async (req, res) => {
+    try {
+      const reader = services?.listObjectiveIntake ?? listObjectiveIntake;
+      sendJson(res, 200, { success: true, data: reader({ runsRoot }) });
+    } catch (error) {
+      sendError(res, error.statusCode || 500, error.message, error.details);
+    }
+  });
+
+  router.get("/api/objectives/:id", async (req, res, { params }) => {
+    try {
+      const reader = services?.getObjectiveLifecycle ?? getObjectiveLifecycle;
+      sendJson(res, 200, { success: true, data: reader({ runsRoot, objectiveId: params.id }) });
+    } catch (error) {
+      sendError(res, error.statusCode || 404, error.message, error.details);
+    }
+  });
+
+  router.post("/api/objectives/:id/plan", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk membuat plan revision.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      if (!body?.plan || typeof body.plan !== "object" || Array.isArray(body.plan)) return sendError(res, 400, "Field plan wajib berupa object.", { code: "INVALID_PLAN" });
+      const planner = services?.createPlanRevision ?? createPlanRevision;
+      const result = planner({ runsRoot, objectiveId: params.id, candidate: body.plan });
+      appendAuditEntry(runsRoot, {
+        event: "PLAN_REVISION_CREATED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.plan.planFingerprint,
+        state: result.objective.state,
+      });
+      eventHub.broadcast("PLAN_REVISION_CREATED", {
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.plan.planFingerprint,
+        state: result.objective.state,
+      });
+      sendJson(res, 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/objectives/:id/clarify", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk clarification.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const clarifier = services?.clarifyPlan ?? clarifyPlan;
+      const result = clarifier({
+        runsRoot,
+        objectiveId: params.id,
+        answer: body?.answer ?? body?.clarification,
+        candidate: body?.plan ?? null,
+        clarifiedBy: req.operatorIdentity,
+      });
+      appendAuditEntry(runsRoot, {
+        event: "PLAN_CLARIFIED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.plan.planFingerprint,
+      });
+      eventHub.broadcast("PLAN_CLARIFIED", { objectiveId: result.objective.objectiveId, planId: result.plan.planId, revision: planRevision(result.plan), planFingerprint: result.plan.planFingerprint });
+      sendJson(res, 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/objectives/:id/approve-plan", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk approval plan.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const approver = services?.approvePlan ?? approvePlan;
+      const result = approver({
+        runsRoot,
+        objectiveId: params.id,
+        planId: body?.planId ?? null,
+        expectedFingerprint: body?.planFingerprint ?? null,
+        approvedBy: req.operatorIdentity,
+      });
+      appendAuditEntry(runsRoot, {
+        event: result.alreadyApproved ? "PLAN_APPROVAL_IDEMPOTENT" : "PLAN_APPROVED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.planFingerprint,
+        decisionId: result.decision?.decisionId ?? null,
+        projects: result.plan.projects,
+        risk: result.plan.risk,
+        budget: result.objective.budget,
+      });
+      eventHub.broadcast(result.alreadyApproved ? "PLAN_APPROVAL_IDEMPOTENT" : "PLAN_APPROVED", {
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.planFingerprint,
+        decisionId: result.decision?.decisionId ?? null,
+        alreadyApproved: result.alreadyApproved,
+      });
+      sendJson(res, result.alreadyApproved ? 200 : 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/objectives/:id/request-plan-changes", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk request plan changes.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const requester = services?.requestPlanChanges ?? requestPlanChanges;
+      const result = requester({
+        runsRoot,
+        objectiveId: params.id,
+        reason: body?.reason ?? body?.feedback,
+        candidate: body?.plan ?? null,
+        requestedBy: req.operatorIdentity,
+      });
+      appendAuditEntry(runsRoot, {
+        event: "PLAN_CHANGES_REQUESTED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan.planId,
+        revision: planRevision(result.plan),
+        planFingerprint: result.plan.planFingerprint,
+        previousPlanId: result.previousPlan?.planId ?? null,
+      });
+      eventHub.broadcast("PLAN_CHANGES_REQUESTED", { objectiveId: result.objective.objectiveId, planId: result.plan.planId, revision: planRevision(result.plan), planFingerprint: result.plan.planFingerprint, previousPlanId: result.previousPlan?.planId ?? null });
+      sendJson(res, 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/objectives/:id/cancel", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk cancel objective.", { code: "IDEMPOTENCY_REQUIRED" });
+      const canceller = services?.cancelObjective ?? cancelObjective;
+      const result = canceller({ runsRoot, objectiveId: params.id, cancelledBy: req.operatorIdentity });
+      appendAuditEntry(runsRoot, {
+        event: result.alreadyCancelled ? "OBJECTIVE_CANCEL_IDEMPOTENT" : "OBJECTIVE_CANCELLED",
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan?.planId ?? null,
+        outcome: result.alreadyCancelled ? "ALREADY_CANCELLED" : "CANCELLED",
+      });
+      eventHub.broadcast(result.alreadyCancelled ? "OBJECTIVE_CANCEL_IDEMPOTENT" : "OBJECTIVE_CANCELLED", {
+        objectiveId: result.objective.objectiveId,
+        planId: result.plan?.planId ?? null,
+        alreadyCancelled: result.alreadyCancelled,
+      });
+      sendJson(res, result.alreadyCancelled ? 200 : 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/objectives/:id/approve-genesis", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk approval Fresh Project.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const approver = services?.approveFreshProjectGenesis ?? approveFreshProjectGenesis;
+      const result = await approver({
+        vaultRoot,
+        runsRoot,
+        objectiveId: params.id,
+        approvedBy: req.operatorIdentity ?? body?.approvedBy ?? "user",
+        onboardNewProject: services?.onboardNewProject ?? undefined,
+      });
+      auditGenesisApproval(runsRoot, {
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: result.objective.objectiveId,
+        state: result.objective.state,
+        decisionId: result.decision?.decisionId ?? null,
+        outcome: result.alreadyCompleted ? "ALREADY_COMPLETED" : result.reconciled ? "RECONCILED" : "APPROVED_AND_ONBOARDED",
+      });
+      eventHub.broadcast("FRESH_PROJECT_CREATION", {
+        objectiveId: result.objective.objectiveId,
+        state: result.objective.state,
+        decisionId: result.decision?.decisionId ?? null,
+        outcome: result.alreadyCompleted ? "ALREADY_COMPLETED" : result.reconciled ? "RECONCILED" : "APPROVED_AND_ONBOARDED",
+      });
+      sendJson(res, result.alreadyCompleted || result.reconciled ? 200 : 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 500, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
   });
 
   router.post("/api/projects/onboard/existing", async (req, res) => {
@@ -1574,6 +1830,18 @@ export function createOrchestratorServer({
     onboardNewProject,
     ingestRawKnowledge,
     harvestRepositoryKnowledge,
+    objectivesEnabled,
+    crossProjectEnabled,
+    createObjectiveIntake,
+    getObjectiveIntake,
+    listObjectiveIntake,
+    getObjectiveLifecycle,
+    createPlanRevision,
+    clarifyPlan,
+    approvePlan,
+    requestPlanChanges,
+    cancelObjective,
+    approveFreshProjectGenesis,
     ...customServices,
   };
 

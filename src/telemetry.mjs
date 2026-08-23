@@ -98,6 +98,7 @@ export function configuredTokenWarningThreshold(env = process.env) {
 export function normalizeTelemetryStage(stage) {
   const value = String(stage ?? "").trim();
   if (value === "task-intake-planner" || value === "TASK_INTAKE") return "TASK_INTAKE";
+  if (value === "project-decomposition" || value === "PROJECT_DECOMPOSITION") return "PROJECT_DECOMPOSITION";
   if (value === "coding-agent" || value === "IMPLEMENTATION") return "IMPLEMENTATION";
   if (value.startsWith("automatic-recovery-agent:") || value === "AUTOMATIC_RECOVERY") return "AUTOMATIC_RECOVERY";
   if (value === "retrospective" || value === "RETROSPECTIVE") return "RETROSPECTIVE";
