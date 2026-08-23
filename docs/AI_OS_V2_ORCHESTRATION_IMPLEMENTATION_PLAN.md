@@ -948,7 +948,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 - Acceptance: one screen identifies diagnosis outcome, repositories inspected, repositories changed, per-repository diff/run/acceptance, contract/E2E results, blockers, and final objective action.
 - Verification: dashboard `npm run test:verify`.
 
-#### V2-065 — Cross-project incident certification
+#### ✅ V2-065 — Cross-project incident certification
 
 - Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
 - Pilot: one real linked FE/BE bug submitted as one prompt. Root cause must be diagnosed, only required repositories changed, and cross-project E2E verified.
