@@ -82,6 +82,7 @@ async function startTaskRunInternal({
   executor = executeRun,
   retrospective = retrospectRun,
   initialTelemetry = null,
+  orchestrationMetadata = null,
   onProgress = () => {},
 }) {
   promoteTaskToReady({
@@ -101,6 +102,27 @@ async function startTaskRunInternal({
   });
   if (initialTelemetry) {
     manifest = appendRunTelemetry({ runsRoot, runId: manifest.runId, record: initialTelemetry });
+  }
+  if (orchestrationMetadata?.sameProjectParallel === true) {
+    manifest = updateRunExecution({
+      runsRoot,
+      runId: manifest.runId,
+      executionPatch: {
+        orchestration: {
+          objectiveId: orchestrationMetadata.objectiveId ?? null,
+          planId: orchestrationMetadata.planId ?? null,
+          orchestrationId: orchestrationMetadata.orchestrationId ?? null,
+          nodeId: orchestrationMetadata.nodeId ?? null,
+          attempt: orchestrationMetadata.attempt ?? 1,
+          sameProjectParallel: true,
+          baseCommit: orchestrationMetadata.baseCommit ?? null,
+          frozenSourceStatus: orchestrationMetadata.frozenSourceStatus ?? "",
+          frozenSourceStatusHash: orchestrationMetadata.frozenSourceStatusHash ?? null,
+        },
+      },
+      event: "SAME_PROJECT_PARALLEL_METADATA_ATTACHED",
+      message: "Run menggunakan frozen common base dan isolated worktree untuk same-project parallel mode.",
+    });
   }
   await onProgress(manifest);
 

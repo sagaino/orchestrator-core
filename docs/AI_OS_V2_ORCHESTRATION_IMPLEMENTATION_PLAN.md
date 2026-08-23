@@ -865,7 +865,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 - Acceptance: satisfies section 10.2 for one project with sequentially produced patches; source repository remains unchanged before acceptance.
 - Verification: conflict, baseline drift, denied path, verification failure, apply failure, rollback, and cleanup tests.
 
-#### V2-053 — Enable same-project parallel execution behind a flag
+#### ✅ V2-053 — Enable same-project parallel execution behind a flag
 
 - Model: `ECONOMY + STRONG REVIEW`; activation: `HUMAN GATE`.
 - Feature flag: `ORCHESTRATOR_SAME_PROJECT_PARALLEL=0` by default.
