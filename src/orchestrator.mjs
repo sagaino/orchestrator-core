@@ -224,6 +224,7 @@ Disaster recovery:
   backup-verify-registered
   recovery-drill-record --reason <evidence> [--decision PASS|FAIL] [--by <name>]
   soak-harness [<duration-hours>] [--soak-root <absolute-path>]
+  operations-certification-harness [<duration-hours>] [--soak-root <absolute-path>]
   operations-certification [--soak-report <absolute-report-path>]
   orchestration-certification <objective-id> [--orchestration <orchestration-id>]
   multi-agent-certification <objective-id> [--orchestration <orchestration-id>] [--restart-evidence <absolute-json-path>]
@@ -421,10 +422,15 @@ export async function main(argv = process.argv.slice(2)) {
         restartEverySteps: options.restartEvery ?? 16,
       });
       if (result.status !== "PASS") process.exitCode = 1;
+    } else if (command === "operations-certification-harness") {
+      const [durationHours = "72"] = options.positional;
+      const { runOperationsCertificationHarness } = await import("./operations-certification-harness.mjs");
+      result = await runOperationsCertificationHarness({ harnessRoot: options.soakRoot, durationHours: options.durationHours ?? Number(durationHours), stepMinutes: options.stepMinutes ?? 15 });
+      if (result.status !== "PASS") process.exitCode = 1;
     } else if (command === "operations-certification") {
       const { createOperationsCertification } = await import("./operations-certification.mjs");
       const soakReportPath = options.soakReport ?? path.join(options.runs, "runtime", "soak", "last-report.json");
-      result = createOperationsCertification({ runsRoot: options.runs, vaultRoot: options.vault, soakReportPath, maxRecoveryRtoMinutes: options.maxRtoMinutes ?? 15 });
+      result = createOperationsCertification({ runsRoot: options.runs, vaultRoot: options.vault, soakReportPath, maxRecoveryRtoMinutes: options.maxRtoMinutes ?? 15, requireExitEvidence: true });
       if (result.status !== "CERTIFICATION_READY") process.exitCode = 1;
     } else if (command === "orchestration-certification") {
       const [objectiveId] = options.positional;

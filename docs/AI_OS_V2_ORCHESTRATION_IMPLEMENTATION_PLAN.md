@@ -984,7 +984,7 @@ Phase V2.3 exit: validated subtasks execute sequentially through the existing li
 - Backend/dashboard paths: operations governance, backup/retention enumerators, soak harness, Operations page, tests.
 - Acceptance: objectives/plans/orchestrations/decisions/integration artifacts are included in backup, restore, capacity alerts, retention preview, and recovery drills; active state is never purged.
 
-#### V2-074 — Operations certification
+#### ✅ V2-074 — Operations certification
 
 - Model: `ECONOMY + STRONG REVIEW`; result: `HUMAN GATE`.
 - Exit: bounded soak with multiple objectives, restart points, decisions, one budget stop, backup/restore, and no orphan worktree or lost state.
