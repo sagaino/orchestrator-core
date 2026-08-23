@@ -838,6 +838,19 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
     const body = await parseJsonBody(req);
     const approvedBy = String(body?.approvedBy ?? "user").trim() || "user";
     const context = buildContext(vaultRoot, params.projectId, params.taskInput);
+    if (context.task?.metadata?.orchestration_managed === true) {
+      return sendError(
+        res,
+        409,
+        "Task orchestration-managed hanya boleh diantrekan oleh sequential orchestration scheduler.",
+        {
+          code: "ORCHESTRATION_MANAGED_TASK",
+          objectiveId: context.task.metadata.objective_id ?? null,
+          orchestrationId: context.task.metadata.orchestration_id ?? null,
+          nodeId: context.task.metadata.node_id ?? null,
+        },
+      );
+    }
     const taskStatus = String(context.task?.metadata?.status ?? "").toUpperCase();
     if (!["BACKLOG", "READY"].includes(taskStatus)) {
       return sendError(res, 409, `Task harus BACKLOG atau READY sebelum diantrekan; status saat ini ${taskStatus || "UNKNOWN"}.`);

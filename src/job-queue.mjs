@@ -129,7 +129,16 @@ export function enqueueTaskJob({
   taskPath,
   requestedBy = "user",
   intakeTelemetry = null,
+  orchestrationManaged = false,
+  schedulerAuthorized = false,
+  orchestrationMetadata = null,
 }) {
+  if (orchestrationManaged && !schedulerAuthorized) {
+    const error = new Error("Task orchestration-managed hanya boleh diantrekan oleh sequential orchestration scheduler.");
+    error.code = "ORCHESTRATION_MANAGED_TASK";
+    error.details = { code: error.code, taskId, projectId };
+    throw error;
+  }
   assertReleaseAdmissionOpen(runsRoot);
   return withDurableLease({
     runsRoot,
@@ -171,6 +180,24 @@ export function enqueueTaskJob({
         taskPath,
         requestedBy: String(requestedBy).trim() || "user",
         intakeTelemetry,
+        objectiveId: orchestrationMetadata?.objectiveId ?? null,
+        planId: orchestrationMetadata?.planId ?? null,
+        orchestrationId: orchestrationMetadata?.orchestrationId ?? null,
+        nodeId: orchestrationMetadata?.nodeId ?? null,
+        planFingerprint: orchestrationMetadata?.planFingerprint ?? null,
+        planApproval: orchestrationMetadata ? {
+          decisionId: orchestrationMetadata.approvalDecisionId ?? null,
+          planFingerprint: orchestrationMetadata.planFingerprint ?? null,
+          approvedBy: orchestrationMetadata.approvedBy ?? null,
+          approvedAt: orchestrationMetadata.approvedAt ?? null,
+        } : null,
+        orchestration: orchestrationMetadata ? {
+          managed: true,
+          objectiveId: orchestrationMetadata.objectiveId,
+          planId: orchestrationMetadata.planId,
+          orchestrationId: orchestrationMetadata.orchestrationId,
+          nodeId: orchestrationMetadata.nodeId,
+        } : null,
         runId: null,
         runState: null,
         error: null,

@@ -440,6 +440,7 @@ export async function retryTaskRun({
     taskId: manifest.task.id,
     taskPath: manifest.task.path,
     requestedBy: reviewer,
+    orchestrationManaged: /^orchestration_managed:\s*true\s*$/mi.test(fs.readFileSync(path.join(vaultRoot, manifest.task.path), "utf8")),
   });
   appendRetryLog(vaultRoot, manifest, reviewer, safeInfrastructureFailure);
   return {

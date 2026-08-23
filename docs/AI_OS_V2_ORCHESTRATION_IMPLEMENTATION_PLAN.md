@@ -748,7 +748,7 @@ Phase V2.2 exit: one prompt produces a human-reviewable, validated DAG, but appr
   - repeated call returns existing materialization.
 - Verification: transaction/fault tests, task readiness tests, unit and smoke gates.
 
-#### V2-031 — Implement sequential orchestration scheduler
+#### ✅ V2-031 — Implement sequential orchestration scheduler
 
 - Model: `ECONOMY + STRONG REVIEW`.
 - Backend paths: new `src/orchestration-scheduler.mjs`, `src/job-queue.mjs`, `src/daemon.mjs`, tests.
