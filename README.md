@@ -94,7 +94,7 @@ Backend dan dashboard hanya bind ke `127.0.0.1`. Credential API disimpan di `run
 
 ## ⚙️ Variabel Lingkungan Opsional (`.env`)
 
-Script `./start.sh` sudah memiliki nilai default yang optimal, namun Anda dapat mengaturnya via `.env` atau environment variable jika diperlukan:
+`./start.sh` otomatis membaca `.env` project-local jika file tersebut tersedia. Buat dari `.env.example` bila diperlukan. Nilai environment variable yang sudah diekspor di terminal tetap memiliki prioritas lebih tinggi daripada `.env`.
 
 ```env
 # Path kustom ke Obsidian Vault (Default: ~/Documents/Obsidian Vault)

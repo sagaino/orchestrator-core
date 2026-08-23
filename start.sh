@@ -15,6 +15,59 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$DIR"
 
+# Load project-local configuration without executing arbitrary shell commands.
+# Explicit environment variables already present in the shell take precedence.
+load_dotenv() {
+  local env_file="$DIR/.env"
+  local line key value
+
+  if [ ! -f "$env_file" ]; then
+    return 0
+  fi
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Ignore blank lines and comments.
+    line="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$line" ] && continue
+    case "$line" in
+      \#*) continue ;;
+    esac
+
+    # Accept KEY=value and export KEY=value syntax.
+    line="${line#export }"
+    case "$line" in
+      *=*) ;;
+      *) continue ;;
+    esac
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    # Only accept shell variable names; values are never eval'ed or sourced.
+    case "$key" in
+      ''|*[!A-Za-z0-9_]*|[0-9]*) continue ;;
+    esac
+
+    # Support simple single- or double-quoted values.
+    if [ "${#value}" -ge 2 ]; then
+      case "$value" in
+        \"*\") value="${value:1:${#value}-2}" ;;
+        \'*\') value="${value:1:${#value}-2}" ;;
+      esac
+    fi
+
+    # Inline/exported environment values win over .env defaults.
+    if ! printenv "$key" >/dev/null 2>&1; then
+      export "$key=$value"
+    fi
+  done < "$env_file"
+}
+
+load_dotenv
+
 # Smart Dashboard Search (Mencari di ../orchestrator-dashboard, ../ciniru/orchestrator-dashboard, dll)
 resolve_dashboard_path() {
   if [ -n "$ORCHESTRATOR_DASHBOARD_PATH" ] && [ -d "$ORCHESTRATOR_DASHBOARD_PATH" ]; then
