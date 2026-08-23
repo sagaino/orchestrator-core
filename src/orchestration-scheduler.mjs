@@ -5,6 +5,7 @@ import { getOrchestration, listOrchestrations, updateOrchestration } from "./orc
 import { enqueueTaskJob, JOB_STATES, listJobs, updateJob } from "./job-queue.mjs";
 import { topologicalOrder } from "./task-graph.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
+import { classifyIntegrationFailure, getIntegrationEvidence } from "./integration-manager.mjs";
 
 const ACTIVE_NODE_STATES = new Set(["QUEUED", "RUNNING", "REVIEW"]);
 const TERMINAL_NODE_STATES = new Set(["DONE", "FAILED", "CANCELLED"]);
@@ -386,6 +387,19 @@ export function resolveDecision({ runsRoot, decisionId, action, resolvedBy, now 
   const decision = getDecision(runsRoot, decisionId);
   if (!decision) fail(`Decision tidak ditemukan: ${decisionId}`, { statusCode: 404, code: "DECISION_NOT_FOUND", details: { code: "DECISION_NOT_FOUND", decisionId } });
   if (!decision.allowedChoices.includes(selectedAction)) fail(`Action decision tidak diizinkan: ${selectedAction}.`, { statusCode: 422, code: "DECISION_ACTION_NOT_ALLOWED", details: { code: "DECISION_ACTION_NOT_ALLOWED", allowedChoices: decision.allowedChoices } });
+  if (decision.type === "INTEGRATION_CONFLICT" && selectedAction === "RETRY") {
+    const evidence = decision.evidence?.orchestrationId
+      ? getIntegrationEvidence({ runsRoot, orchestrationId: decision.evidence.orchestrationId })
+      : null;
+    const classification = classifyIntegrationFailure({ evidence });
+    if (classification.classification !== "INFRASTRUCTURE") {
+      fail("Integration retry hanya aman untuk failure infrastructure; gunakan targeted repair proposal.", {
+        statusCode: 409,
+        code: "INTEGRATION_RETRY_NOT_SAFE",
+        details: { code: "INTEGRATION_RETRY_NOT_SAFE", classification },
+      });
+    }
+  }
   if (decision.state === "RESOLVED") {
     if (decision.resolution?.action !== selectedAction) fail("Decision sudah resolved dengan action berbeda.", { statusCode: 409, code: "DECISION_ALREADY_RESOLVED", details: { code: "DECISION_ALREADY_RESOLVED", decisionId } });
     if (decision.type === "NODE_RETRY" && selectedAction === "RETRY" && !decision.retryAppliedAt) return applyNodeRetryDecision({ runsRoot, decisionId, now });

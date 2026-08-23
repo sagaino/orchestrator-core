@@ -43,7 +43,7 @@ import { listDecisions } from "./decision-store.mjs";
 import { approvePlan, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
 import { materializeApprovedPlan } from "./task-materializer.mjs";
 import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
-import { getIntegrationEvidence, startIntegration } from "./integration-manager.mjs";
+import { getIntegrationEvidence, recoverIntegration, startIntegration } from "./integration-manager.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -329,6 +329,39 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       });
       const status = result.action === "INTEGRATION_BLOCKED" ? 409 : result.action === "INTEGRATION_IN_PROGRESS" ? 202 : result.action === "INTEGRATION_NOT_REQUIRED" || result.action === "INTEGRATION_ALREADY_COMPLETED" ? 200 : 201;
       sendJson(res, status, { success: status < 400, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/objectives/:id/integration/recovery", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk integration recovery.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const recoverer = services?.recoverIntegration ?? recoverIntegration;
+      const result = recoverer({
+        vaultRoot,
+        runsRoot,
+        objectiveId: params.id,
+        orchestrationId: body?.orchestrationId ?? null,
+      });
+      appendAuditEntry(runsRoot, {
+        event: result.action,
+        actor: req.operatorIdentity ?? "local:unknown",
+        objectiveId: params.id,
+        orchestrationId: result.evidence?.orchestrationId ?? body?.orchestrationId ?? null,
+        planId: result.plan?.planId ?? null,
+        decisionId: result.decision?.decisionId ?? null,
+        classification: result.classification?.classification ?? null,
+      });
+      eventHub.broadcast(result.action, {
+        objectiveId: params.id,
+        orchestrationId: result.evidence?.orchestrationId ?? body?.orchestrationId ?? null,
+        planId: result.plan?.planId ?? null,
+        decisionId: result.decision?.decisionId ?? null,
+        classification: result.classification?.classification ?? null,
+      });
+      sendJson(res, result.action === "INTEGRATION_REPAIR_PROPOSED" ? 201 : 200, { success: true, data: result });
     } catch (error) {
       sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
@@ -2067,6 +2100,7 @@ export function createOrchestratorServer({
     listDecisions,
     startIntegration,
     getIntegrationEvidence,
+    recoverIntegration,
     cancelObjective,
     approveFreshProjectGenesis,
     ...customServices,

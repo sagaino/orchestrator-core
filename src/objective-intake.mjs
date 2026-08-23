@@ -60,13 +60,14 @@ function normalizeBudget(input = {}) {
     maxSubtasks: input.maxSubtasks ?? 8,
     maxParallelAgents: input.maxParallelAgents ?? 1,
     maxRetriesPerNode: input.maxRetriesPerNode ?? 2,
+    maxRepairCycles: input.maxRepairCycles ?? 1,
     maxTotalTokens: input.maxTotalTokens ?? null,
     deadlineAt: input.deadlineAt ?? null,
   };
-  for (const field of ["maxSubtasks", "maxParallelAgents", "maxRetriesPerNode"]) {
+  for (const field of ["maxSubtasks", "maxParallelAgents", "maxRetriesPerNode", "maxRepairCycles"]) {
     if (!positiveInteger(budget[field])) throw new ObjectiveIntakeError(`budget.${field} harus positive integer.`, { details: { code: "INVALID_BUDGET", field } });
   }
-  if (budget.maxSubtasks > 100 || budget.maxParallelAgents > 16 || budget.maxRetriesPerNode > 10) {
+  if (budget.maxSubtasks > 100 || budget.maxParallelAgents > 16 || budget.maxRetriesPerNode > 10 || budget.maxRepairCycles > 5) {
     throw new ObjectiveIntakeError("budget melebihi ceiling v2 awal.", { statusCode: 422, code: "BUDGET_EXCEEDED", details: { code: "BUDGET_EXCEEDED" } });
   }
   if (budget.maxTotalTokens !== null && !positiveInteger(budget.maxTotalTokens)) {

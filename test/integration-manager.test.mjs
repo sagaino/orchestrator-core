@@ -4,19 +4,20 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createObjective } from "../src/objective-store.mjs";
-import { createPlan } from "../src/plan-store.mjs";
+import { createPlan, getPlan } from "../src/plan-store.mjs";
 import { createDecision } from "../src/decision-store.mjs";
 import { createOrchestration, getOrchestration, updateOrchestration } from "../src/orchestration-store.mjs";
 import { enqueueTaskJob, getJob, updateJob } from "../src/job-queue.mjs";
 import { planFingerprint } from "../src/plan-lifecycle.mjs";
-import { getIntegrationEvidence, startIntegration } from "../src/integration-manager.mjs";
+import { getIntegrationEvidence, recoverIntegration, startIntegration } from "../src/integration-manager.mjs";
+import { resolveDecision } from "../src/orchestration-scheduler.mjs";
 
 console.log("Running integration-manager.test.mjs...");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "integration-manager-"));
 const timestamp = "2026-08-23T00:00:00.000Z";
 
-function createFixture(objectiveId, { verificationExitCode = 0, n02State = "DONE", missingRun = false } = {}) {
+function createFixture(objectiveId, { verificationExitCode = 0, n02State = "DONE", missingRun = false, maxSubtasks = 4, maxRepairCycles = 1, repairCycle = null } = {}) {
   const vaultRoot = path.join(root, `${objectiveId}-vault`);
   const runsRoot = path.join(root, `${objectiveId}-runs`);
   const repository = path.join(root, `${objectiveId}-repository`);
@@ -42,6 +43,7 @@ function createFixture(objectiveId, { verificationExitCode = 0, n02State = "DONE
     ],
     approvedBy: "human:integration", approvedAt: timestamp, createdAt: timestamp, updatedAt: timestamp,
   };
+  if (repairCycle !== null) plan.repair = { cycle: repairCycle, maxCycles: maxRepairCycles };
   plan.planFingerprint = planFingerprint(plan);
   const taskMappings = ["N01", "N02", "N03"].map((nodeId, index) => {
     const taskId = `TASK-${index + 1}`;
@@ -51,9 +53,9 @@ function createFixture(objectiveId, { verificationExitCode = 0, n02State = "DONE
   });
   createObjective({ runsRoot, record: {
     schemaVersion: 1, revision: 0, objectiveId, mode: "EXISTING_PROJECT", state: "RUNNING", request: "Run integration.", requestedBy: "human:integration", projectIds: ["integration-project"], freshProject: null,
-    activePlanId: plan.planId, activeOrchestrationId: `orch-${objectiveId}`, budget: { maxSubtasks: 3, maxParallelAgents: 1, maxRetriesPerNode: 1, maxTotalTokens: null, deadlineAt: null }, createdAt: timestamp, updatedAt: timestamp,
+    activePlanId: plan.planId, activeOrchestrationId: `orch-${objectiveId}`, budget: { maxSubtasks, maxParallelAgents: 1, maxRetriesPerNode: 1, maxRepairCycles, maxTotalTokens: null, deadlineAt: null }, createdAt: timestamp, updatedAt: timestamp,
   } });
-  createPlan({ runsRoot, record: plan, validationOptions: { knownProjectIds: ["integration-project"], budget: { maxSubtasks: 3, maxParallelAgents: 1, maxRetriesPerNode: 1 } } });
+  createPlan({ runsRoot, record: plan, validationOptions: { knownProjectIds: ["integration-project"], budget: { maxSubtasks, maxParallelAgents: 1, maxRetriesPerNode: 1, maxRepairCycles } } });
   createDecision({ runsRoot, record: {
     schemaVersion: 1, revision: 0, decisionId: `decision-plan-approval-${plan.planId}`, objectiveId, nodeId: null, runId: null, type: "PLAN_APPROVAL", state: "RESOLVED",
     evidence: { planId: plan.planId, planFingerprint: plan.planFingerprint }, requestedAction: "Approve integration plan.", allowedChoices: ["APPROVE", "CANCEL"], creator: "SYSTEM", createdAt: timestamp,
@@ -113,6 +115,44 @@ try {
   const missing = await startIntegration({ ...missingFixture, verificationRunner: async () => ({ exitCode: 0 }) });
   assert.equal(missing.action, "INTEGRATION_BLOCKED");
   assert.ok(missing.decision.evidence.sourceErrors.some((error) => error.code === "SOURCE_RUN_MISSING"));
+
+  const infrastructureRecovery = recoverIntegration({ ...missingFixture });
+  assert.equal(infrastructureRecovery.action, "INTEGRATION_SAFE_RETRY_RECOMMENDED");
+  assert.equal(infrastructureRecovery.classification.classification, "INFRASTRUCTURE");
+  const infrastructureDecision = resolveDecision({
+    runsRoot: missingFixture.runsRoot,
+    decisionId: missing.decision.decisionId,
+    action: "RETRY",
+    resolvedBy: "human:integration",
+  });
+  assert.equal(infrastructureDecision.decision.resolution.action, "RETRY");
+
+  const repairFixture = createFixture("obj-integration-repair", { maxSubtasks: 4, maxRepairCycles: 1 });
+  const failedForRepair = await startIntegration({ ...repairFixture, verificationRunner: async () => ({ exitCode: 1, stderrTail: "integration mismatch" }) });
+  const repair = recoverIntegration({ ...repairFixture });
+  assert.equal(repair.action, "INTEGRATION_REPAIR_PROPOSED");
+  assert.equal(repair.classification.classification, "PRODUCT");
+  assert.equal(repair.plan.revision, 2);
+  assert.equal(repair.plan.state, "PENDING_APPROVAL");
+  assert.equal(repair.objective.state, "PLAN_REVIEW");
+  assert.equal(repair.repairNode.nodeId, "REPAIR-1");
+  assert.deepEqual(repair.repairNode.allowedPaths, ["src/feature.js"]);
+  assert.deepEqual(repair.repairNode.verification, ["test"]);
+  assert.equal(repair.plan.repair.parentPlanId, `plan-${repairFixture.objectiveId}-r1`);
+  assert.deepEqual(repair.plan.repair.sourceRunIds, failedForRepair.evidence.sourceRunIds);
+  assert.equal(getPlan(repairFixture.runsRoot, `plan-${repairFixture.objectiveId}-r1`).state, "SUPERSEDED");
+  assert.equal(repair.decision.evidence.repairProposal.planId, repair.plan.planId);
+  assert.throws(
+    () => resolveDecision({ runsRoot: repairFixture.runsRoot, decisionId: failedForRepair.decision.decisionId, action: "RETRY", resolvedBy: "human:integration" }),
+    (error) => error.code === "INTEGRATION_RETRY_NOT_SAFE",
+  );
+
+  const exhaustedFixture = createFixture("obj-integration-repair-exhausted", { maxSubtasks: 4, maxRepairCycles: 1, repairCycle: 1 });
+  await startIntegration({ ...exhaustedFixture, verificationRunner: async () => ({ exitCode: 1, stderrTail: "integration mismatch" }) });
+  assert.throws(
+    () => recoverIntegration({ ...exhaustedFixture }),
+    (error) => error.code === "MAX_REPAIR_CYCLES_EXCEEDED",
+  );
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }
