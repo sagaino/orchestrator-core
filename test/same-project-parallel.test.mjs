@@ -92,12 +92,12 @@ function createFixture(name) {
 
 try {
   const defaultFixture = createFixture("default");
-  const defaultTick = schedulerTick({ vaultRoot: defaultFixture.vaultRoot, runsRoot: defaultFixture.runsRoot, enabled: true, env: { ORCHESTRATOR_MAX_PARALLEL_JOBS: "2" }, now: new Date(timestamp) });
+  const defaultTick = schedulerTick({ vaultRoot: defaultFixture.vaultRoot, runsRoot: defaultFixture.runsRoot, enabled: true, env: { ORCHESTRATOR_MAX_PARALLEL_JOBS: "2", ORCHESTRATOR_PARALLEL_OBJECTIVES: "1" }, now: new Date(timestamp) });
   assert.equal(defaultTick.queued.length, 1, "same-project parallel remains disabled by default");
   assert.equal(defaultTick.queued[0].sameProjectParallel, false);
 
   const fixture = createFixture("enabled");
-  const env = { ORCHESTRATOR_MAX_PARALLEL_JOBS: "2", ORCHESTRATOR_SAME_PROJECT_PARALLEL: "1" };
+  const env = { ORCHESTRATOR_MAX_PARALLEL_JOBS: "2", ORCHESTRATOR_PARALLEL_OBJECTIVES: "1", ORCHESTRATOR_SAME_PROJECT_PARALLEL: "1" };
   const first = schedulerTick({ vaultRoot: fixture.vaultRoot, runsRoot: fixture.runsRoot, enabled: true, env, now: new Date(timestamp) });
   assert.deepEqual(first.queued.map((job) => job.nodeId), ["N01", "N02"]);
   assert.ok(first.queued.every((job) => job.sameProjectParallel === true));

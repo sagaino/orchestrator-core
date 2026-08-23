@@ -68,6 +68,7 @@ try {
     plan: { ...node, nodes: [{ ...node, projectId: "app" }] },
     runsRoot,
     projectSignalsByProject: { app: ["backend"] },
+    env: { ORCHESTRATOR_SKILLS_ENABLED: "1", ORCHESTRATOR_SKILL_AUTO_ROUTING: "1" },
   });
   assert.equal(routedPlan.registryRevision, 4);
   assert.equal(routedPlan.plan.nodes[0].skills[0].skillId, "backend-review");

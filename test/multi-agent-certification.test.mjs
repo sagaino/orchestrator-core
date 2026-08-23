@@ -106,7 +106,7 @@ function finishNode(fixture, job, nodeId, startedAt, finishedAt, changedPaths, t
 
 try {
   const fixture = createFixture();
-  const env = { ORCHESTRATOR_MAX_PARALLEL_JOBS: "2", ORCHESTRATOR_SAME_PROJECT_PARALLEL: "1" };
+  const env = { ORCHESTRATOR_MAX_PARALLEL_JOBS: "2", ORCHESTRATOR_PARALLEL_OBJECTIVES: "1", ORCHESTRATOR_SAME_PROJECT_PARALLEL: "1" };
   const first = schedulerTick({ vaultRoot: fixture.vaultRoot, runsRoot: fixture.runsRoot, enabled: true, env, now: new Date(timestamp) });
   assert.deepEqual(first.queued.map((job) => job.nodeId), ["N01", "N02"]);
   const firstA = claimNextJob(fixture.runsRoot, { allowSameProjectParallel: true });

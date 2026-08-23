@@ -53,7 +53,8 @@ try {
   createObjective({ runsRoot, record: { schemaVersion: 1, revision: 0, objectiveId, mode: "EXISTING_PROJECT", state: "PLAN_REVIEW", request: "Assign a bounded backend skill.", requestedBy: "local:operator", projectIds: ["skill-project"], freshProject: null, activePlanId: planId, activeOrchestrationId: null, budget, createdAt: timestamp, updatedAt: timestamp } });
   createPlan({ runsRoot, record: { schemaVersion: 1, revision: 1, planId, objectiveId, state: "PENDING_APPROVAL", summary: "Skill assignment fixture.", architectureDecisions: [], assumptions: [], clarificationNeeded: false, clarificationQuestion: null, projects: ["skill-project"], nodes: [node], integration: { required: false, projectVerification: [], crossProjectVerification: [], previewRequired: false }, risk: "LOW", complexity: "LOW", approvedBy: null, approvedAt: null, createdAt: timestamp, updatedAt: timestamp }, validationOptions: { knownProjectIds: ["skill-project"], budget } });
 
-  const assigned = assignPlanSkills({ runsRoot, objectiveId, assignments: [{ nodeId: "N01", skillId: "backend-review", version: "1.0.0" }], assignedBy: "local:operator", registryPath, projectSignalsByProject: { "skill-project": ["backend"] }, now: new Date("2026-08-23T01:00:00.000Z") });
+  const enabledEnv = { ORCHESTRATOR_SKILLS_ENABLED: "1" };
+  const assigned = assignPlanSkills({ runsRoot, objectiveId, assignments: [{ nodeId: "N01", skillId: "backend-review", version: "1.0.0" }], assignedBy: "local:operator", registryPath, projectSignalsByProject: { "skill-project": ["backend"] }, env: enabledEnv, now: new Date("2026-08-23T01:00:00.000Z") });
   assert.equal(assigned.plan.revision, 2);
   assert.equal(assigned.plan.nodes[0].skills[0].skillId, "backend-review");
   assert.equal(assigned.plan.nodes[0].skills[0].checksum, checksum);
@@ -66,7 +67,12 @@ try {
   assert.equal(approved.plan.state, "APPROVED");
 
   assert.throws(
-    () => assignPlanSkills({ runsRoot, objectiveId, assignments: [{ nodeId: "N01", skillId: "backend-review", version: "1.0.0", checksum: "0".repeat(64) }], assignedBy: "local:operator", registryPath, projectSignalsByProject: { "skill-project": ["backend"] } }),
+    () => assignPlanSkills({ runsRoot, objectiveId, assignments: [{ nodeId: "N01", skillId: "backend-review", version: "1.0.0" }], assignedBy: "local:operator", registryPath, env: {} }),
+    (error) => error.code === "FEATURE_DISABLED",
+  );
+
+  assert.throws(
+    () => assignPlanSkills({ runsRoot, objectiveId, assignments: [{ nodeId: "N01", skillId: "backend-review", version: "1.0.0", checksum: "0".repeat(64) }], assignedBy: "local:operator", registryPath, projectSignalsByProject: { "skill-project": ["backend"] }, env: enabledEnv }),
     (error) => error.code === "SKILL_ASSIGNMENT_PLAN_NOT_EDITABLE",
   );
 } finally {

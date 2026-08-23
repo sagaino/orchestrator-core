@@ -10,6 +10,7 @@ import { detectWriteConflicts, topologicalOrder } from "./task-graph.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 import { classifyIntegrationFailure, getIntegrationEvidence } from "./integration-manager.mjs";
 import { budgetSnapshot, ensureBudgetExceededDecision, resolveBudgetExceededDecision } from "./orchestration-budget.mjs";
+import { parallelObjectivesEnabled } from "./rollout-flags.mjs";
 
 const ACTIVE_NODE_STATES = new Set(["QUEUED", "RUNNING", "REVIEW"]);
 const TERMINAL_NODE_STATES = new Set(["DONE", "FAILED", "CANCELLED"]);
@@ -617,6 +618,15 @@ function activeQueueJob(job) {
   return [JOB_STATES.QUEUED, JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job?.state);
 }
 
+function orchestrationHasActiveWork(orchestration) {
+  return Object.values(orchestration?.nodes ?? {}).some((node) => ACTIVE_NODE_STATES.has(node?.state));
+}
+
+export function objectiveSchedulingAllowed({ orchestration, activeObjectiveIds = new Set(), allowParallelObjectives = false } = {}) {
+  if (allowParallelObjectives || activeObjectiveIds.size === 0) return true;
+  return activeObjectiveIds.has(orchestration?.objectiveId);
+}
+
 function scheduleOne({ vaultRoot = null, runsRoot, orchestration, now, env = process.env }) {
   if (TERMINAL_ORCHESTRATION_STATES.has(orchestration.state)) return { orchestration, queued: [], changed: false };
   const objective = getObjective(runsRoot, orchestration.objectiveId);
@@ -767,10 +777,18 @@ export function schedulerTick({ vaultRoot = null, runsRoot, enabled = orchestrat
     waitTimeoutMs: 0,
   }, () => {
     const results = [];
-    for (const orchestration of listOrchestrations(runsRoot)) {
+    const orchestrations = listOrchestrations(runsRoot);
+    const allowParallelObjectives = parallelObjectivesEnabled(env);
+    const activeObjectiveIds = new Set(orchestrations.filter(orchestrationHasActiveWork).map((orchestration) => orchestration.objectiveId));
+    for (const orchestration of orchestrations) {
+      if (!objectiveSchedulingAllowed({ orchestration, activeObjectiveIds, allowParallelObjectives })) {
+        results.push({ orchestrationId: orchestration.orchestrationId, orchestration, queued: [], blocked: [], budgetBlockers: [], completed: [], changed: false, blockedReason: "PARALLEL_OBJECTIVES_DISABLED" });
+        continue;
+      }
       try {
         const result = scheduleOne({ vaultRoot, runsRoot, orchestration, now, env });
         results.push({ orchestrationId: orchestration.orchestrationId, ...result });
+        if (!allowParallelObjectives && result.queued?.length) activeObjectiveIds.add(orchestration.objectiveId);
       } catch (error) {
         results.push({ orchestrationId: orchestration.orchestrationId, error: { code: error.code ?? "SCHEDULER_ERROR", message: error.message } });
       }
@@ -783,6 +801,7 @@ export function schedulerTick({ vaultRoot = null, runsRoot, enabled = orchestrat
       blocked: results.filter((result) => result.orchestration?.state === "BLOCKED").map((result) => result.orchestrationId),
       budgetBlockers: results.flatMap((result) => result.budgetBlockers ?? []),
       completed: results.filter((result) => result.orchestration?.state === "DONE").map((result) => result.orchestrationId),
+      admissionBlocked: results.filter((result) => result.blockedReason === "PARALLEL_OBJECTIVES_DISABLED").map((result) => result.orchestrationId),
       results,
     };
   });

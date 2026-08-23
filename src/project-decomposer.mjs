@@ -403,6 +403,7 @@ export async function decomposeProject({
       plan: parsed,
       runsRoot,
       projectSignalsByProject: projectSignalsForProjects(projectContexts),
+      env,
     })
     : { plan: parsed, registryState: "UNAVAILABLE", registryRevision: null, routes: [] };
   return {

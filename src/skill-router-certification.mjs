@@ -48,6 +48,7 @@ export function buildSkillRouterCertificationEvidence({
   projectSignalsByProject = {},
   allowedCapabilitiesByNode = {},
   noMatchPolicy = "GENERAL_ROLE_AGENT",
+  env = process.env,
   now = new Date(),
 } = {}) {
   if (!registryPath || !runsRoot || !pilotPlan || !Array.isArray(pilotPlan.nodes)) throw new Error("Skill Router certification membutuhkan registryPath, runsRoot, dan pilotPlan.");
@@ -61,6 +62,7 @@ export function buildSkillRouterCertificationEvidence({
     projectSignalsByProject,
     allowedCapabilitiesByNode,
     noMatchPolicy,
+    env,
   });
   const routes = routed.routes;
   const routeByNode = new Map(routes.map((route) => [route.nodeId, route]));
