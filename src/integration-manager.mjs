@@ -13,6 +13,13 @@ import { createPlanRevision } from "./plan-lifecycle.mjs";
 import { buildIntegrationEvidence, buildRunEvidence } from "./interaction.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 import { aiRepairApplicable, runProcess } from "./executor.mjs";
+import { topologicalOrder } from "./task-graph.mjs";
+import {
+  applyIntegrationPatches,
+  cleanupIntegrationWorkspace,
+  prepareIntegrationWorkspace,
+  rollbackIntegrationWorkspace,
+} from "./integration-workspace.mjs";
 
 const INTEGRATION_LEASE = {
   namespace: "integration-manager",
@@ -107,7 +114,16 @@ function sourceRunEvidence({ runsRoot, jobs, runs, orchestration, nodes }) {
     const evidence = run ? buildRunEvidence(run, { runsRoot }) : null;
     const commit = run?.execution?.result?.gitCommit ?? run?.execution?.workspace?.gitCommit ?? null;
     if (run && !commit?.commitHash) errors.push({ nodeId: node.nodeId, code: "SOURCE_COMMIT_MISSING", runId: run.runId });
-    sourceRuns.push({ nodeId: node.nodeId, allowedPaths: node.allowedPaths ?? [], job, run, evidence, commit });
+    sourceRuns.push({
+      nodeId: node.nodeId,
+      projectId: run?.project?.id ?? node.projectId ?? null,
+      allowedPaths: node.allowedPaths ?? [],
+      changedPaths: run?.execution?.scopeAudit?.changedPaths ?? [],
+      job,
+      run,
+      evidence,
+      commit,
+    });
   }
   return { sourceRuns, errors };
 }
@@ -599,6 +615,141 @@ export async function startIntegration({ runsRoot, vaultRoot, objectiveId, orche
   artifact.projectBaselines = Object.fromEntries(projects.map((project) => [project.id, baseline(project.repository)]));
   return finalizeIntegration({ runsRoot, contextValue, artifact, verification, sourceErrors: sourceEvidence.errors, now });
 }
+
+function aggregateSourcePatches({ source, sourceEvidence, plan, projectId }) {
+  const byNode = new Map(sourceEvidence.sourceRuns.map((item) => [item.nodeId, item]));
+  const sourceIds = new Set(source.nodes.filter((node) => node.projectId === projectId).map((node) => node.nodeId));
+  const ordered = topologicalOrder(plan.nodes).filter((nodeId) => sourceIds.has(nodeId));
+  return ordered.map((nodeId) => {
+    const item = byNode.get(nodeId);
+    const commit = item?.commit;
+    const parentCommit = commit?.parentCommit ?? item?.run?.execution?.workspace?.baseCommit ?? null;
+    if (!item?.run?.runId || !commit?.commitHash || !parentCommit) {
+      fail(`Patch aggregate untuk node ${nodeId} belum memiliki provenance Git lengkap.`, {
+        code: "INTEGRATION_PATCH_PROVENANCE_MISSING",
+        details: { nodeId, runId: item?.run?.runId ?? null, commitHash: commit?.commitHash ?? null, parentCommit },
+      });
+    }
+    return {
+      nodeId,
+      runId: item.run.runId,
+      commitHash: commit.commitHash,
+      parentCommit,
+      changedPaths: item.changedPaths,
+    };
+  });
+}
+
+export async function prepareAggregateIntegration({
+  runsRoot,
+  vaultRoot,
+  objectiveId,
+  orchestrationId = null,
+  projectId = null,
+  verificationRunner = null,
+  now = new Date(),
+} = {}) {
+  if (!runsRoot || !vaultRoot || !objectiveId) fail("Aggregate integration membutuhkan runsRoot, vaultRoot, dan objectiveId.", { code: "INTEGRATION_ARGUMENTS_REQUIRED" });
+  const contextValue = context({ runsRoot, objectiveId, orchestrationId });
+  const source = sourceNodes(contextValue.plan);
+  const sourceProjects = [...new Set(source.nodes.map((node) => node.projectId))];
+  const targetProjectId = projectId ?? sourceProjects[0];
+  if (!targetProjectId || sourceProjects.some((candidate) => candidate !== targetProjectId)) {
+    fail("Aggregate integration V2-052 hanya menerima source patches dari satu project.", {
+      code: "INTEGRATION_AGGREGATE_ONE_PROJECT_REQUIRED",
+      details: { sourceProjects, projectId: targetProjectId },
+    });
+  }
+  const project = listProjects(vaultRoot).projects.find((candidate) => candidate.id === targetProjectId);
+  if (!project) fail(`Project aggregate tidak ditemukan: ${targetProjectId}`, { code: "PROJECT_NOT_FOUND", details: { projectId: targetProjectId } });
+  const jobs = listJobs(runsRoot);
+  const runs = listRuns(runsRoot);
+  const sourceEvidence = sourceRunEvidence({ runsRoot, jobs, runs, orchestration: contextValue.orchestration, nodes: source.nodes });
+  if (sourceEvidence.errors.length) {
+    fail("Aggregate integration membutuhkan seluruh source run DONE dengan provenance lengkap.", {
+      code: "INTEGRATION_SOURCE_EVIDENCE_INCOMPLETE",
+      details: { sourceErrors: sourceEvidence.errors },
+    });
+  }
+  const patches = aggregateSourcePatches({ source, sourceEvidence, plan: contextValue.plan, projectId: targetProjectId });
+  const firstSource = sourceEvidence.sourceRuns.find((item) => item.projectId === targetProjectId);
+  const baseCommit = firstSource?.run?.execution?.workspace?.baseCommit ?? patches[0]?.parentCommit ?? null;
+  const workspace = prepareIntegrationWorkspace({
+    runsRoot,
+    orchestrationId: contextValue.orchestration.orchestrationId,
+    projectId: targetProjectId,
+    sourceRepository: project.repository,
+    baseCommit,
+    objectiveId: contextValue.objective.objectiveId,
+    planId: contextValue.plan.planId,
+  });
+  let applied;
+  try {
+    applied = applyIntegrationPatches({
+      workspace,
+      patches,
+      allowedPaths: contextValue.plan.nodes.filter((node) => node.projectId === targetProjectId).flatMap((node) => node.allowedPaths ?? []),
+    });
+  } catch (error) {
+    throw error;
+  }
+
+  const requests = verificationRequests({ plan: contextValue.plan, projects: [{ ...project, repository: applied.workspacePath }] });
+  const verification = [];
+  for (const request of requests) {
+    try {
+      verification.push(await runApprovedVerification({
+        project: { ...project, repository: applied.workspacePath },
+        script: request.script,
+        verificationRunner,
+      }));
+    } catch (error) {
+      verification.push({ ...request, command: `npm run ${request.script}`, exitCode: null, status: "FAIL", error: error.message });
+    }
+  }
+  const artifactFile = artifactPath(runsRoot, contextValue.orchestration.orchestrationId);
+  const artifact = buildIntegrationEvidence({
+    objective: contextValue.objective,
+    plan: contextValue.plan,
+    orchestration: contextValue.orchestration,
+    sourceRuns: sourceEvidence.sourceRuns,
+    verification,
+    artifactPath: artifactFile,
+  });
+  artifact.aggregateWorkspace = {
+    path: path.relative(runsRoot, applied.workspacePath).split(path.sep).join("/"),
+    baseCommit: applied.baseCommit,
+    state: applied.state,
+    objectiveId: contextValue.objective.objectiveId,
+    planId: contextValue.plan.planId,
+    patchRunIds: patches.map((patch) => patch.runId),
+    changedPaths: applied.changedPaths,
+    previewPath: applied.aggregateDiffPath
+      ? path.relative(runsRoot, applied.aggregateDiffPath).split(path.sep).join("/")
+      : null,
+  };
+  artifact.projectBaselines = { [targetProjectId]: applied.frozenSourceHead };
+  artifact.status = verification.every((result) => result.status === "PASS") ? "READY_FOR_ACCEPTANCE" : "BLOCKED";
+  let finalWorkspace = applied;
+  if (artifact.status === "BLOCKED") {
+    const rolledBack = rollbackIntegrationWorkspace({ workspace: applied, reason: "Aggregate verification failed." });
+    artifact.aggregateWorkspace.state = rolledBack.state;
+    artifact.aggregateWorkspace.rollbackPath = rolledBack.rollbackArtifactPath
+      ? path.relative(runsRoot, rolledBack.rollbackArtifactPath).split(path.sep).join("/")
+      : null;
+    finalWorkspace = rolledBack;
+  }
+  writeJsonAtomic(artifactFile, { ...artifact, generatedAt: iso(now) });
+  return {
+    action: artifact.status === "READY_FOR_ACCEPTANCE" ? "AGGREGATE_INTEGRATION_READY" : "AGGREGATE_INTEGRATION_BLOCKED",
+    workspace: finalWorkspace,
+    evidence: artifact,
+    sourceRuns: sourceEvidence.sourceRuns,
+    verification,
+  };
+}
+
+export { applyIntegrationPatches, cleanupIntegrationWorkspace, prepareIntegrationWorkspace, rollbackIntegrationWorkspace };
 
 export function getIntegrationEvidence({ runsRoot, orchestrationId } = {}) {
   const filePath = artifactPath(runsRoot, orchestrationId);
