@@ -241,6 +241,44 @@ export function resetFailedTaskToBacklog({ vaultRoot, manifest, retriedBy = "use
   return { taskPath, status: "BACKLOG", updatedAt: at };
 }
 
+export function resetOrchestrationTaskToBacklog({
+  vaultRoot,
+  task,
+  failedJobId = null,
+  retriedBy = "user",
+  reason,
+  now = new Date(),
+}) {
+  if (!vaultRoot || !task?.path) {
+    throw new Error("Retry orchestration membutuhkan vault root dan materialized task path.");
+  }
+  const taskPath = path.join(vaultRoot, task.path);
+  let content = fs.readFileSync(taskPath, "utf8");
+  const currentStatus = content.match(/^status:\s*([^\s#]+)/m)?.[1]?.toUpperCase();
+  if (currentStatus === "BACKLOG") {
+    return { taskPath, status: "BACKLOG", updatedAt: null, alreadyReset: true };
+  }
+  if (currentStatus !== "FAILED") {
+    throw new Error(`Retry orchestration membutuhkan task FAILED; status saat ini ${currentStatus ?? "UNKNOWN"}.`);
+  }
+
+  const at = (now instanceof Date ? now : new Date(now)).toISOString();
+  const actor = String(retriedBy).trim() || "user";
+  const retryReason = String(reason ?? "").trim() || "Retry node orchestration setelah human review.";
+  const jobReference = failedJobId ? ` setelah job \`${failedJobId}\`` : "";
+  content = replaceFrontmatterField(content, "status", "BACKLOG");
+  content = replaceFrontmatterField(content, "updated", at.slice(0, 10));
+  const marker = "## Orchestrator Run Log";
+  const entry = `- [${at}] Human \`${actor}\` meminta retry node orchestration${jobReference}: \`FAILED → BACKLOG\`. ${retryReason}`;
+  content = content.includes(marker)
+    ? `${content.trimEnd()}\n${entry}\n`
+    : `${content.trimEnd()}\n\n---\n\n${marker}\n${entry}\n`;
+  const temporaryPath = `${taskPath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+  fs.writeFileSync(temporaryPath, content, "utf8");
+  fs.renameSync(temporaryPath, taskPath);
+  return { taskPath, status: "BACKLOG", updatedAt: at, alreadyReset: false };
+}
+
 function updateTaskForClaim(filePath, manifest, claimedAt) {
   let content = fs.readFileSync(filePath, "utf8");
   content = replaceFrontmatterField(content, "status", "IN_PROGRESS");

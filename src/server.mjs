@@ -983,6 +983,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       const body = await parseJsonBody(req);
       const resolver = services?.resolveDecision ?? resolveDecision;
       const result = resolver({
+        vaultRoot,
         runsRoot,
         decisionId: params.id,
         action: body?.action,
