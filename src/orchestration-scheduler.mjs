@@ -1,8 +1,8 @@
 import { getObjective, updateObjective } from "./objective-store.mjs";
 import { getPlan } from "./plan-store.mjs";
-import { getDecision } from "./decision-store.mjs";
-import { listOrchestrations, updateOrchestration } from "./orchestration-store.mjs";
-import { enqueueTaskJob, JOB_STATES, listJobs } from "./job-queue.mjs";
+import { createDecision, getDecision, updateDecision } from "./decision-store.mjs";
+import { getOrchestration, listOrchestrations, updateOrchestration } from "./orchestration-store.mjs";
+import { enqueueTaskJob, JOB_STATES, listJobs, updateJob } from "./job-queue.mjs";
 import { topologicalOrder } from "./task-graph.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 
@@ -54,12 +54,10 @@ function jobsByNode(jobs, orchestrationId) {
     if (orchestrationIdFromJob(job) !== orchestrationId) continue;
     const nodeId = nodeIdFromJob(job);
     if (!nodeId) continue;
-    const previous = result.get(nodeId);
-    const isActive = [JOB_STATES.QUEUED, JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state);
-    const previousIsActive = previous && [JOB_STATES.QUEUED, JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(previous.state);
-    if (!previous || (isActive && !previousIsActive) || String(job.createdAt).localeCompare(String(previous.createdAt)) > 0) {
-      result.set(nodeId, job);
-    }
+    const entries = result.get(nodeId) ?? [];
+    entries.push(job);
+    entries.sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+    result.set(nodeId, entries);
   }
   return result;
 }
@@ -71,6 +69,7 @@ function jobToNodeState(job) {
   if (job.state === JOB_STATES.REVIEW) return "REVIEW";
   if (job.state === JOB_STATES.DONE) return "DONE";
   if (job.state === JOB_STATES.FAILED) return "FAILED";
+  if (job.state === JOB_STATES.CANCELLED) return "CANCELLED";
   return null;
 }
 
@@ -94,7 +93,8 @@ function reconcileRuntimeNodes({ plan, orchestration, jobs }) {
     const node = plan.nodes.find((candidate) => candidate.nodeId === nodeId);
     const current = nextNodes[nodeId];
     if (!current) fail(`Runtime orchestration kehilangan node ${nodeId}.`, { code: "ORCHESTRATION_NODE_MISSING", details: { code: "ORCHESTRATION_NODE_MISSING", nodeId } });
-    const job = jobsForNode.get(nodeId);
+    const currentAttempt = Number(current.attempt ?? 1);
+    const job = (jobsForNode.get(nodeId) ?? []).find((candidate) => Number(candidate.attempt ?? 1) === currentAttempt) ?? null;
     const jobState = jobToNodeState(job);
     if (jobState && current.state !== jobState) {
       current.state = jobState;
@@ -179,7 +179,11 @@ function queueCandidate({ runsRoot, objective, plan, orchestration, nodeId, task
       details: { code: "MATERIALIZED_TASK_MISSING", nodeId },
     });
   }
-  const metadata = { ...approvalMetadata({ objective: { ...objective, runsRoot }, plan, orchestrationId: orchestration.orchestrationId }), nodeId };
+  const metadata = {
+    ...approvalMetadata({ objective: { ...objective, runsRoot }, plan, orchestrationId: orchestration.orchestrationId }),
+    nodeId,
+    attempt: orchestration.nodes[nodeId]?.attempt ?? 1,
+  };
   const queued = enqueueTaskJob({
     runsRoot,
     projectId: task.projectId,
@@ -218,6 +222,246 @@ function updateObjectiveState({ runsRoot, objective, orchestration }) {
     objectiveId: objective.objectiveId,
     expectedRevision: objective.revision,
     update: (record) => ({ ...record, state: desiredState }),
+  });
+}
+
+function orchestrationContext({ runsRoot, objectiveId = null, orchestrationId = null }) {
+  const objective = objectiveId ? getObjective(runsRoot, objectiveId) : null;
+  const directOrchestration = orchestrationId ? getOrchestration(runsRoot, orchestrationId) : null;
+  const resolvedObjective = objective ?? (directOrchestration ? getObjective(runsRoot, directOrchestration.objectiveId) : null);
+  if (!resolvedObjective) fail("Objective orchestration tidak ditemukan.", { statusCode: 404, code: "OBJECTIVE_NOT_FOUND", details: { code: "OBJECTIVE_NOT_FOUND", objectiveId, orchestrationId } });
+  const resolvedOrchestrationId = orchestrationId ?? resolvedObjective.activeOrchestrationId;
+  if (!resolvedOrchestrationId) fail("Objective belum memiliki orchestration aktif.", { code: "ORCHESTRATION_NOT_FOUND", details: { code: "ORCHESTRATION_NOT_FOUND", objectiveId: resolvedObjective.objectiveId } });
+  const orchestration = directOrchestration?.orchestrationId === resolvedOrchestrationId
+    ? directOrchestration
+    : getOrchestration(runsRoot, resolvedOrchestrationId);
+  if (!orchestration) fail(`Orchestration tidak ditemukan: ${resolvedOrchestrationId}`, { statusCode: 404, code: "ORCHESTRATION_NOT_FOUND", details: { code: "ORCHESTRATION_NOT_FOUND", orchestrationId: resolvedOrchestrationId } });
+  const plan = getPlan(runsRoot, orchestration.planId, planOptions(resolvedObjective));
+  if (!plan || plan.objectiveId !== resolvedObjective.objectiveId) fail("Orchestration plan tidak cocok dengan objective.", { code: "PLAN_OBJECTIVE_MISMATCH", details: { code: "PLAN_OBJECTIVE_MISMATCH" } });
+  return { objective: resolvedObjective, orchestration, plan };
+}
+
+function retryDecisionId(orchestrationId, nodeId, nextAttempt) {
+  return `decision-node-retry-${orchestrationId}-${nodeId}-a${nextAttempt}`;
+}
+
+export function requestNodeRetry({ runsRoot, objectiveId, orchestrationId = null, nodeId, reason, requestedBy, now = new Date() } = {}) {
+  const identity = String(requestedBy ?? "").trim();
+  if (!identity) fail("Human retry identity wajib berasal dari operator session.", { statusCode: 403, code: "RETRIER_REQUIRED", details: { code: "RETRIER_REQUIRED" } });
+  const requestedNodeId = String(nodeId ?? "").trim();
+  if (!requestedNodeId) fail("nodeId wajib diisi untuk retry.", { code: "NODE_ID_REQUIRED", details: { code: "NODE_ID_REQUIRED" } });
+  const text = String(reason ?? "").trim();
+  if (!text) fail("Alasan retry wajib diisi.", { code: "RETRY_REASON_REQUIRED", details: { code: "RETRY_REASON_REQUIRED" } });
+  return withDurableLease({
+    runsRoot,
+    namespace: "orchestration-scheduler",
+    key: "global",
+    purpose: "request orchestration node retry",
+    ttlMs: 60_000,
+    reclaimDeadOwner: true,
+    waitTimeoutMs: 2_000,
+  }, () => {
+    const context = orchestrationContext({ runsRoot, objectiveId, orchestrationId });
+    const runtime = context.orchestration.nodes[requestedNodeId];
+    if (!runtime) fail(`Node tidak ditemukan: ${requestedNodeId}`, { statusCode: 404, code: "NODE_NOT_FOUND", details: { code: "NODE_NOT_FOUND", nodeId: requestedNodeId } });
+    if (runtime.state !== "FAILED") fail(`Retry hanya dapat diminta untuk node FAILED; state saat ini ${runtime.state}.`, { code: "NODE_RETRY_NOT_ALLOWED", details: { code: "NODE_RETRY_NOT_ALLOWED", nodeId: requestedNodeId, state: runtime.state } });
+    const retryCount = Math.max(0, Number(runtime.attempt ?? 1) - 1);
+    if (retryCount >= context.objective.budget.maxRetriesPerNode) {
+      fail(`Batas retry node tercapai: ${retryCount}/${context.objective.budget.maxRetriesPerNode}.`, { statusCode: 409, code: "MAX_RETRIES_EXCEEDED", details: { code: "MAX_RETRIES_EXCEEDED", nodeId: requestedNodeId, retryCount, maxRetriesPerNode: context.objective.budget.maxRetriesPerNode } });
+    }
+    const nextAttempt = Number(runtime.attempt ?? 1) + 1;
+    const decisionId = retryDecisionId(context.orchestration.orchestrationId, requestedNodeId, nextAttempt);
+    const existing = getDecision(runsRoot, decisionId);
+    if (existing) return { decision: existing, orchestration: context.orchestration, alreadyRequested: true };
+    const decision = createDecision({
+      runsRoot,
+      record: {
+        schemaVersion: 1,
+        revision: 0,
+        decisionId,
+        objectiveId: context.objective.objectiveId,
+        nodeId: requestedNodeId,
+        runId: runtime.runId ?? null,
+        type: "NODE_RETRY",
+        state: "OPEN",
+        evidence: {
+          orchestrationId: context.orchestration.orchestrationId,
+          planId: context.plan.planId,
+          planFingerprint: context.plan.planFingerprint,
+          nodeId: requestedNodeId,
+          currentAttempt: runtime.attempt,
+          nextAttempt,
+          reason: text,
+          maxRetriesPerNode: context.objective.budget.maxRetriesPerNode,
+        },
+        requestedAction: "Retry this failed orchestration node after human review",
+        allowedChoices: ["RETRY", "CANCEL"],
+        creator: "SYSTEM",
+        createdAt: nowIso(now),
+        resolution: null,
+      },
+    });
+    return { decision, orchestration: context.orchestration, alreadyRequested: false };
+  });
+}
+
+function clearFailedDescendantBlockers({ plan, nodes, failedNodeId }) {
+  const ordered = topologicalOrder(plan.nodes);
+  const descendants = new Set();
+  for (const nodeId of ordered) {
+    const node = plan.nodes.find((candidate) => candidate.nodeId === nodeId);
+    if (node.dependsOn.some((dependency) => dependency === failedNodeId || descendants.has(dependency))) descendants.add(nodeId);
+  }
+  for (const nodeId of descendants) {
+    const node = nodes[nodeId];
+    if (node?.state === "BLOCKED" && node.lastError?.code === "PREDECESSOR_FAILED") {
+      node.lastError = null;
+      node.blockedBy = plan.nodes.find((candidate) => candidate.nodeId === nodeId)?.dependsOn
+        .map((dependency) => nodes[dependency]?.taskId)
+        .filter(Boolean) ?? [];
+    }
+  }
+}
+
+export function applyNodeRetryDecision({ runsRoot, decisionId, now = new Date() } = {}) {
+  return withDurableLease({
+    runsRoot,
+    namespace: "orchestration-scheduler",
+    key: "global",
+    purpose: "apply orchestration node retry decision",
+    ttlMs: 60_000,
+    reclaimDeadOwner: true,
+    waitTimeoutMs: 2_000,
+  }, () => {
+    const decision = getDecision(runsRoot, decisionId);
+    if (!decision) fail(`Decision tidak ditemukan: ${decisionId}`, { statusCode: 404, code: "DECISION_NOT_FOUND", details: { code: "DECISION_NOT_FOUND", decisionId } });
+    if (decision.type !== "NODE_RETRY" || decision.state !== "RESOLVED" || decision.resolution?.action !== "RETRY") {
+      fail("Decision retry belum resolved dengan action RETRY.", { code: "RETRY_DECISION_NOT_RESOLVED", details: { code: "RETRY_DECISION_NOT_RESOLVED", decisionId } });
+    }
+    if (decision.retryAppliedAt) return { decision, orchestration: orchestrationContext({ runsRoot, objectiveId: decision.objectiveId }).orchestration, alreadyApplied: true };
+    const context = orchestrationContext({ runsRoot, objectiveId: decision.objectiveId });
+    const runtime = context.orchestration.nodes[decision.nodeId];
+    if (!runtime) fail(`Node tidak ditemukan: ${decision.nodeId}`, { statusCode: 404, code: "NODE_NOT_FOUND", details: { code: "NODE_NOT_FOUND", nodeId: decision.nodeId } });
+    if (context.orchestration.state === "CANCELLED") fail("Orchestration sudah dibatalkan; retry tidak diizinkan.", { code: "ORCHESTRATION_CANCELLED", details: { code: "ORCHESTRATION_CANCELLED" } });
+    if (runtime.state !== "FAILED") fail(`Node tidak lagi berada pada state FAILED; state saat ini ${runtime.state}.`, { code: "NODE_RETRY_NOT_ALLOWED", details: { code: "NODE_RETRY_NOT_ALLOWED", nodeId: decision.nodeId, state: runtime.state } });
+    if (decision.evidence?.planFingerprint !== context.plan.planFingerprint || decision.evidence?.planId !== context.plan.planId) {
+      fail("Decision retry berasal dari plan fingerprint yang stale.", { statusCode: 409, code: "STALE_RETRY_DECISION", details: { code: "STALE_RETRY_DECISION", decisionId } });
+    }
+    const retryCount = Math.max(0, Number(runtime.attempt ?? 1) - 1);
+    if (retryCount >= context.objective.budget.maxRetriesPerNode) fail("Batas retry node tercapai.", { statusCode: 409, code: "MAX_RETRIES_EXCEEDED", details: { code: "MAX_RETRIES_EXCEEDED", nodeId: decision.nodeId } });
+    const nodes = structuredClone(context.orchestration.nodes);
+    nodes[decision.nodeId] = {
+      ...nodes[decision.nodeId],
+      state: "READY",
+      attempt: Number(nodes[decision.nodeId].attempt ?? 1) + 1,
+      jobId: null,
+      runId: null,
+      blockedBy: [],
+      lastError: null,
+    };
+    clearFailedDescendantBlockers({ plan: context.plan, nodes, failedNodeId: decision.nodeId });
+    const orchestration = updateOrchestration({
+      runsRoot,
+      orchestrationId: context.orchestration.orchestrationId,
+      expectedRevision: context.orchestration.revision,
+      now,
+      update: (record) => ({ ...record, nodes, state: "RUNNING", retry: { nodeId: decision.nodeId, attempt: nodes[decision.nodeId].attempt, decisionId, retriedAt: nowIso(now), retriedBy: decision.resolution.resolvedBy } }),
+      validationOptions: { plan: context.plan },
+    });
+    const appliedDecision = updateDecision({
+      runsRoot,
+      decisionId,
+      expectedRevision: decision.revision,
+      now,
+      update: (record) => ({ ...record, retryAppliedAt: nowIso(now), retryAttempt: nodes[decision.nodeId].attempt }),
+    });
+    return { decision: appliedDecision, orchestration, alreadyApplied: false };
+  });
+}
+
+export function resolveDecision({ runsRoot, decisionId, action, resolvedBy, now = new Date() } = {}) {
+  const selectedAction = String(action ?? "").trim().toUpperCase();
+  const identity = String(resolvedBy ?? "").trim();
+  if (!identity) fail("Human decision identity wajib berasal dari operator session.", { statusCode: 403, code: "DECISION_RESOLVER_REQUIRED", details: { code: "DECISION_RESOLVER_REQUIRED" } });
+  const decision = getDecision(runsRoot, decisionId);
+  if (!decision) fail(`Decision tidak ditemukan: ${decisionId}`, { statusCode: 404, code: "DECISION_NOT_FOUND", details: { code: "DECISION_NOT_FOUND", decisionId } });
+  if (!decision.allowedChoices.includes(selectedAction)) fail(`Action decision tidak diizinkan: ${selectedAction}.`, { statusCode: 422, code: "DECISION_ACTION_NOT_ALLOWED", details: { code: "DECISION_ACTION_NOT_ALLOWED", allowedChoices: decision.allowedChoices } });
+  if (decision.state === "RESOLVED") {
+    if (decision.resolution?.action !== selectedAction) fail("Decision sudah resolved dengan action berbeda.", { statusCode: 409, code: "DECISION_ALREADY_RESOLVED", details: { code: "DECISION_ALREADY_RESOLVED", decisionId } });
+    if (decision.type === "NODE_RETRY" && selectedAction === "RETRY" && !decision.retryAppliedAt) return applyNodeRetryDecision({ runsRoot, decisionId, now });
+    return { decision, alreadyResolved: true };
+  }
+  if (decision.state !== "OPEN") fail(`Decision tidak dapat di-resolve dari state ${decision.state}.`, { code: "DECISION_NOT_OPEN", details: { code: "DECISION_NOT_OPEN", decisionId } });
+  const resolved = updateDecision({
+    runsRoot,
+    decisionId,
+    expectedRevision: decision.revision,
+    now,
+    update: (record) => ({ ...record, state: "RESOLVED", resolution: { action: selectedAction, resolvedBy: identity, resolvedAt: nowIso(now) } }),
+  });
+  if (resolved.type === "NODE_RETRY" && selectedAction === "RETRY") return applyNodeRetryDecision({ runsRoot, decisionId, now });
+  return { decision: resolved, alreadyResolved: false };
+}
+
+export function cancelOrchestration({ runsRoot, objectiveId, orchestrationId = null, cancelledBy, now = new Date() } = {}) {
+  const identity = String(cancelledBy ?? "").trim();
+  if (!identity) fail("Human cancellation identity wajib berasal dari operator session.", { statusCode: 403, code: "CANCELLER_REQUIRED", details: { code: "CANCELLER_REQUIRED" } });
+  return withDurableLease({
+    runsRoot,
+    namespace: "orchestration-scheduler",
+    key: "global",
+    purpose: "cancel orchestration",
+    ttlMs: 60_000,
+    reclaimDeadOwner: true,
+    waitTimeoutMs: 2_000,
+  }, () => {
+    const context = orchestrationContext({ runsRoot, objectiveId, orchestrationId });
+    if (context.orchestration.state === "CANCELLED") return { orchestration: context.orchestration, alreadyCancelled: true };
+    const jobs = listJobs(runsRoot);
+    const nodes = structuredClone(context.orchestration.nodes);
+    const ordered = topologicalOrder(context.plan.nodes);
+    const activeNodeIds = new Set(Object.entries(nodes).filter(([, node]) => ["RUNNING", "REVIEW"].includes(node.state)).map(([nodeId]) => nodeId));
+    for (const [nodeId, runtime] of Object.entries(nodes)) {
+      const job = jobs.find((candidate) => candidate.orchestrationId === context.orchestration.orchestrationId && candidate.nodeId === nodeId && candidate.jobId === runtime.jobId);
+      if (!job || ![JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state)) continue;
+      activeNodeIds.add(nodeId);
+      runtime.state = job.state === JOB_STATES.REVIEW ? "REVIEW" : "RUNNING";
+      runtime.runId = job.runId ?? runtime.runId ?? null;
+    }
+    for (const nodeId of ordered) {
+      const node = context.plan.nodes.find((candidate) => candidate.nodeId === nodeId);
+      const runtime = nodes[nodeId];
+      if (runtime.state === "DONE" || runtime.state === "CANCELLED") continue;
+      if (activeNodeIds.has(nodeId)) {
+        runtime.lastError = { code: "CANCELLATION_REQUESTED", message: "Node sedang aktif; cancellation tidak memutus run yang mungkin sudah mengubah repository." };
+        continue;
+      }
+      if (runtime.state === "QUEUED") {
+        const job = jobs.find((candidate) => candidate.jobId === runtime.jobId);
+        if (job && job.state === JOB_STATES.QUEUED) updateJob(runsRoot, job.jobId, { state: JOB_STATES.CANCELLED, error: "Cancelled by human orchestration decision." });
+        runtime.state = "CANCELLED";
+        runtime.lastError = { code: "CANCELLED_BY_HUMAN", cancelledBy: identity };
+        continue;
+      }
+      const activePredecessor = node.dependsOn.some((dependency) => activeNodeIds.has(dependency) || nodes[dependency]?.lastError?.code === "CANCELLATION_ACTIVE_NODE");
+      if (activePredecessor) {
+        runtime.state = "BLOCKED";
+        runtime.lastError = { code: "CANCELLATION_ACTIVE_NODE", message: "Descendant tetap blocked karena predecessor aktif dibiarkan selesai." };
+        runtime.blockedBy = node.dependsOn.map((dependency) => nodes[dependency]?.taskId).filter(Boolean);
+      } else {
+        runtime.state = "CANCELLED";
+        runtime.lastError = { code: "CANCELLED_BY_HUMAN", cancelledBy: identity };
+      }
+    }
+    const orchestration = updateOrchestration({
+      runsRoot,
+      orchestrationId: context.orchestration.orchestrationId,
+      expectedRevision: context.orchestration.revision,
+      now,
+      update: (record) => ({ ...record, nodes, state: "CANCELLED", cancellation: { cancelledBy: identity, cancelledAt: nowIso(now), policy: "CANCEL_PENDING_PRESERVE_ACTIVE" } }),
+      validationOptions: { plan: context.plan },
+    });
+    return { orchestration, alreadyCancelled: false };
   });
 }
 

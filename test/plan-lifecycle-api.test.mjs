@@ -171,6 +171,19 @@ try {
   assert.equal(clarified.data.data.objective.state, "PLAN_REVIEW");
   assert.equal(getPlan(runsRoot, changed.data.data.plan.planId).state, "SUPERSEDED");
 
+  const expanded = await request("POST", `/api/objectives/${objectiveId}/scope-expansion`, {
+    body: { reason: "Human review added an integration verification requirement." },
+    idempotencyKey: "lifecycle-scope-r4",
+  });
+  assert.equal(expanded.response.status, 201);
+  assert.equal(expanded.data.data.plan.planId, `plan-${objectiveId}-r4`);
+  assert.equal(expanded.data.data.decision.type, "SCOPE_EXPANSION");
+  assert.equal(getPlan(runsRoot, clarified.data.data.plan.planId).state, "SUPERSEDED");
+
+  const decisions = await request("GET", `/api/decisions?objectiveId=${objectiveId}`);
+  assert.equal(decisions.response.status, 200);
+  assert.equal(decisions.data.data.some((decision) => decision.type === "SCOPE_EXPANSION"), true);
+
   const cancelled = await request("POST", `/api/objectives/${objectiveId}/cancel`, { body: {}, idempotencyKey: "lifecycle-cancel" });
   assert.equal(cancelled.response.status, 201);
   assert.equal(cancelled.data.data.objective.state, "CANCELLED");
@@ -181,7 +194,7 @@ try {
 
   const read = await request("GET", `/api/objectives/${objectiveId}`);
   assert.equal(read.response.status, 200);
-  assert.equal(read.data.data.plan.planId, clarified.data.data.plan.planId);
+  assert.equal(read.data.data.plan.planId, expanded.data.data.plan.planId);
   assert.equal(read.data.data.decisions.length >= 4, true);
 } finally {
   if (service) await service.stop();
