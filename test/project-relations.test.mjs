@@ -87,6 +87,11 @@ try {
   assert.deepEqual(saved.relationships[0].verification, ["test:contract"]);
   assert.match(fs.readFileSync(path.join(vaultRoot, "project-registry.md"), "utf8"), /relationships/);
   assert.deepEqual(getProjectRelationships({ vaultRoot, projectId: "frontend" }).relationships, saved.relationships);
+  assert.deepEqual(getProjectRelationships({ vaultRoot, projectId: "frontend" }).effectiveRelationships, saved.relationships);
+  const backendRelationships = getProjectRelationships({ vaultRoot, projectId: "backend" });
+  assert.deepEqual(backendRelationships.relationships, []);
+  assert.deepEqual(backendRelationships.incomingRelationships, [{ type: "PROVIDES_API", targetProjectId: "frontend", contractPaths: ["a/client.ts", "z/openapi.yaml"], verification: ["test:contract"] }]);
+  assert.deepEqual(backendRelationships.effectiveRelationships, backendRelationships.incomingRelationships);
   assert.deepEqual(listProjects(vaultRoot).projects.find((project) => project.id === "frontend").relationships, saved.relationships);
   for (const [id, repository] of Object.entries(repositories)) assert.equal(fs.readFileSync(path.join(repository, "marker.txt"), "utf8"), sourceSnapshots[id]);
 
@@ -118,6 +123,9 @@ try {
   const getResponse = await request({ requestPath: "/api/projects/frontend/relationships", port, token });
   assert.equal(getResponse.status, 200);
   assert.deepEqual(getResponse.data.data.relationships, saved.relationships);
+  const backendGetResponse = await request({ requestPath: "/api/projects/backend/relationships", port, token });
+  assert.equal(backendGetResponse.status, 200);
+  assert.deepEqual(backendGetResponse.data.data.effectiveRelationships, backendRelationships.effectiveRelationships);
 
   const confirmationResponse = await request({
     method: "PUT",
@@ -151,4 +159,3 @@ try {
 }
 
 console.log("project-relations.test.mjs: All tests passed!");
-
