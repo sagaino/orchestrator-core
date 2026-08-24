@@ -48,6 +48,7 @@ import { projectSignalsForProjects } from "./skill-assignment.mjs";
 import { materializeApprovedPlan } from "./task-materializer.mjs";
 import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orchestration-scheduler.mjs";
 import { getIntegrationEvidence, recoverIntegration, startIntegration } from "./integration-manager.mjs";
+import { selectAggregatePreviewCandidates } from "./objective-post-run.mjs";
 import { acceptObjective, buildObjectiveEvidence } from "./objective-evidence.mjs";
 import { buildObjectiveVisualEvidence } from "./objective-visual-evidence.mjs";
 import { acceptDeliveryCertification, buildDeliveryCertificationEvidence, createDeliveryCertification, getDeliveryCertification, listDeliveryCertifications } from "./delivery-certification.mjs";
@@ -83,19 +84,6 @@ function integrationEvidenceDto(evidence) {
   };
 }
 
-const NON_RUNNABLE_PREVIEW_NODE_TYPES = new Set(["INTEGRATION", "VERIFICATION"]);
-
-function hasIsolatedWorkspace(runsRoot, runId) {
-  if (!runsRoot || !runId) return false;
-  try {
-    const run = getRun(runsRoot, runId);
-    const workspacePath = run?.execution?.workspace?.path;
-    return typeof workspacePath === "string" && fs.existsSync(workspacePath);
-  } catch {
-    return false;
-  }
-}
-
 function enrichRunOrchestrationMetadata(run, vaultRoot) {
   if (!run?.task?.path || !vaultRoot) return run;
   try {
@@ -118,38 +106,7 @@ function enrichRunOrchestrationMetadata(run, vaultRoot) {
   }
 }
 
-export function selectAggregatePreviewCandidates({ evidence, projects = [], runsRoot } = {}) {
-  const projectById = new Map(projects.map((project) => [project.id, project]));
-  const nodesByProject = new Map();
-  for (const node of evidence?.nodes ?? []) {
-    if (node.state !== "DONE" || !node.runId || !node.projectId) continue;
-    if (NON_RUNNABLE_PREVIEW_NODE_TYPES.has(String(node.type ?? "").toUpperCase())) continue;
-    const current = nodesByProject.get(node.projectId);
-    const currentHasWorkspace = current ? hasIsolatedWorkspace(runsRoot, current.runId) : false;
-    const candidateHasWorkspace = hasIsolatedWorkspace(runsRoot, node.runId);
-    if (!current || (!currentHasWorkspace && candidateHasWorkspace) || (!currentHasWorkspace && !candidateHasWorkspace)) {
-      nodesByProject.set(node.projectId, { node, hasWorkspace: candidateHasWorkspace });
-    }
-  }
-
-  const planApproved = evidence?.plan?.state === "APPROVED";
-  return (evidence?.objective?.projectIds ?? []).map((projectId) => {
-    const selected = nodesByProject.get(projectId);
-    const project = projectById.get(projectId);
-    const repository = selected?.hasWorkspace ? null : project?.repository ?? null;
-    const available = Boolean(selected && (selected.hasWorkspace || repository));
-    return {
-      projectId,
-      runId: selected?.node.runId ?? null,
-      repository,
-      environment: { ORCHESTRATOR_RUNS: path.resolve(runsRoot) },
-      unavailableReason: planApproved ? (available ? null : "NO_RUNNABLE_PREVIEW_SOURCE") : "PLAN_NOT_APPROVED",
-      unavailableMessage: planApproved
-        ? (available ? null : "Tidak ada isolated workspace atau repository terdaftar untuk preview project ini.")
-        : "Preview hanya tersedia setelah plan objective di-approve.",
-    };
-  });
-}
+export { selectAggregatePreviewCandidates };
 
 function skillUsage({ runsRoot, skills }) {
   const usage = Object.fromEntries(skills.map((skill) => [`${skill.skillId}@${skill.version}`, {
