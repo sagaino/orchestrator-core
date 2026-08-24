@@ -21,6 +21,7 @@ try {
   assert.equal(report.threatModel.noCriticalHigh, true);
   assert.equal(report.threatModel.mediumControlled, true);
   assert.equal(report.checks.nonInjectedGateEvidence, false);
+  assert.equal(typeof report.evidence.releaseArtifact.valid, "boolean");
   assert.equal(verifyFinalV1Certificate({ reportPath: report.reportPath }).integrityValid, true);
   assert.equal(verifyFinalV1Certificate({ reportPath: report.reportPath }).valid, false);
   fs.appendFileSync(report.reportPath, "tamper");
