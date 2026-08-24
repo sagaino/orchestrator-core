@@ -6,6 +6,20 @@ import { getRun } from "./run-manager.mjs";
 
 export const OBJECTIVE_VISUAL_EVIDENCE_SCHEMA_VERSION = 1;
 
+const NON_VISUAL_NODE_TYPES = new Set(["VERIFICATION", "DIAGNOSTIC"]);
+const NON_VISUAL_NODE_ROLES = new Set(["BACKEND", "DATABASE", "TESTING", "DIAGNOSTIC"]);
+
+/**
+ * Visual capture is meaningful for UI-facing work only. Backend/API,
+ * verification, and diagnostic nodes must provide automated/API evidence
+ * instead of being blocked by a screenshot gate.
+ */
+export function nodeRequiresVisualEvidence(node = {}) {
+  const type = String(node.type ?? "").toUpperCase();
+  const role = String(node.role ?? "").toUpperCase();
+  return !NON_VISUAL_NODE_TYPES.has(type) && !NON_VISUAL_NODE_ROLES.has(role);
+}
+
 function runState(runsRoot, runId) {
   try { return getRun(runsRoot, runId)?.state ?? null; } catch { return null; }
 }
@@ -47,6 +61,9 @@ export function buildObjectiveVisualEvidence({ runsRoot, objective, nodes = [] }
     return {
       nodeId: node.nodeId,
       projectId: node.projectId,
+      type: node.type ?? null,
+      role: node.role ?? null,
+      visualEvidenceRequired: nodeRequiresVisualEvidence(node),
       runId: node.runId,
       nodeState: node.state,
       runState: state,
@@ -59,6 +76,7 @@ export function buildObjectiveVisualEvidence({ runsRoot, objective, nodes = [] }
         status: capture.status,
         comparisonStatus: capture.comparisonStatus,
         viewportNames: capture.viewports?.map((item) => item.name) ?? [],
+        evidenceIds: capture.viewports?.map((item) => item.evidenceId).filter(Boolean) ?? [],
         completedAt: capture.completedAt,
       })),
       revisions: revisions.map((revision) => ({
@@ -85,6 +103,9 @@ export function buildObjectiveVisualEvidence({ runsRoot, objective, nodes = [] }
     };
   });
   const evidenceRefs = reportNodes.flatMap((node) => node.evidenceRefs);
+  const latestCaptureRefs = reportNodes.map((node) => node.captureRefs[0]).filter(Boolean);
+  const latestEvidenceIds = new Set(latestCaptureRefs.flatMap((capture) => capture.evidenceIds ?? []));
+  const latestEvidenceCount = latestCaptureRefs.length > 0 ? latestEvidenceIds.size : evidenceRefs.length;
   const projects = new Set(reportNodes.map((node) => node.projectId).filter(Boolean));
   const routes = new Set(evidenceRefs.map((item) => item.route));
   const viewports = new Set(evidenceRefs.map((item) => item.viewport?.name).filter(Boolean));
@@ -98,9 +119,16 @@ export function buildObjectiveVisualEvidence({ runsRoot, objective, nodes = [] }
       projectCount: projects.size,
       evidenceCount: evidenceRefs.length,
       captureCount: reportNodes.reduce((count, node) => count + node.captureRefs.length, 0),
+      latestEvidenceCount,
+      latestCaptureCount: latestCaptureRefs.length,
+      historicalEvidenceCount: evidenceRefs.length,
+      historicalCaptureCount: reportNodes.reduce((count, node) => count + node.captureRefs.length, 0),
+      latestCaptureAt: latestCaptureRefs.map((capture) => capture.completedAt).filter(Boolean).sort().at(-1) ?? null,
       revisionCount: reportNodes.reduce((count, node) => count + node.revisions.length, 0),
       verificationCheckCount: reportNodes.reduce((count, node) => count + node.verificationChecks.length, 0),
       certifiedNodeCount: reportNodes.filter((node) => node.certification?.status === "CERTIFIED").length,
+      visualRequiredNodeCount: reportNodes.filter((node) => node.visualEvidenceRequired).length,
+      nonVisualNodeCount: reportNodes.filter((node) => !node.visualEvidenceRequired).length,
       routes: [...routes],
       viewports: [...viewports],
     },

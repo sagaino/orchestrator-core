@@ -74,13 +74,14 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
   const preview = latestPreview(previews);
   const runCleanups = runs.map(runCleanup);
   const knowledge = runs.map(knowledgeCapture);
-  const visualNodes = (visual?.nodes ?? []).filter((node) => node.runId);
+  const visualNodes = (visual?.nodes ?? []).filter((node) => node.runId && node.visualEvidenceRequired !== false);
+  const nonVisualNodes = (visual?.nodes ?? []).filter((node) => node.runId && node.visualEvidenceRequired === false);
   const previewRequired = objectiveEvidence.plan?.integration?.previewRequired === true;
   // Visual capture is part of the preview delivery path. Plans that explicitly
   // opt out of aggregate preview (for example read-only API diagnostics) must
   // not be blocked by an evidence type they did not request.
-  const visualEvidenceRequired = previewRequired;
-  const visualEvidenceComplete = visualNodes.length > 0 && visualNodes.every((node) => {
+  const visualEvidenceRequired = previewRequired && visualNodes.length > 0;
+  const visualEvidenceComplete = !visualEvidenceRequired || visualNodes.every((node) => {
     const visualRefsPresent = node.evidenceRefs.length > 0 || node.captureRefs.length > 0;
     const checksPass = node.verificationChecks.every((check) => check.status === "PASS" || check.passed === true);
     return visualRefsPresent && checksPass;
@@ -94,7 +95,7 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
     result("EXECUTION_COMPLETE", objectiveEvidence.orchestration?.state === "DONE" && objectiveEvidence.nodes.length > 0 && objectiveEvidence.nodes.every((node) => node.state === "DONE"), "All objective nodes and orchestration are done.", { orchestrationState: objectiveEvidence.orchestration?.state ?? null, nodeStates: objectiveEvidence.nodes.map((node) => ({ nodeId: node.nodeId, state: node.state })) }),
     result("INTEGRATION_COMPLETE", integrationComplete, "Required integration verification is passing or not required.", { required: integrationRequired, status: objectiveEvidence.verification.integration.status }),
     result("PREVIEW_COMPLETE", previewComplete, previewRequired ? "Aggregate preview reached READY for the objective." : "Aggregate preview is not required by the approved plan.", { required: previewRequired, sessionId: preview?.sessionId ?? null, status: previewRequired ? (preview?.status ?? "MISSING") : "NOT_REQUIRED", previewCount: preview?.previews?.length ?? 0, unavailableCount: preview?.unavailable?.length ?? 0 }),
-    result("VISUAL_E2E_EVIDENCE_COMPLETE", !visualEvidenceRequired || visualEvidenceComplete, visualEvidenceRequired ? "Every runnable node has linked visual evidence and passing node checks." : "Visual/E2E capture evidence is not required by the approved plan.", { required: visualEvidenceRequired, evidenceCount: visual?.summary?.evidenceCount ?? 0, captureCount: visual?.summary?.captureCount ?? 0, nodeCount: visualNodes.length }),
+    result("VISUAL_E2E_EVIDENCE_COMPLETE", visualEvidenceComplete, visualEvidenceRequired ? "Every visual-applicable node has linked visual evidence and passing node checks." : "Visual capture is not required for the applicable nodes in the approved plan.", { required: visualEvidenceRequired, evidenceCount: visual?.summary?.evidenceCount ?? 0, captureCount: visual?.summary?.captureCount ?? 0, nodeCount: visualNodes.length, excludedNodeCount: nonVisualNodes.length, excludedNodeIds: nonVisualNodes.map((node) => node.nodeId) }),
     result("HUMAN_ACCEPTANCE_COMPLETE", automatic || objectiveEvidence.finalAcceptance.state === "ACCEPTED", automatic ? "Final acceptance is handled by the single final user gate." : "Objective final acceptance is recorded by a human gate.", { required: !automatic, state: objectiveEvidence.finalAcceptance.state, acceptedBy: objectiveEvidence.finalAcceptance.acceptedBy ?? null, acceptedAt: objectiveEvidence.finalAcceptance.acceptedAt ?? null }),
     result("CLEANUP_COMPLETE", cleanupComplete, previewRequired ? "Aggregate preview and isolated run workspaces are cleaned." : "Isolated run workspaces are cleaned; aggregate preview was not required.", { previewRequired, previewCleanup: previewRequired ? (preview?.cleanup?.status ?? "MISSING") : "NOT_REQUIRED", runCleanups }),
     result("KNOWLEDGE_CAPTURE_COMPLETE", knowledge.length > 0 && knowledge.every((item) => item.approved && item.synced), "Knowledge approval/capture is present for every source run.", { knowledge }),

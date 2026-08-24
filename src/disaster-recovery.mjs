@@ -53,6 +53,7 @@ function safeRemovePartial(parent, target) {
 
 function walkDataset(root, { excludeTopLevel = new Set() } = {}) {
   const entries = [];
+  const skippedEntries = [];
   const walk = (directory, relativeDirectory = "") => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       if (!relativeDirectory && excludeTopLevel.has(entry.name)) continue;
@@ -60,7 +61,15 @@ function walkDataset(root, { excludeTopLevel = new Set() } = {}) {
       const absolute = path.join(directory, entry.name);
       const stat = fs.lstatSync(absolute);
       if (stat.isSymbolicLink()) {
-        throw new Error(`Backup menolak symlink agar restore tidak dapat keluar dari root: ${absolute}`);
+        // Symlinks are intentionally not copied or followed. Workspaces commonly
+        // contain dependency links such as node_modules/.bin/*, while restoring
+        // them could recreate links that escape the backup root.
+        skippedEntries.push({
+          path: relative,
+          type: "symlink",
+          reason: "SYMLINK_SKIPPED",
+        });
+        continue;
       }
       if (stat.isDirectory()) {
         entries.push({ path: relative, type: "directory", mode: stat.mode & 0o777 });
@@ -77,11 +86,15 @@ function walkDataset(root, { excludeTopLevel = new Set() } = {}) {
     }
   };
   walk(root);
-  return entries.sort((left, right) => left.path.localeCompare(right.path));
+  return {
+    entries: entries.sort((left, right) => left.path.localeCompare(right.path)),
+    skippedEntries: skippedEntries.sort((left, right) => left.path.localeCompare(right.path)),
+  };
 }
 
 function copyDataset({ dataset, sourceRoot, dataRoot, excludeTopLevel }) {
-  const entries = walkDataset(sourceRoot, { excludeTopLevel });
+  const walked = walkDataset(sourceRoot, { excludeTopLevel });
+  const entries = walked.entries;
   const destinationRoot = path.join(dataRoot, dataset);
   fs.mkdirSync(destinationRoot, { recursive: true, mode: 0o700 });
   let totalBytes = 0;
@@ -106,7 +119,14 @@ function copyDataset({ dataset, sourceRoot, dataRoot, excludeTopLevel }) {
     fileCount += 1;
   }
 
-  return { dataset, sourceRoot: path.resolve(sourceRoot), fileCount, totalBytes, entries };
+  return {
+    dataset,
+    sourceRoot: path.resolve(sourceRoot),
+    fileCount,
+    totalBytes,
+    entries,
+    skippedEntries: walked.skippedEntries,
+  };
 }
 
 export function assessDisasterRecoveryReadiness({ runsRoot, runtime = null } = {}) {

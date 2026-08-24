@@ -26,11 +26,27 @@ try {
   fs.mkdirSync(runsRoot, { recursive: true });
   fs.writeFileSync(path.join(vaultRoot, "notes", "readme.md"), "backup evidence\n");
   fs.writeFileSync(path.join(runsRoot, "runtime-state.json"), "quiescent\n");
+  fs.mkdirSync(path.join(runsRoot, "workspaces", "task", "node_modules", ".bin"), { recursive: true });
+  fs.writeFileSync(path.join(runsRoot, "workspace-target.txt"), "dependency target\n");
+  fs.symlinkSync(
+    "../../../workspace-target.txt",
+    path.join(runsRoot, "workspaces", "task", "node_modules", ".bin", "acorn"),
+  );
 
   const backup = createDisasterRecoveryBackup({ vaultRoot, runsRoot, backupRoot, runtime: { running: false }, now });
   const registered = readBackupStatus(runsRoot);
   assert.equal(registered.backupId, backup.backupId);
   assert.equal(registered.independentTarget, true);
+  const manifest = JSON.parse(fs.readFileSync(path.join(backup.backupPath, "manifest.json"), "utf8"));
+  const skippedSymlink = manifest.datasets
+    .find((dataset) => dataset.dataset === "runs")
+    ?.skippedEntries
+    ?.find((entry) => entry.path.endsWith("node_modules/.bin/acorn"));
+  assert.deepEqual(skippedSymlink, {
+    path: "workspaces/task/node_modules/.bin/acorn",
+    type: "symlink",
+    reason: "SYMLINK_SKIPPED",
+  });
 
   const schedulePreview = previewBackupSchedule({ runsRoot, vaultRoot, backupRoot, intervalHours: 12, now });
   assert.equal(schedulePreview.intervalHours, 12);

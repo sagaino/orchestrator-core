@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listProjects } from "./core.mjs";
-import { getObjective, listObjectives } from "./objective-store.mjs";
+import { getObjective, listObjectives, updateObjective } from "./objective-store.mjs";
 import { getPlan } from "./plan-store.mjs";
 import { getOrchestration, listOrchestrations, updateOrchestration } from "./orchestration-store.mjs";
 import { getRun } from "./run-manager.mjs";
@@ -23,6 +23,7 @@ const POST_RUN_LEASE = {
   reclaimDeadOwner: true,
   waitTimeoutMs: 0,
 };
+const POST_RUN_TERMINAL_OBJECTIVE_STATES = new Set(["BLOCKED", "RESULT_REVIEW", "DONE", "CANCELLED"]);
 
 function iso(now) {
   return (now instanceof Date ? now : new Date(now)).toISOString();
@@ -102,6 +103,18 @@ function updatePostRunAutomation({ runsRoot, orchestration, plan, now, patch }) 
       },
     }),
     validationOptions: { plan },
+  });
+}
+
+function syncObjectiveState({ runsRoot, objectiveId, state, now }) {
+  const current = getObjective(runsRoot, objectiveId);
+  if (current.state === state || POST_RUN_TERMINAL_OBJECTIVE_STATES.has(current.state) && current.state !== "RUNNING") return current;
+  return updateObjective({
+    runsRoot,
+    objectiveId,
+    expectedRevision: current.revision,
+    now,
+    patch: { state },
   });
 }
 
@@ -207,8 +220,16 @@ async function processObjective({ runsRoot, vaultRoot, objective, now, services 
   }
 
   const previous = initial.orchestration.postRunAutomation ?? {};
-  if (previous.status === "COMPLETED" || !retryDue(previous, now)) {
-    return { action: "SKIPPED", objectiveId: objective.objectiveId, reason: previous.status === "COMPLETED" ? "ALREADY_COMPLETED" : "RETRY_BACKOFF" };
+  if (previous.status === "COMPLETED") {
+    syncObjectiveState({ runsRoot, objectiveId: objective.objectiveId, state: "RESULT_REVIEW", now });
+    return { action: "SKIPPED", objectiveId: objective.objectiveId, reason: "ALREADY_COMPLETED" };
+  }
+  if (previous.status === "BLOCKED") {
+    syncObjectiveState({ runsRoot, objectiveId: objective.objectiveId, state: "BLOCKED", now });
+    return { action: "SKIPPED", objectiveId: objective.objectiveId, reason: "BLOCKED_REQUIRES_REVIEW" };
+  }
+  if (!retryDue(previous, now)) {
+    return { action: "SKIPPED", objectiveId: objective.objectiveId, reason: "RETRY_BACKOFF" };
   }
 
   let orchestration = updatePostRunAutomation({
@@ -241,6 +262,7 @@ async function processObjective({ runsRoot, vaultRoot, objective, now, services 
       }
       if (["INTEGRATION_BLOCKED"].includes(integration?.action)) {
         const blocked = updatePostRunAutomation({ runsRoot, orchestration: integration.orchestration ?? getOrchestration(runsRoot, orchestration.orchestrationId), plan: initial.plan, now, patch: { status: "BLOCKED", phase: "INTEGRATION", error: "Integration membutuhkan resolusi blocker." } });
+        syncObjectiveState({ runsRoot, objectiveId: objective.objectiveId, state: "BLOCKED", now });
         return { action: "BLOCKED", objectiveId: objective.objectiveId, phase: "INTEGRATION", orchestration: blocked, decisionId: integration.decision?.decisionId ?? null };
       }
       certificate = certificationBlockers({ runsRoot, objectiveId: objective.objectiveId });
@@ -258,9 +280,11 @@ async function processObjective({ runsRoot, vaultRoot, objective, now, services 
     certificate = certificationBlockers({ runsRoot, objectiveId: objective.objectiveId });
     if (certificate.blockers.length) {
       const blocked = updatePostRunAutomation({ runsRoot, orchestration: getOrchestration(runsRoot, orchestration.orchestrationId, { plan: initial.plan }), plan: initial.plan, now, patch: { status: "BLOCKED", phase: "DELIVERY_GATES", blockers: certificate.blockers, error: "Delivery evidence masih memiliki blocker." } });
+      syncObjectiveState({ runsRoot, objectiveId: objective.objectiveId, state: "BLOCKED", now });
       return { action: "BLOCKED", objectiveId: objective.objectiveId, phase: "DELIVERY_GATES", blockers: certificate.blockers, orchestration: blocked };
     }
     const completed = updatePostRunAutomation({ runsRoot, orchestration: getOrchestration(runsRoot, orchestration.orchestrationId, { plan: initial.plan }), plan: initial.plan, now, patch: { status: "COMPLETED", phase: "READY_FOR_FINAL_ACCEPTANCE", completedAt: iso(now), blockers: [], error: null } });
+    syncObjectiveState({ runsRoot, objectiveId: objective.objectiveId, state: "RESULT_REVIEW", now });
     return { action: "COMPLETED", objectiveId: objective.objectiveId, orchestration: completed };
   } catch (error) {
     const current = getOrchestration(runsRoot, orchestration.orchestrationId, { plan: initial.plan });
@@ -275,6 +299,7 @@ async function processObjective({ runsRoot, vaultRoot, objective, now, services 
         error: { code: error.code ?? "POST_RUN_AUTOMATION_ERROR", message: error.message, details: error.details ?? null },
       },
     });
+    syncObjectiveState({ runsRoot, objectiveId: objective.objectiveId, state: "BLOCKED", now });
     return { action: "EXCEPTION", objectiveId: objective.objectiveId, phase: failed.postRunAutomation?.phase ?? null, error: error.message, orchestration: failed };
   }
 }
@@ -282,7 +307,7 @@ async function processObjective({ runsRoot, vaultRoot, objective, now, services 
 export async function automaticPostRunTick({ vaultRoot, runsRoot, env = process.env, now = new Date(), services = {} } = {}) {
   if (!autopilotAfterPlanApprovalEnabled(env)) return { enabled: false, completed: [], blocked: [], exceptions: [], skipped: [] };
   const results = { enabled: true, completed: [], blocked: [], exceptions: [], skipped: [] };
-  const objectives = listObjectives(runsRoot).filter((objective) => !["CANCELLED", "DONE"].includes(objective.state) && objective.activeOrchestrationId);
+  const objectives = listObjectives(runsRoot).filter((objective) => !["BLOCKED", "RESULT_REVIEW", "CANCELLED", "DONE"].includes(objective.state) && objective.activeOrchestrationId);
   for (const objective of objectives) {
     let orchestration = null;
     try {
