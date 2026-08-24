@@ -16,7 +16,7 @@ import { assertExecutionAllowed } from "./recovery-mode.mjs";
 import { redactSensitive, redactText } from "./redaction.mjs";
 import { operationsReadiness } from "./operations-governance.mjs";
 import { automaticNodeRecoveryTick, orchestrationSchedulerEnabled, orchestrationSchedulerTick } from "./orchestration-scheduler.mjs";
-import { autopilotAfterPlanApprovalEnabled } from "./approval-policy.mjs";
+import { autopilotAfterPlanApprovalEnabled, automaticReviewFinalizationEnabled } from "./approval-policy.mjs";
 import { automaticPostRunTick } from "./objective-post-run.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -76,7 +76,7 @@ export function orchestrationManagedJob(job) {
 }
 
 export function shouldAutomaticallyFinalizeReview({ job, manifest, env = process.env } = {}) {
-  return autopilotAfterPlanApprovalEnabled(env)
+  return automaticReviewFinalizationEnabled(env)
     && orchestrationManagedJob(job)
     && AUTOMATIC_REVIEW_STATES.has(manifest?.state);
 }
@@ -538,7 +538,7 @@ export async function automaticReviewFinalizationTick({
   env = process.env,
   now = new Date(),
 } = {}) {
-  if (!autopilotAfterPlanApprovalEnabled(env)) {
+  if (!automaticReviewFinalizationEnabled(env)) {
     return { enabled: false, finalized: [], skipped: [], exceptions: [] };
   }
 
@@ -1091,7 +1091,7 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
             appendLog(paths.log, { event: "AUTOMATIC_NODE_RECOVERY_TICK", retried: recovery.retried ?? [], exceptions: recovery.exceptions ?? [] });
           }
 
-          if (!reviewFinalizationInFlight && autopilotAfterPlanApprovalEnabled(process.env)) {
+          if (!reviewFinalizationInFlight && automaticReviewFinalizationEnabled(process.env)) {
             const finalizer = services?.automaticReviewFinalizationTick ?? automaticReviewFinalizationTick;
             reviewFinalizationInFlight = Promise.resolve(finalizer({ vaultRoot, runsRoot, env: process.env }))
               .then((result) => {

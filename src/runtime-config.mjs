@@ -1,3 +1,5 @@
+import { automaticReviewFinalizationEnabled } from "./approval-policy.mjs";
+
 const enabled = (value) => ["1", "true", "on"].includes(String(value ?? "0").trim().toLowerCase());
 const approvalMode = (value) => {
   const normalized = String(value ?? "MANUAL").trim().toUpperCase();
@@ -36,6 +38,7 @@ export function runtimeConfigSnapshot(env = process.env) {
       automaticPlanApproval: approvalMode(env.ORCHESTRATOR_APPROVAL_MODE) === "FINAL_ACCEPT_ONLY",
       automaticMaterialization: approvalMode(env.ORCHESTRATOR_APPROVAL_MODE) !== "MANUAL",
       automaticDeliveryCertification: approvalMode(env.ORCHESTRATOR_APPROVAL_MODE) !== "MANUAL",
+      automaticReviewFinalization: automaticReviewFinalizationEnabled(env),
       automaticRecoveryAttempts: Number.isInteger(Number(env.ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS))
         ? Number(env.ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS)
         : 2,
