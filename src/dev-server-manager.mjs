@@ -8,6 +8,44 @@ import { getRun } from "./run-manager.mjs";
 
 const execFileAsync = promisify(execFile);
 
+const DEV_SERVER_COMMAND = "npm run dev -- --port <allocated-port> --host 127.0.0.1";
+
+function boundedLogTail(lines = []) {
+  return lines
+    .slice(-30)
+    .map((line) => String(line).replace(/(authorization|token|secret|password|api[_-]?key)\s*[:=]\s*[^\s]+/gi, "$1=[REDACTED]"))
+    .join("\n")
+    .slice(-8_000);
+}
+
+function startupFailureCategory({ message = "", logTail = [], exitCode = null } = {}) {
+  const evidence = `${message}\n${logTail.join("\n")}`.toLowerCase();
+  if (/eaddrinuse|address already in use|port .* in use/.test(evidence)) return "PORT_CONFLICT";
+  if (/enoent|cannot find module|module not found|npm err! code enoent/.test(evidence)) return "MISSING_DEPENDENCIES";
+  if (/invalid environment|missing environment|environment variable/.test(evidence)) return "INVALID_ENVIRONMENT";
+  if (exitCode !== null && exitCode !== 0) return "APPLICATION_STARTUP_ERROR";
+  return "STARTUP_UNHEALTHY";
+}
+
+export class DevServerStartupError extends Error {
+  constructor({ runId, projectId = null, category = "STARTUP_UNHEALTHY", exitCode = null, signal = null, logTail = [], message = null } = {}) {
+    super(message || `Dev server untuk ${projectId ?? runId} berhenti saat startup.`);
+    this.name = "DevServerStartupError";
+    this.statusCode = 500;
+    this.code = "DEV_SERVER_STARTUP_FAILED";
+    this.details = {
+      code: this.code,
+      category,
+      runId,
+      projectId,
+      command: DEV_SERVER_COMMAND,
+      exitCode,
+      signal,
+      logTail: boundedLogTail(logTail),
+    };
+  }
+}
+
 export function findWorkspacePath(runsRoot, runId) {
   // Primary: resolve from manifest.execution.workspace.path
   try {
@@ -167,11 +205,12 @@ export async function getRunDiff({ runsRoot, runId }) {
 export class DevServerManager {
   constructor() {
     this.servers = new Map();
+    this.failures = new Map();
     this.aggregateSessions = new Map();
     this.aggregateSessionByObjective = new Map();
   }
 
-  async startDevServer({ runsRoot, runId, repository = null, projectId = null, host = "127.0.0.1" }) {
+  async startDevServer({ runsRoot, runId, repository = null, projectId = null, host = "127.0.0.1", environment = {} }) {
     const existing = this.servers.get(runId);
     if (existing && existing.status === "RUNNING") {
       return {
@@ -185,11 +224,15 @@ export class DevServerManager {
 
     if (host !== "127.0.0.1") throw new Error("Dev server hanya boleh bind ke loopback 127.0.0.1.");
     const workspacePath = repository || findWorkspacePath(runsRoot, runId);
-    if (!workspacePath) {
-      throw new Error(`Isolated workspace untuk run ${runId} tidak ditemukan.`);
-    }
+    if (!workspacePath) throw new DevServerStartupError({ runId, projectId, category: "WORKSPACE_NOT_FOUND", message: `Isolated workspace untuk run ${runId} tidak ditemukan.` });
 
-    const port = await allocateFreePort(5200);
+    let port;
+    try {
+      port = await allocateFreePort(5200);
+    } catch (error) {
+      throw new DevServerStartupError({ runId, projectId, category: "PORT_UNAVAILABLE", message: error.message });
+    }
+    this.failures.delete(runId);
     const logTail = [];
     const pushLog = (line) => {
       logTail.push(`[${new Date().toLocaleTimeString()}] ${line}`);
@@ -202,6 +245,7 @@ export class DevServerManager {
       cwd: workspacePath,
       env: {
         ...process.env,
+        ...environment,
         PORT: String(port),
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -225,7 +269,7 @@ export class DevServerManager {
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
       for (const line of text.split("\n").filter(Boolean)) pushLog(line);
-      if (serverEntry.status === "STARTING" && (text.includes("ready") || text.includes("Local:") || text.includes("http"))) {
+      if (serverEntry.status === "STARTING" && (text.toLowerCase().includes("ready") || text.includes("Local:") || text.toLowerCase().includes("listening"))) {
         serverEntry.status = "RUNNING";
       }
     });
@@ -235,15 +279,39 @@ export class DevServerManager {
       for (const line of text.split("\n").filter(Boolean)) pushLog(`[ERR] ${line}`);
     });
 
-    child.on("exit", (code) => {
+    child.on("error", (error) => {
+      if (serverEntry.status === "STARTING") {
+        this.failures.set(runId, {
+          category: startupFailureCategory({ message: error.message, logTail }),
+          exitCode: null,
+          signal: null,
+          logTail: [...logTail],
+        });
+      }
+      pushLog(`[ERR] ${error.message}`);
+    });
+
+    child.on("exit", (code, signal) => {
+      const failedDuringStartup = serverEntry.status === "STARTING";
       serverEntry.status = "STOPPED";
-      pushLog(`Dev server berhenti dengan exit code ${code}`);
+      pushLog(`Dev server berhenti dengan exit code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`);
+      if (failedDuringStartup) {
+        this.failures.set(runId, {
+          category: startupFailureCategory({ logTail, exitCode: code }),
+          exitCode: code,
+          signal,
+          logTail: [...logTail],
+        });
+      }
       this.servers.delete(runId);
     });
 
     // Wait a brief moment to confirm it boots
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    if (!this.servers.has(runId)) throw new Error(`Dev server untuk ${projectId ?? runId} berhenti saat startup.`);
+    if (!this.servers.has(runId)) {
+      const failure = this.failures.get(runId);
+      throw new DevServerStartupError({ runId, projectId, ...(failure ?? {}) });
+    }
     serverEntry.status = "RUNNING";
 
     return {
@@ -278,6 +346,7 @@ export class DevServerManager {
         url: null,
         status: "STOPPED",
         logTail: [],
+        lastFailure: this.failures.get(runId) ?? null,
       };
     }
     return {
@@ -288,6 +357,7 @@ export class DevServerManager {
       status: server.status,
       startedAt: server.startedAt,
       logTail: server.logTail,
+      lastFailure: this.failures.get(runId) ?? null,
     };
   }
 
@@ -357,6 +427,7 @@ export class DevServerManager {
           repository: candidate.repository ?? null,
           projectId: candidate.projectId,
           host,
+          environment: candidate.environment ?? {},
         });
         session.previews.push({
           projectId: candidate.projectId,

@@ -134,6 +134,9 @@ export function validateObjectiveRecord(objective) {
   }
   add(errors, objective.activePlanId === null || identifier(objective.activePlanId), "objective.activePlanId must be null or a stable identifier");
   add(errors, objective.activeOrchestrationId === null || identifier(objective.activeOrchestrationId), "objective.activeOrchestrationId must be null or a stable identifier");
+  if (objective.intakeFingerprint !== undefined) {
+    add(errors, typeof objective.intakeFingerprint === "string" && /^[a-f0-9]{64}$/.test(objective.intakeFingerprint), "objective.intakeFingerprint must be a SHA-256 hex string");
+  }
   validateBudget(objective.budget, "objective.budget", errors);
   add(errors, isoDate(objective.createdAt), "objective.createdAt must be an ISO timestamp");
   add(errors, isoDate(objective.updatedAt), "objective.updatedAt must be an ISO timestamp");
@@ -175,22 +178,6 @@ function knownProjectsFor(options) {
   if (source instanceof Set) return new Set(source);
   if (isRecord(source)) return new Set(Object.keys(source));
   return new Set();
-}
-
-function dependencyDepths(nodes) {
-  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
-  const memo = new Map();
-  const depth = (id, visiting = new Set()) => {
-    if (memo.has(id)) return memo.get(id);
-    if (visiting.has(id)) return 0;
-    if (!byId.has(id)) return 0;
-    visiting.add(id);
-    const value = Math.max(0, ...byId.get(id).dependsOn.map((dependency) => depth(dependency, visiting) + 1));
-    visiting.delete(id);
-    memo.set(id, value);
-    return value;
-  };
-  return new Map(nodes.map((node) => [node.nodeId, depth(node.nodeId)]));
 }
 
 function validateNode(node, index, plan, options, errors) {
@@ -338,13 +325,9 @@ export function validatePlanRecord(plan, options = {}) {
 
   const maxSubtasks = options.maxSubtasks ?? options.budget?.maxSubtasks;
   if (maxSubtasks !== undefined && Array.isArray(plan.nodes) && plan.nodes.length > maxSubtasks) errors.push(`plan.nodes exceeds maxSubtasks: ${plan.nodes.length} > ${maxSubtasks}`);
-  const maxParallelAgents = options.maxParallelAgents ?? options.budget?.maxParallelAgents;
-  if (maxParallelAgents !== undefined && nodes.length && !cycle.length) {
-    const depths = dependencyDepths(nodes);
-    const widths = [...new Set([...depths.values()])].map((depth) => nodes.filter((node) => depths.get(node.nodeId) === depth && node.canRunInParallel).length);
-    const width = Math.max(0, ...widths);
-    if (width > maxParallelAgents) errors.push(`plan parallel width exceeds maxParallelAgents: ${width} > ${maxParallelAgents}`);
-  }
+  // maxParallelAgents is an execution ceiling, not a DAG shape limit. A plan
+  // may contain more independent nodes than available workers; the scheduler
+  // batches eligible nodes and keeps the remainder queued.
   const maxRisk = options.maxRisk ?? options.riskCeiling;
   if (maxRisk && RISK_ORDER.get(plan.risk) > RISK_ORDER.get(maxRisk)) errors.push(`plan.risk exceeds approved ceiling: ${plan.risk} > ${maxRisk}`);
   if (plan.estimatedTokens !== undefined) {

@@ -132,6 +132,22 @@ const baseDecision = {
 
 assert.equal(validateObjectiveRecord(baseObjective).valid, true);
 assert.equal(validatePlanRecord(basePlan, planOptions).valid, true);
+const widerThanBudgetPlan = {
+  ...basePlan,
+  nodes: [
+    diagnosticNode,
+    ...["N02", "N03", "N04"].map((nodeId, index) => ({
+      ...implementationNode,
+      nodeId,
+      dependsOn: [],
+      allowedPaths: [`src/checkout-${index}/**`],
+      writeConflictGroup: `shop:checkout-${index}`,
+      contextFrom: [],
+      canRunInParallel: true,
+    })),
+  ],
+};
+assert.equal(validatePlanRecord(widerThanBudgetPlan, planOptions).valid, true, "parallel width may exceed the worker ceiling and be queued by the scheduler");
 assert.equal(validateOrchestrationRecord(baseOrchestration, { plan: basePlan }).valid, true);
 assert.equal(validateDecisionRecord(baseDecision).valid, true);
 

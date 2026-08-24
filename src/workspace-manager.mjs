@@ -283,7 +283,9 @@ export async function prepareIsolatedWorkspace({ manifest, runsRoot, eventLogPat
     : null;
   const sourceHead = commitResult.stdoutTail.trim();
   const sourceStatus = String(statusResult.stdoutTail ?? "").trim();
-  if (orchestrationBaseline?.baseCommit && sourceHead !== orchestrationBaseline.baseCommit) {
+  const allowFrozenBaselineDrift = orchestrationBaseline?.allowFrozenBaselineDrift === true;
+  if (orchestrationBaseline?.baseCommit && sourceHead !== orchestrationBaseline.baseCommit
+    && (!allowFrozenBaselineDrift || sourceHead !== orchestrationBaseline.allowedCurrentCommit)) {
     const error = new Error(`Source repository berubah dari frozen common base ${orchestrationBaseline.baseCommit}.`);
     error.code = "SAME_PROJECT_BASELINE_DRIFT";
     throw error;

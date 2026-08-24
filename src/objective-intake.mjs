@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { listProjects } from "./core.mjs";
 import { createObjective, getObjective, listObjectives } from "./objective-store.mjs";
+import { withDurableLease } from "./durable-runtime.mjs";
 
 const OBJECTIVE_MODES = new Set(["FRESH_PROJECT", "EXISTING_PROJECT", "CROSS_PROJECT_INCIDENT"]);
 const BLUEPRINTS = new Set(["frontend-vite"]);
@@ -95,14 +96,14 @@ function normalizeProjectIds(body, mode) {
   return projectIds;
 }
 
-function freshProjectProposal(body, projectIds) {
+function freshProjectProposal(body, projectIds, { checkTarget = true } = {}) {
   const fresh = body.freshProject && typeof body.freshProject === "object" && !Array.isArray(body.freshProject) ? body.freshProject : body;
   const projectId = stableId(fresh.projectId ?? projectIds[0], "freshProject.projectId");
   const targetDirectory = String(fresh.targetDirectory ?? fresh.targetPath ?? "").trim();
   if (!safeTargetDirectory(targetDirectory)) throw new ObjectiveIntakeError("freshProject.targetDirectory harus absolute dan aman.", { details: { code: "INVALID_TARGET_DIRECTORY" } });
   const blueprint = String(fresh.blueprint ?? "frontend-vite").trim();
   if (!BLUEPRINTS.has(blueprint)) throw new ObjectiveIntakeError(`Blueprint belum didukung: ${blueprint}`, { statusCode: 422, code: "UNSUPPORTED_BLUEPRINT", details: { code: "UNSUPPORTED_BLUEPRINT", supported: [...BLUEPRINTS] } });
-  if (fs.existsSync(targetDirectory)) throw new ObjectiveIntakeError(`Target Fresh Project sudah ada: ${targetDirectory}`, { statusCode: 409, code: "TARGET_ALREADY_EXISTS", details: { code: "TARGET_ALREADY_EXISTS" } });
+  if (checkTarget && fs.existsSync(targetDirectory)) throw new ObjectiveIntakeError(`Target Fresh Project sudah ada: ${targetDirectory}`, { statusCode: 409, code: "TARGET_ALREADY_EXISTS", details: { code: "TARGET_ALREADY_EXISTS" } });
   return {
     proposalId: `genesis-${projectId}-${blueprint}`,
     action: "ONBOARD_WITH_EXISTING_BLUEPRINT",
@@ -111,6 +112,61 @@ function freshProjectProposal(body, projectIds) {
     blueprint,
     request: body.request.trim(),
   };
+}
+
+function canonicalRequest(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
+}
+
+function canonicalIntake({ mode, request, projectIds, freshProject, attachments, budget }) {
+  return {
+    mode,
+    request: canonicalRequest(request),
+    projectIds: [...projectIds],
+    freshProject: freshProject ? {
+      action: freshProject.action,
+      blueprint: freshProject.blueprint,
+      projectId: freshProject.projectId,
+      targetDirectory: freshProject.targetDirectory,
+    } : null,
+    attachments: (attachments ?? []).map((attachment) => ({
+      type: attachment.type,
+      fileName: attachment.fileName,
+      relativeVaultPath: attachment.relativeVaultPath ?? null,
+      relativeProjectPath: attachment.relativeProjectPath ?? null,
+      sizeBytes: attachment.sizeBytes ?? null,
+    })),
+    budget: {
+      maxSubtasks: budget.maxSubtasks,
+      maxParallelAgents: budget.maxParallelAgents,
+      maxRetriesPerNode: budget.maxRetriesPerNode,
+      maxRepairCycles: budget.maxRepairCycles,
+      maxTotalTokens: budget.maxTotalTokens,
+      deadlineAt: budget.deadlineAt,
+    },
+  };
+}
+
+export function objectiveIntakeFingerprint(input) {
+  return createHash("sha256").update(JSON.stringify(canonicalIntake(input))).digest("hex");
+}
+
+function fingerprintForObjective(objective) {
+  return objective?.intakeFingerprint ?? objectiveIntakeFingerprint({
+    mode: objective.mode,
+    request: objective.request,
+    projectIds: objective.projectIds,
+    freshProject: objective.freshProject,
+    attachments: objective.attachments ?? [],
+    budget: objective.budget,
+  });
+}
+
+function reusableObjective({ runsRoot, intakeFingerprint }) {
+  return listObjectives(runsRoot).find((objective) => (
+    !["DONE", "CANCELLED"].includes(objective.state)
+    && fingerprintForObjective(objective) === intakeFingerprint
+  )) ?? null;
 }
 
 function objectiveSummary(objective) {
@@ -162,9 +218,10 @@ export function createObjectiveIntake({ vaultRoot, runsRoot, body, requestedBy =
   }
   const budget = normalizeBudget(body.budget);
   const attachments = normalizeAttachments(body.attachments ?? body.attachedAssets);
-  const objectiveId = `obj-${now.toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8)}`;
-  const freshProject = mode === "FRESH_PROJECT" ? freshProjectProposal(body, projectIds) : null;
+  const freshProject = mode === "FRESH_PROJECT" ? freshProjectProposal(body, projectIds, { checkTarget: false }) : null;
   const effectiveProjectIds = freshProject ? [freshProject.projectId] : projectIds;
+  const intakeFingerprint = objectiveIntakeFingerprint({ mode, request, projectIds: effectiveProjectIds, freshProject, attachments, budget });
+  const objectiveId = `obj-${now.toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8)}`;
   const record = {
     schemaVersion: 1,
     revision: 0,
@@ -179,15 +236,39 @@ export function createObjectiveIntake({ vaultRoot, runsRoot, body, requestedBy =
     activePlanId: null,
     activeOrchestrationId: null,
     budget,
+    intakeFingerprint,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   };
-  const persisted = createObjective({ runsRoot, record });
-  return {
-    objective: persisted,
-    summary: objectiveSummary(persisted),
-    planning: { started: false, readOnly: true, tasksCreated: 0, jobsCreated: 0, runsCreated: 0 },
-  };
+  return withDurableLease({
+    runsRoot,
+    namespace: "objective-intake",
+    key: intakeFingerprint,
+    purpose: "deduplicate objective intake",
+    ttlMs: 60_000,
+    reclaimDeadOwner: true,
+    waitTimeoutMs: 2_000,
+  }, () => {
+    const existing = reusableObjective({ runsRoot, intakeFingerprint });
+    if (existing) {
+      return {
+        objective: existing,
+        summary: objectiveSummary(existing),
+        alreadyExisting: true,
+        intakeFingerprint,
+        planning: { started: false, readOnly: true, tasksCreated: 0, jobsCreated: 0, runsCreated: 0 },
+      };
+    }
+    if (freshProject && fs.existsSync(freshProject.targetDirectory)) {
+      throw new ObjectiveIntakeError(`Target Fresh Project sudah ada: ${freshProject.targetDirectory}`, { statusCode: 409, code: "TARGET_ALREADY_EXISTS", details: { code: "TARGET_ALREADY_EXISTS" } });
+    }
+    const persisted = createObjective({ runsRoot, record });
+    return {
+      objective: persisted,
+      summary: objectiveSummary(persisted),
+      planning: { started: false, readOnly: true, tasksCreated: 0, jobsCreated: 0, runsCreated: 0 },
+    };
+  });
 }
 
 export function getObjectiveIntake({ runsRoot, objectiveId } = {}) {

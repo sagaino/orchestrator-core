@@ -78,9 +78,20 @@ function sameProjectParallelProjects(plan) {
   return [...counts.entries()].filter(([, count]) => count > 1).map(([projectId]) => projectId).sort();
 }
 
+function completedSiblingBaselineDrift({ runsRoot, orchestration, projectId }) {
+  const tasks = materializedTaskMap(orchestration);
+  const siblingJobs = listJobs(runsRoot).filter((job) => (
+    job.orchestrationId === orchestration.orchestrationId
+    && tasks.get(job.nodeId)?.projectId === projectId
+  ));
+  return siblingJobs.length > 0
+    && siblingJobs.every((job) => job.state === JOB_STATES.DONE)
+    && siblingJobs.some((job) => job.state === JOB_STATES.DONE);
+}
+
 function freezeSameProjectBaselines({ vaultRoot, runsRoot, plan, orchestration, now }) {
   const projectIds = sameProjectParallelProjects(plan);
-  if (!projectIds.length) return { orchestration, active: false, projectIds: [] };
+  if (!projectIds.length) return { orchestration, active: false, projectIds: [], allowFrozenBaselineDrift: false };
   if (!vaultRoot) {
     fail("Same-project parallel membutuhkan vaultRoot untuk membekukan repository baseline.", {
       code: "SAME_PROJECT_BASELINE_ROOT_REQUIRED",
@@ -89,8 +100,12 @@ function freezeSameProjectBaselines({ vaultRoot, runsRoot, plan, orchestration, 
   }
   const projects = listProjects(vaultRoot).projects;
   const existing = orchestration.integration?.projectBaselines ?? {};
+  const existingDrift = orchestration.integration?.sameProjectParallel?.expectedBaselineDrift ?? null;
   const baselines = { ...existing };
   let changed = false;
+  let allowFrozenBaselineDrift = false;
+  let allowedCurrentCommit = null;
+  let expectedBaselineDrift = null;
   for (const projectId of projectIds) {
     const project = projects.find((candidate) => candidate.id === projectId);
     if (!project) fail(`Project baseline tidak ditemukan: ${projectId}`, { code: "SAME_PROJECT_PROJECT_NOT_FOUND", details: { projectId } });
@@ -109,6 +124,21 @@ function freezeSameProjectBaselines({ vaultRoot, runsRoot, plan, orchestration, 
     const previous = baselines[projectId];
     if (previous && typeof previous === "object") {
       if (previous.baseCommit !== current.baseCommit || previous.frozenSourceStatusHash !== current.frozenSourceStatusHash) {
+        const sameRecordedDrift = existingDrift?.projectId === projectId
+          && existingDrift.currentBaseCommit === current.baseCommit
+          && existingDrift.currentSourceStatusHash === current.frozenSourceStatusHash;
+        if (sameRecordedDrift || completedSiblingBaselineDrift({ runsRoot, orchestration, projectId })) {
+          allowFrozenBaselineDrift = true;
+          allowedCurrentCommit = current.baseCommit;
+          expectedBaselineDrift = {
+            projectId,
+            currentBaseCommit: current.baseCommit,
+            currentSourceStatusHash: current.frozenSourceStatusHash,
+            observedAt: new Date(now).toISOString(),
+          };
+          if (!sameRecordedDrift) changed = true;
+          continue;
+        }
         fail(`Frozen baseline berubah untuk project ${projectId}.`, {
           code: "SAME_PROJECT_BASELINE_DRIFT",
           details: { projectId, frozenBaseCommit: previous.baseCommit, currentBaseCommit: current.baseCommit },
@@ -120,7 +150,7 @@ function freezeSameProjectBaselines({ vaultRoot, runsRoot, plan, orchestration, 
     changed = true;
   }
   if (!changed && orchestration.integration?.sameProjectParallel?.enabled === true) {
-    return { orchestration, active: true, projectIds };
+    return { orchestration, active: true, projectIds, allowFrozenBaselineDrift, allowedCurrentCommit };
   }
   const updated = updateOrchestration({
     runsRoot,
@@ -132,12 +162,16 @@ function freezeSameProjectBaselines({ vaultRoot, runsRoot, plan, orchestration, 
       integration: {
         ...(record.integration ?? {}),
         projectBaselines: baselines,
-        sameProjectParallel: { enabled: true, activatedAt: record.integration?.sameProjectParallel?.activatedAt ?? new Date(now).toISOString() },
+        sameProjectParallel: {
+          enabled: true,
+          activatedAt: record.integration?.sameProjectParallel?.activatedAt ?? new Date(now).toISOString(),
+          ...(expectedBaselineDrift ? { expectedBaselineDrift } : {}),
+        },
       },
     }),
     validationOptions: { plan },
   });
-  return { orchestration: updated, active: true, projectIds };
+  return { orchestration: updated, active: true, projectIds, allowFrozenBaselineDrift, allowedCurrentCommit };
 }
 
 function planOptions(objective) {
@@ -281,7 +315,7 @@ function materializedTaskMap(orchestration) {
   return new Map((orchestration.materialization?.tasks ?? []).map((task) => [task.nodeId, task]));
 }
 
-function queueCandidate({ runsRoot, objective, plan, orchestration, nodeId, task, sameProjectParallel = false, baseline = null }) {
+function queueCandidate({ runsRoot, objective, plan, orchestration, nodeId, task, sameProjectParallel = false, baseline = null, allowFrozenBaselineDrift = false, allowedCurrentCommit = null }) {
   if (!task?.path || !task?.taskId || !task?.projectId) {
     fail(`Materialized task untuk node ${nodeId} tidak lengkap.`, {
       code: "MATERIALIZED_TASK_MISSING",
@@ -296,6 +330,8 @@ function queueCandidate({ runsRoot, objective, plan, orchestration, nodeId, task
     baseCommit: baseline?.baseCommit ?? null,
     frozenSourceStatus: baseline?.frozenSourceStatus ?? null,
     frozenSourceStatusHash: baseline?.frozenSourceStatusHash ?? null,
+    allowFrozenBaselineDrift,
+    allowedCurrentCommit,
   };
   const queued = enqueueTaskJob({
     runsRoot,
@@ -651,7 +687,7 @@ function scheduleOne({ vaultRoot = null, runsRoot, orchestration, now, env = pro
   const sameProjectFlag = sameProjectParallelEnabled(env);
   const frozen = sameProjectFlag
     ? freezeSameProjectBaselines({ vaultRoot, runsRoot, plan, orchestration, now })
-    : { orchestration, active: false, projectIds: [] };
+    : { orchestration, active: false, projectIds: [], allowFrozenBaselineDrift: false };
   let activeOrchestration = frozen.orchestration;
   const reconciled = reconcileRuntimeNodes({ plan, orchestration: activeOrchestration, jobs });
   let nodes = reconciled.nodes;
@@ -755,6 +791,8 @@ function scheduleOne({ vaultRoot = null, runsRoot, orchestration, now, env = pro
       task,
       sameProjectParallel: candidateSameProject,
       baseline: sameProjectBaseline.get(task.projectId),
+      allowFrozenBaselineDrift: frozen.allowFrozenBaselineDrift,
+      allowedCurrentCommit: frozen.allowedCurrentCommit,
     });
     queued.push(queuedCandidate);
     nodes = structuredClone(nodes);

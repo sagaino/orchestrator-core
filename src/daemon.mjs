@@ -397,6 +397,8 @@ export async function processClaimedJob({
           baseCommit: job.baseCommit,
           frozenSourceStatus: job.frozenSourceStatus,
           frozenSourceStatusHash: job.frozenSourceStatusHash,
+          allowFrozenBaselineDrift: job.allowFrozenBaselineDrift === true,
+          allowedCurrentCommit: job.allowedCurrentCommit ?? null,
         } : null,
         onProgress,
       });

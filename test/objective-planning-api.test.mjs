@@ -67,9 +67,14 @@ function candidate(objective) {
 
 let providerCalls = 0;
 let clarifyFirst = false;
+let failNextPlanning = false;
 const decomposer = async ({ objective, projectContexts }) => {
   providerCalls += 1;
   assert.deepEqual(projectContexts[0].verification, ["test"]);
+  if (failNextPlanning) {
+    failNextPlanning = false;
+    return { status: "INVALID_PROVIDER_ENVELOPE", plan: null, readOnly: true };
+  }
   if (clarifyFirst && !objective.request.includes("Human clarification")) {
     return { status: "NEEDS_CLARIFICATION", objectiveState: "NEEDS_CLARIFICATION", clarificationNeeded: true, clarificationQuestion: "File mana yang menjadi target?", plan: null, readOnly: true, planning: { started: true, readOnly: true, tasksCreated: 0, jobsCreated: 0, runsCreated: 0 } };
   }
@@ -135,6 +140,22 @@ try {
   const clarified = await request("POST", `/api/objectives/${clarificationId}/generate-plan`, { body: { clarification: "Gunakan src/fixture.js." }, idempotencyKey: "clarification-answer" });
   assert.equal(clarified.data.data.objective.state, "PLAN_REVIEW");
   assert.equal(clarified.data.data.objective.planning, undefined);
+
+  const recoveryBody = { mode: "EXISTING_PROJECT", projectIds: ["planning-app"], request: "Recover a provider planning failure." };
+  const recoveryCreated = await request("POST", "/api/objectives", { body: recoveryBody, idempotencyKey: "recovery-objective" });
+  assert.equal(recoveryCreated.response.status, 201);
+  const recoveryId = recoveryCreated.data.data.objective.objectiveId;
+  failNextPlanning = true;
+  const failedPlan = await request("POST", `/api/objectives/${recoveryId}/generate-plan`, { body: {}, idempotencyKey: "recovery-plan-failure" });
+  assert.equal(failedPlan.response.status, 502);
+
+  const resumed = await request("POST", "/api/objectives", { body: recoveryBody, idempotencyKey: "recovery-objective-after-failure" });
+  assert.equal(resumed.response.status, 200);
+  assert.equal(resumed.data.data.alreadyExisting, true);
+  assert.equal(resumed.data.data.objective.objectiveId, recoveryId);
+  const recoveredPlan = await request("POST", `/api/objectives/${recoveryId}/generate-plan`, { body: {}, idempotencyKey: "recovery-plan-retry" });
+  assert.equal(recoveredPlan.response.status, 201);
+  assert.equal(recoveredPlan.data.data.objective.objectiveId, recoveryId);
 } finally {
   if (service) await service.stop();
   fs.rmSync(root, { recursive: true, force: true });
