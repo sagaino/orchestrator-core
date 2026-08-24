@@ -12,6 +12,7 @@ import { classifyIntegrationFailure, getIntegrationEvidence } from "./integratio
 import { budgetSnapshot, ensureBudgetExceededDecision, resolveBudgetExceededDecision } from "./orchestration-budget.mjs";
 import { parallelObjectivesEnabled } from "./rollout-flags.mjs";
 import { resetOrchestrationTaskToBacklog } from "./run-manager.mjs";
+import { finalAcceptOnlyEnabled } from "./approval-policy.mjs";
 
 const ACTIVE_NODE_STATES = new Set(["QUEUED", "RUNNING", "REVIEW"]);
 const TERMINAL_NODE_STATES = new Set(["DONE", "FAILED", "CANCELLED"]);
@@ -462,6 +463,59 @@ export function requestNodeRetry({ runsRoot, objectiveId, orchestrationId = null
     });
     return { decision, orchestration: context.orchestration, alreadyRequested: false };
   });
+}
+
+function automaticRetrySafe(runtime) {
+  const code = String(runtime?.lastError?.code ?? "").toUpperCase();
+  const message = String(runtime?.lastError?.message ?? "");
+  if (["MISSING_NODE_JOB", "PREDECESSOR_FAILED", "CANCELLATION_REQUESTED"].includes(code)) return false;
+  if (/scope|uncertain|stale|out.of.scope|permission/i.test(`${code} ${message}`)) return false;
+  return ["NODE_JOB_FAILED", "DEV_SERVER_STARTUP_FAILED", "RUN_FAILED", "VERIFICATION_FAILED", "WORKER_ERROR"].includes(code)
+    || /startup|verification|worker|exit code/i.test(`${code} ${message}`);
+}
+
+export function automaticNodeRecoveryTick({ vaultRoot, runsRoot, env = process.env, now = new Date() } = {}) {
+  if (!finalAcceptOnlyEnabled(env)) return { enabled: false, retried: [], exceptions: [] };
+  const retried = [];
+  const exceptions = [];
+  for (const orchestration of listOrchestrations(runsRoot)) {
+    if (!["BLOCKED", "FAILED"].includes(orchestration.state)) continue;
+    let context;
+    try {
+      context = orchestrationContext({ runsRoot, orchestrationId: orchestration.orchestrationId });
+    } catch (error) {
+      exceptions.push({ orchestrationId: orchestration.orchestrationId, error: error.message });
+      continue;
+    }
+    for (const [nodeId, runtime] of Object.entries(context.orchestration.nodes ?? {})) {
+      if (runtime.state !== "FAILED" || !automaticRetrySafe(runtime)) continue;
+      const retryCount = Math.max(0, Number(runtime.attempt ?? 1) - 1);
+      if (retryCount >= Number(context.objective.budget?.maxRetriesPerNode ?? 0)) continue;
+      try {
+        const requested = requestNodeRetry({
+          runsRoot,
+          objectiveId: context.objective.objectiveId,
+          orchestrationId: context.orchestration.orchestrationId,
+          nodeId,
+          reason: "Automatic retry untuk failure node yang aman dalam mode FINAL_ACCEPT_ONLY.",
+          requestedBy: "system:autopilot",
+          now,
+        });
+        const resolved = resolveDecision({
+          vaultRoot,
+          runsRoot,
+          decisionId: requested.decision.decisionId,
+          action: "RETRY",
+          resolvedBy: "system:autopilot",
+          now,
+        });
+        retried.push({ orchestrationId: context.orchestration.orchestrationId, nodeId, decisionId: resolved.decision?.decisionId ?? requested.decision.decisionId, attempt: retryCount + 2 });
+      } catch (error) {
+        exceptions.push({ orchestrationId: context.orchestration.orchestrationId, nodeId, error: error.message });
+      }
+    }
+  }
+  return { enabled: true, retried, exceptions };
 }
 
 function clearFailedDescendantBlockers({ plan, nodes, failedNodeId }) {

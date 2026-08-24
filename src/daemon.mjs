@@ -8,13 +8,15 @@ import { listRuns, prepareRunFromEvent, reconcileInterruptedRuns, RUN_STATES } f
 import { scanReadyTasks, watchReadyTasks } from "./adapters/vault-task-watcher.mjs";
 import { claimNextJob, JOB_STATES, listJobs, reconcileJobs, sameProjectParallelEnabled, updateJob } from "./job-queue.mjs";
 import { resumeClaimedTaskRun, startTaskRun } from "./task-workflow.mjs";
+import { acceptRun } from "./knowledge-workflow.mjs";
 import { notificationSummary, notifyTaskOutcome } from "./notification-service.mjs";
 import { createOrchestratorServer } from "./server.mjs";
 import { durableRuntimeStatus } from "./durable-runtime.mjs";
 import { assertExecutionAllowed } from "./recovery-mode.mjs";
 import { redactSensitive, redactText } from "./redaction.mjs";
 import { operationsReadiness } from "./operations-governance.mjs";
-import { orchestrationSchedulerEnabled, orchestrationSchedulerTick } from "./orchestration-scheduler.mjs";
+import { automaticNodeRecoveryTick, orchestrationSchedulerEnabled, orchestrationSchedulerTick } from "./orchestration-scheduler.mjs";
+import { autopilotAfterPlanApprovalEnabled } from "./approval-policy.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -58,6 +60,55 @@ export const REVIEW_STATES = new Set([
   "KNOWLEDGE_APPROVAL",
   "WIKI_SYNCED",
 ]);
+
+const AUTOMATIC_REVIEW_STATES = new Set([
+  RUN_STATES.REVIEW,
+  RUN_STATES.RETROSPECTIVE,
+  RUN_STATES.KNOWLEDGE_APPROVAL,
+  RUN_STATES.WIKI_SYNCED,
+]);
+
+export function orchestrationManagedJob(job) {
+  return job?.orchestration?.managed === true
+    || job?.orchestrationManaged === true
+    || Boolean(job?.objectiveId && job?.orchestrationId);
+}
+
+export function shouldAutomaticallyFinalizeReview({ job, manifest, env = process.env } = {}) {
+  return autopilotAfterPlanApprovalEnabled(env)
+    && orchestrationManagedJob(job)
+    && AUTOMATIC_REVIEW_STATES.has(manifest?.state);
+}
+
+export function reviewAutomationFailurePatch({ job, manifest, error, now = new Date() } = {}) {
+  const runFailed = manifest?.state === RUN_STATES.FAILED;
+  return {
+    state: runFailed ? JOB_STATES.FAILED : JOB_STATES.REVIEW,
+    runState: manifest?.state ?? job?.runState ?? null,
+    finishedAt: runFailed ? now.toISOString() : job?.finishedAt ?? null,
+    error: error?.message ?? String(error ?? "Review automation gagal."),
+    reviewAutomation: {
+      status: runFailed ? "FAILED" : "EXCEPTION",
+      lastAttemptAt: now.toISOString(),
+      approvedBy: "system:autopilot",
+      error: error?.message ?? String(error ?? "Review automation gagal."),
+    },
+  };
+}
+
+async function finalizeOrchestrationReview({ vaultRoot, runsRoot, job, manifest }) {
+  return acceptRun({
+    vaultRoot,
+    runsRoot,
+    runId: manifest.runId,
+    approvedBy: "system:autopilot",
+    decision: null,
+    destination: null,
+    targetPath: null,
+    autoCommit: true,
+    commitMessage: `chore(orchestrator): finalize ${job.taskId}`,
+  });
+}
 
 export function parallelQueueStatus(jobs = [], maxWorkers = DEFAULT_PARALLEL_WORKERS, runs = []) {
   const rawRunning = [];
@@ -303,6 +354,7 @@ function launchAgentPlist({ vaultRoot, runsRoot, cliPath, outputPath }) {
   ];
   const environmentVariables = [
     ["PATH", daemonExecutablePath()],
+    ["ORCHESTRATOR_APPROVAL_MODE", process.env.ORCHESTRATOR_APPROVAL_MODE],
     ["ORCHESTRATOR_NOTIFICATION_DELIVERY", process.env.ORCHESTRATOR_NOTIFICATION_DELIVERY],
     ["ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS", process.env.ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS],
     ["ORCHESTRATOR_AGY_MODEL", process.env.ORCHESTRATOR_AGY_MODEL],
@@ -377,7 +429,7 @@ export async function processClaimedJob({
     const onProgress = (current) => {
       updateJob(runsRoot, job.jobId, { runId: current.runId, runState: current.state });
     };
-    const manifest = job.resumeRunId
+    let manifest = job.resumeRunId
       ? await resumeWorkflow({ vaultRoot, runsRoot, runId: job.resumeRunId, onProgress })
       : await workflow({
         vaultRoot,
@@ -402,17 +454,39 @@ export async function processClaimedJob({
         } : null,
         onProgress,
       });
-    const state = manifest.state === RUN_STATES.RETROSPECTIVE ? JOB_STATES.REVIEW : JOB_STATES.FAILED;
+    let automaticallyFinalized = false;
+    if (shouldAutomaticallyFinalizeReview({ job, manifest })) {
+      manifest = await finalizeOrchestrationReview({ vaultRoot, runsRoot, job, manifest });
+      automaticallyFinalized = manifest.state === RUN_STATES.DONE;
+    }
+    const state = manifest.state === RUN_STATES.DONE
+      ? JOB_STATES.DONE
+      : AUTOMATIC_REVIEW_STATES.has(manifest.state)
+        ? JOB_STATES.REVIEW
+        : JOB_STATES.FAILED;
     const updated = updateJob(runsRoot, job.jobId, {
       state,
       runId: manifest.runId,
       runState: manifest.state,
       finishedAt: new Date().toISOString(),
+      error: state === JOB_STATES.FAILED
+        ? manifest.execution?.result?.error ?? job.error ?? "Task orchestration gagal."
+        : null,
+      ...(automaticallyFinalized ? {
+        reviewAutomation: {
+          status: "AUTO_FINALIZED",
+          approvedBy: "system:autopilot",
+          completedAt: new Date().toISOString(),
+        },
+      } : {}),
     });
     onEvent({
-      event: state === JOB_STATES.REVIEW ? "JOB_REVIEW_READY" : "JOB_FAILED",
+      event: automaticallyFinalized
+        ? "JOB_AUTOMATICALLY_FINALIZED"
+        : state === JOB_STATES.REVIEW ? "JOB_REVIEW_READY" : "JOB_FAILED",
       jobId: job.jobId,
       runId: manifest.runId,
+      ...(automaticallyFinalized ? { approvedBy: "system:autopilot" } : {}),
     });
     let notification = null;
     try {
@@ -428,8 +502,12 @@ export async function processClaimedJob({
     }
     return { job: updated, manifest, notification };
   } catch (error) {
+    const failedManifest = job.runId
+      ? listRuns(runsRoot).find((run) => run.runId === job.runId) ?? null
+      : null;
     const failed = updateJob(runsRoot, job.jobId, {
       state: JOB_STATES.FAILED,
+      runState: failedManifest?.state ?? job.runState ?? null,
       error: error.message,
       finishedAt: new Date().toISOString(),
     });
@@ -451,6 +529,76 @@ export async function processClaimedJob({
     }
     return { job: failed, manifest: null, error, notification };
   }
+}
+
+export async function automaticReviewFinalizationTick({
+  vaultRoot,
+  runsRoot,
+  env = process.env,
+  now = new Date(),
+} = {}) {
+  if (!autopilotAfterPlanApprovalEnabled(env)) {
+    return { enabled: false, finalized: [], skipped: [], exceptions: [] };
+  }
+
+  const runsById = new Map(listRuns(runsRoot).map((run) => [run.runId, run]));
+  const finalized = [];
+  const skipped = [];
+  const exceptions = [];
+  for (const job of listJobs(runsRoot).filter((item) => (
+    item.state === JOB_STATES.REVIEW
+    && orchestrationManagedJob(item)
+    && item.runId
+  ))) {
+    const manifest = runsById.get(job.runId);
+    if (!manifest || !AUTOMATIC_REVIEW_STATES.has(manifest.state)) {
+      skipped.push({ jobId: job.jobId, runId: job.runId, reason: "RUN_STATE_NOT_AUTOMATABLE" });
+      continue;
+    }
+
+    const lastAttemptAt = job.reviewAutomation?.lastAttemptAt;
+    if (lastAttemptAt && now.getTime() - new Date(lastAttemptAt).getTime() < 15_000) {
+      skipped.push({ jobId: job.jobId, runId: job.runId, reason: "AUTOMATION_BACKOFF" });
+      continue;
+    }
+
+    updateJob(runsRoot, job.jobId, {
+      reviewAutomation: {
+        status: "RUNNING",
+        startedAt: job.reviewAutomation?.startedAt ?? now.toISOString(),
+        lastAttemptAt: now.toISOString(),
+        approvedBy: "system:autopilot",
+      },
+    });
+
+    try {
+      const completed = await finalizeOrchestrationReview({ vaultRoot, runsRoot, job, manifest });
+      const updated = updateJob(runsRoot, job.jobId, {
+        state: completed.state === RUN_STATES.DONE ? JOB_STATES.DONE : JOB_STATES.REVIEW,
+        runId: completed.runId,
+        runState: completed.state,
+        finishedAt: completed.state === RUN_STATES.DONE ? new Date().toISOString() : job.finishedAt ?? null,
+        error: null,
+        reviewAutomation: {
+          status: completed.state === RUN_STATES.DONE ? "AUTO_FINALIZED" : "REVIEW_REQUIRED",
+          approvedBy: "system:autopilot",
+          completedAt: completed.state === RUN_STATES.DONE ? new Date().toISOString() : null,
+          lastAttemptAt: now.toISOString(),
+        },
+      });
+      finalized.push({ jobId: updated.jobId, runId: updated.runId, state: updated.state });
+    } catch (error) {
+      const latestManifest = listRuns(runsRoot).find((run) => run.runId === job.runId) ?? manifest;
+      const updated = updateJob(runsRoot, job.jobId, reviewAutomationFailurePatch({
+        job,
+        manifest: latestManifest,
+        error,
+        now,
+      }));
+      exceptions.push({ jobId: updated.jobId, runId: updated.runId, state: updated.state, error: error.message });
+    }
+  }
+  return { enabled: true, finalized, skipped, exceptions };
 }
 
 export async function processNextQueuedJob(options) {
@@ -873,7 +1021,7 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
   const processJobEvent = (event) => {
     const patch = event.event === "JOB_STARTED"
       ? { jobsStarted: (health.counters.jobsStarted ?? 0) + 1 }
-      : event.event === "JOB_REVIEW_READY"
+      : ["JOB_REVIEW_READY", "JOB_AUTOMATICALLY_FINALIZED"].includes(event.event)
         ? { jobsCompleted: (health.counters.jobsCompleted ?? 0) + 1 }
         : ["JOB_FAILED", "PARALLEL_WORKER_FAILED"].includes(event.event)
           ? {
@@ -909,6 +1057,7 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
   let watcher;
   let heartbeat;
   let jobPollerTimeout;
+  let reviewFinalizationInFlight = null;
   let isRunning = true;
   try {
     const pollTick = () => {
@@ -933,6 +1082,34 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
               blocked: result.blocked ?? [],
               budgetBlockers: result.budgetBlockers ?? [],
             });
+          }
+          const recoverer = services?.automaticNodeRecoveryTick ?? automaticNodeRecoveryTick;
+          const recovery = recoverer({ vaultRoot, runsRoot, env: process.env });
+          if (recovery.retried?.length || recovery.exceptions?.length) {
+            appendLog(paths.log, { event: "AUTOMATIC_NODE_RECOVERY_TICK", retried: recovery.retried ?? [], exceptions: recovery.exceptions ?? [] });
+          }
+
+          if (!reviewFinalizationInFlight && autopilotAfterPlanApprovalEnabled(process.env)) {
+            const finalizer = services?.automaticReviewFinalizationTick ?? automaticReviewFinalizationTick;
+            reviewFinalizationInFlight = Promise.resolve(finalizer({ vaultRoot, runsRoot, env: process.env }))
+              .then((result) => {
+                if (result.finalized?.length || result.exceptions?.length) {
+                  appendLog(paths.log, {
+                    event: "AUTOMATIC_REVIEW_FINALIZATION_TICK",
+                    finalized: result.finalized ?? [],
+                    exceptions: result.exceptions ?? [],
+                  });
+                }
+                return result;
+              })
+              .catch((error) => {
+                appendLog(paths.log, { event: "AUTOMATIC_REVIEW_FINALIZATION_ERROR", error: error.message });
+                health.counters.errors += 1;
+                return { enabled: true, finalized: [], exceptions: [{ error: error.message }] };
+              })
+              .finally(() => {
+                reviewFinalizationInFlight = null;
+              });
           }
         } catch (error) {
           health.scheduler = {
