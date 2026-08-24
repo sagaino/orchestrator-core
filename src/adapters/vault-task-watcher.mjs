@@ -110,6 +110,10 @@ export function createReadyTaskEvent(vaultRoot, filePath, services) {
       risk: String(document.metadata.risk ?? "UNKNOWN").toUpperCase(),
       complexity: String(document.metadata.complexity ?? "UNKNOWN").toUpperCase(),
       role: String(document.metadata.role ?? "GENERAL").toUpperCase(),
+      orchestrationManaged: document.metadata.orchestration_managed === true,
+      objectiveId: document.metadata.objective_id ?? null,
+      orchestrationId: document.metadata.orchestration_id ?? null,
+      nodeId: document.metadata.node_id ?? null,
       acceptanceCriteria,
       skills: parseSkillAssignments(document.metadata.skill_assignments),
       sources: Array.isArray(document.metadata.sources)

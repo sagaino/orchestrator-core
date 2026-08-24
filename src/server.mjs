@@ -95,6 +95,28 @@ function hasIsolatedWorkspace(runsRoot, runId) {
   }
 }
 
+function enrichRunOrchestrationMetadata(run, vaultRoot) {
+  if (!run?.task?.path || !vaultRoot) return run;
+  try {
+    const taskPath = path.join(vaultRoot, run.task.path);
+    const task = readMarkdown(taskPath, vaultRoot);
+    const metadata = task?.metadata ?? {};
+    if (metadata.orchestration_managed !== true) return run;
+    return {
+      ...run,
+      task: {
+        ...run.task,
+        orchestrationManaged: true,
+        objectiveId: metadata.objective_id ?? null,
+        orchestrationId: metadata.orchestration_id ?? null,
+        nodeId: metadata.node_id ?? null,
+      },
+    };
+  } catch {
+    return run;
+  }
+}
+
 export function selectAggregatePreviewCandidates({ evidence, projects = [], runsRoot } = {}) {
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const nodesByProject = new Map();
@@ -1597,13 +1619,13 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   // --- 4. Runs & Review Lifecycle ---
   router.get("/api/runs", async (req, res) => {
-    const runs = listRuns(runsRoot);
+    const runs = listRuns(runsRoot).map((run) => enrichRunOrchestrationMetadata(run, vaultRoot));
     sendJson(res, 200, { success: true, data: runs });
   });
 
   router.get("/api/runs/:id", async (req, res, { params }) => {
     try {
-      const run = getRun(runsRoot, params.id);
+      const run = enrichRunOrchestrationMetadata(getRun(runsRoot, params.id), vaultRoot);
       sendJson(res, 200, { success: true, data: run });
     } catch (err) {
       sendError(res, 404, err.message);
