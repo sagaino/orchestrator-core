@@ -93,12 +93,19 @@ export async function planObjective({
     if (!["EXISTING_PROJECT", "CROSS_PROJECT_INCIDENT"].includes(objective.mode)) {
       fail(`Mode ${objective.mode} tidak menggunakan project decomposition.`, { statusCode: 409, code: "OBJECTIVE_MODE_NOT_PLANNABLE", details: { code: "OBJECTIVE_MODE_NOT_PLANNABLE", mode: objective.mode } });
     }
-    const existingPlan = currentPlan(runsRoot, objective);
-    if (existingPlan && !clarification) {
-      return { objective, plan: existingPlan, status: objective.state, alreadyPlanned: true, planning: { started: true, readOnly: true, tasksCreated: 0, jobsCreated: 0, runsCreated: 0 } };
+    if (objective.state === "CANCELLED") {
+      fail("Objective sudah dibatalkan. Buat Objective baru untuk menjalankan instruksi ini kembali.", {
+        statusCode: 409,
+        code: "OBJECTIVE_CANCELLED_RECREATE_REQUIRED",
+        details: { code: "OBJECTIVE_CANCELLED_RECREATE_REQUIRED", objectiveId: objective.objectiveId },
+      });
     }
     if (!["PLANNING", "NEEDS_CLARIFICATION"].includes(objective.state)) {
       fail(`Objective state tidak dapat diproses oleh planner: ${objective.state}`, { statusCode: 409, code: "OBJECTIVE_STATE_INVALID", details: { code: "OBJECTIVE_STATE_INVALID", state: objective.state } });
+    }
+    const existingPlan = currentPlan(runsRoot, objective);
+    if (existingPlan && !clarification) {
+      return { objective, plan: existingPlan, status: objective.state, alreadyPlanned: true, planning: { started: true, readOnly: true, tasksCreated: 0, jobsCreated: 0, runsCreated: 0 } };
     }
     if (objective.state === "NEEDS_CLARIFICATION" && !String(clarification ?? "").trim()) {
       fail("Jawaban klarifikasi wajib diisi.", { code: "CLARIFICATION_REQUIRED", details: { code: "CLARIFICATION_REQUIRED" } });

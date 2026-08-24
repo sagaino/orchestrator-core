@@ -107,7 +107,7 @@ Every phase must preserve all v1 safety properties plus the following:
 7. Plan approval may authorize execution of every unchanged node in that exact plan revision; each job and run must copy the human approval provenance and prove its node scope is a subset of the approved plan.
 8. Every agent has exactly one primary task, role, project, repository, and workspace.
 9. `role` and future `skills` may narrow behavior; they may never broaden paths, tools, model tier, or approval authority.
-10. Current project-exclusive execution remains the default. Same-project parallel mode is disabled until packet V2-053 is accepted and activated by a human.
+10. Safe defaults remain project-exclusive execution (`ORCHESTRATOR_SAME_PROJECT_PARALLEL=0`), while the active local pilot may explicitly enable same-project parallel execution after V2-053 acceptance. The current pilot profile is controlled by `.env` and uses a maximum of three parallel jobs.
 11. Concurrent nodes with overlapping predicted write paths cannot run in parallel.
 12. Main repositories remain unchanged until the applicable human acceptance gate.
 13. A cross-project operation records evidence and rollback state for every repository.

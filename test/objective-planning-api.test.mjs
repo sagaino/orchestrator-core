@@ -156,6 +156,18 @@ try {
   const recoveredPlan = await request("POST", `/api/objectives/${recoveryId}/generate-plan`, { body: {}, idempotencyKey: "recovery-plan-retry" });
   assert.equal(recoveredPlan.response.status, 201);
   assert.equal(recoveredPlan.data.data.objective.objectiveId, recoveryId);
+
+  const cancelledBody = { mode: "EXISTING_PROJECT", projectIds: ["planning-app"], request: "Retry after cancellation should create a new objective." };
+  const cancelledCreated = await request("POST", "/api/objectives", { body: cancelledBody, idempotencyKey: "cancelled-objective" });
+  const cancelledId = cancelledCreated.data.data.objective.objectiveId;
+  const cancelledPlan = await request("POST", `/api/objectives/${cancelledId}/generate-plan`, { body: {}, idempotencyKey: "cancelled-plan" });
+  assert.equal(cancelledPlan.response.status, 201);
+  const cancelled = await request("POST", `/api/objectives/${cancelledId}/cancel`, { body: {}, idempotencyKey: "cancel-objective" });
+  assert.equal(cancelled.response.status, 201);
+  assert.equal(cancelled.data.data.objective.state, "CANCELLED");
+  const cancelledRetry = await request("POST", `/api/objectives/${cancelledId}/generate-plan`, { body: {}, idempotencyKey: "cancelled-plan-retry" });
+  assert.equal(cancelledRetry.response.status, 409);
+  assert.equal(cancelledRetry.data.error.details.code, "OBJECTIVE_CANCELLED_RECREATE_REQUIRED");
 } finally {
   if (service) await service.stop();
   fs.rmSync(root, { recursive: true, force: true });
