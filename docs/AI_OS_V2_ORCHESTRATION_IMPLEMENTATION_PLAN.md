@@ -1300,3 +1300,54 @@ The complete roadmap is done only when all of the following are true:
 - a new human-accepted certification records versions, commits, checksums, threat-model status, pilot evidence, and rollback evidence.
 
 Until that certification is human-accepted, the new orchestration features remain disabled by default.
+
+## 19. Deferred Follow-up Backlog
+
+### ✅ DUP-001 — Prevent duplicate objectives after failed plan generation
+
+Status: Implemented with durable intake fingerprint deduplication, stable Dashboard idempotency keys, persisted retry state, and explicit `Retry Generate Plan` recovery.
+
+Observed during live read-only review on 2026-08-24:
+
+- An objective remained in `PLANNING` after plan generation failed because the provider response envelope was invalid, even though it contained a candidate structured plan.
+- A subsequent retry created a second objective because the Dashboard generated a new idempotency key instead of retrying the original objective.
+- The result was one stale `PLANNING` objective and one independently `RUNNING` objective with the same request.
+
+Deferred implementation scope:
+
+- Keep retries bound to the existing `objectiveId` after plan-generation failure.
+- Use a stable idempotency key or disable duplicate submission while planning is in progress.
+- Add an explicit `Retry Generate Plan` UI state for recoverable planning failures.
+- Harden provider-envelope parsing so a valid structured plan is not discarded because of an unrelated wrapper error.
+- Add regression coverage for failed planning followed by retry and for duplicate-submit recovery.
+
+Acceptance criteria:
+
+- Retrying a failed plan generation does not create a second objective.
+- Duplicate submission of the same intake returns or resumes the original objective.
+- A stale `PLANNING` objective is clearly recoverable or cancellable from the Dashboard.
+- No two executable objectives are created from one user intake.
+
+### ✅ DUP-002 — Diagnose dev-server startup failure for materialized task
+
+Status: Implemented with categorized startup diagnostics, bounded redacted logs, durable last-failure status, actionable Dashboard guidance, and idempotent retry coverage.
+
+Observed during live execution on 2026-08-24:
+
+- Starting the development server for `task-027-20260824T025414Z-dea28975` returned HTTP `500`.
+- Reported error: `Dev server untuk task-027-20260824T025414Z-dea28975 berhenti saat startup.`
+
+Deferred implementation scope:
+
+- Capture the child-process exit code, startup command, and bounded stderr/stdout evidence.
+- Distinguish port conflicts, missing dependencies, invalid environment, and application startup errors.
+- Surface a stable, actionable failure reason in the task/run UI instead of the generic 500 response.
+- Ensure retry/start-dev-server recovery remains idempotent and does not create duplicate jobs.
+- Add regression coverage for startup failure reporting and recovery.
+
+Acceptance criteria:
+
+- A dev-server startup failure exposes its category and diagnostic evidence without leaking secrets.
+- The UI explains the next valid operator action.
+- Retry does not create a duplicate task or job.
+- A healthy dev server transitions the task to the expected running state.

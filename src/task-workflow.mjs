@@ -118,6 +118,8 @@ async function startTaskRunInternal({
           baseCommit: orchestrationMetadata.baseCommit ?? null,
           frozenSourceStatus: orchestrationMetadata.frozenSourceStatus ?? "",
           frozenSourceStatusHash: orchestrationMetadata.frozenSourceStatusHash ?? null,
+          allowFrozenBaselineDrift: orchestrationMetadata.allowFrozenBaselineDrift === true,
+          allowedCurrentCommit: orchestrationMetadata.allowedCurrentCommit ?? null,
         },
       },
       event: "SAME_PROJECT_PARALLEL_METADATA_ATTACHED",

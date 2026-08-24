@@ -59,7 +59,8 @@ function createFixture(name) {
     nodes: [
       { nodeId: "N01", title: "Implement A", purpose: "Implement the first independent path.", projectId, role: "BACKEND", type: "IMPLEMENTATION", dependsOn: [], acceptanceCriteria: ["A is implemented."], allowedPaths: ["src/a.js"], verification: ["test"], risk: "LOW", complexity: "LOW", requiresChanges: true, canRunInParallel: true, writeConflictGroup: "same-project-a", contextFrom: [], skills: [] },
       { nodeId: "N02", title: "Implement B", purpose: "Implement the second independent path.", projectId, role: "BACKEND", type: "IMPLEMENTATION", dependsOn: [], acceptanceCriteria: ["B is implemented."], allowedPaths: ["src/b.js"], verification: ["test"], risk: "LOW", complexity: "LOW", requiresChanges: true, canRunInParallel: true, writeConflictGroup: "same-project-b", contextFrom: [], skills: [] },
-      { nodeId: "N03", title: "Integrate", purpose: "Verify the aggregate result after both branches finish.", projectId, role: "INTEGRATION", type: "INTEGRATION", dependsOn: ["N01", "N02"], acceptanceCriteria: ["Aggregate verification is ready."], allowedPaths: [], verification: ["test"], risk: "LOW", complexity: "LOW", requiresChanges: false, canRunInParallel: false, writeConflictGroup: null, contextFrom: ["N01", "N02"], skills: [] },
+      { nodeId: "N04", title: "Implement C", purpose: "Implement the third independent path after a worker slot is released.", projectId, role: "BACKEND", type: "IMPLEMENTATION", dependsOn: [], acceptanceCriteria: ["C is implemented."], allowedPaths: ["src/c.js"], verification: ["test"], risk: "LOW", complexity: "LOW", requiresChanges: true, canRunInParallel: true, writeConflictGroup: "same-project-c", contextFrom: [], skills: [] },
+      { nodeId: "N03", title: "Integrate", purpose: "Verify the aggregate result after all branches finish.", projectId, role: "INTEGRATION", type: "INTEGRATION", dependsOn: ["N01", "N02", "N04"], acceptanceCriteria: ["Aggregate verification is ready."], allowedPaths: [], verification: ["test"], risk: "LOW", complexity: "LOW", requiresChanges: false, canRunInParallel: false, writeConflictGroup: null, contextFrom: ["N01", "N02", "N04"], skills: [] },
     ],
     approvedBy: "human:test", approvedAt: timestamp, createdAt: timestamp, updatedAt: timestamp,
   };
@@ -73,9 +74,9 @@ function createFixture(name) {
 
   createObjective({ runsRoot, record: {
     schemaVersion: 1, revision: 0, objectiveId, mode: "EXISTING_PROJECT", state: "MATERIALIZING", request: "Run same-project parallel.", requestedBy: "human:test", projectIds: [projectId], freshProject: null,
-    activePlanId: plan.planId, activeOrchestrationId: orchestrationId, budget: { maxSubtasks: 3, maxParallelAgents: 2, maxRetriesPerNode: 1, maxTotalTokens: null, deadlineAt: null }, createdAt: timestamp, updatedAt: timestamp,
+    activePlanId: plan.planId, activeOrchestrationId: orchestrationId, budget: { maxSubtasks: 4, maxParallelAgents: 2, maxRetriesPerNode: 1, maxTotalTokens: null, deadlineAt: null }, createdAt: timestamp, updatedAt: timestamp,
   } });
-  createPlan({ runsRoot, record: plan, validationOptions: { knownProjectIds: [projectId], budget: { maxSubtasks: 3, maxParallelAgents: 2, maxRetriesPerNode: 1 } } });
+  createPlan({ runsRoot, record: plan, validationOptions: { knownProjectIds: [projectId], budget: { maxSubtasks: 4, maxParallelAgents: 2, maxRetriesPerNode: 1 } } });
   createDecision({ runsRoot, record: {
     schemaVersion: 1, revision: 0, decisionId: `decision-plan-approval-${plan.planId}`, objectiveId, nodeId: null, runId: null, type: "PLAN_APPROVAL", state: "RESOLVED",
     evidence: { planId: plan.planId, planFingerprint: plan.planFingerprint }, requestedAction: "Approve same-project parallel fixture.", allowedChoices: ["APPROVE", "CANCEL"], creator: "SYSTEM", createdAt: timestamp,
@@ -139,9 +140,35 @@ try {
 
   updateJob(fixture.runsRoot, claimedA.jobId, { state: JOB_STATES.DONE, runState: "DONE" });
   updateJob(fixture.runsRoot, claimedB.jobId, { state: JOB_STATES.DONE, runState: "DONE" });
+
+  fs.writeFileSync(path.join(fixture.repository, "src", "a.js"), "a-accepted\n");
+  git(fixture.repository, ["add", "src/a.js"]);
+  git(fixture.repository, ["commit", "-qm", "accepted sibling task"]);
   const afterBranches = schedulerTick({ vaultRoot: fixture.vaultRoot, runsRoot: fixture.runsRoot, enabled: true, env });
-  assert.deepEqual(afterBranches.queued.map((job) => job.nodeId), ["N03"]);
-  assert.equal(afterBranches.queued[0].sameProjectParallel, false, "integration node returns to exclusive mode");
+  assert.deepEqual(afterBranches.queued.map((job) => job.nodeId), ["N04"]);
+  assert.equal(afterBranches.queued[0].sameProjectParallel, true);
+  assert.equal(afterBranches.queued[0].allowFrozenBaselineDrift, true);
+  assert.equal(getJob(fixture.runsRoot, afterBranches.queued[0].jobId).allowedCurrentCommit, git(fixture.repository, ["rev-parse", "HEAD"]));
+  const queuedC = getOrchestration(fixture.runsRoot, fixture.orchestrationId).nodes.N04;
+  assert.equal(queuedC.state, "QUEUED");
+
+  const afterAcceptedSibling = schedulerTick({ vaultRoot: fixture.vaultRoot, runsRoot: fixture.runsRoot, enabled: true, env });
+  assert.equal(afterAcceptedSibling.queued.length, 0, "queued sibling remains deduplicated after accepted source change");
+
+  const claimedC = claimNextJob(fixture.runsRoot, { allowSameProjectParallel: true });
+  const workspaceC = await prepareIsolatedWorkspace({
+    manifest: { runId: "run-c", project: { id: fixture.projectId, repository: fixture.repository }, execution: { orchestration: { sameProjectParallel: true, baseCommit: fixture.baseCommit, frozenSourceStatus: "", allowFrozenBaselineDrift: true, allowedCurrentCommit: git(fixture.repository, ["rev-parse", "HEAD"]) } } },
+    runsRoot: fixture.runsRoot,
+    eventLogPath: path.join(fixture.runsRoot, "events", "run-c.jsonl"),
+    processRunner: runProcess,
+  });
+  assert.equal(workspaceC.baseCommit, fixture.baseCommit);
+  git(fixture.repository, ["worktree", "remove", "--force", workspaceC.path]);
+  git(fixture.repository, ["worktree", "prune"]);
+  updateJob(fixture.runsRoot, claimedC.jobId, { state: JOB_STATES.DONE, runState: "DONE" });
+  const afterAllBranches = schedulerTick({ vaultRoot: fixture.vaultRoot, runsRoot: fixture.runsRoot, enabled: true, env });
+  assert.deepEqual(afterAllBranches.queued.map((job) => job.nodeId), ["N03"]);
+  assert.equal(afterAllBranches.queued[0].sameProjectParallel, false, "integration node returns to exclusive mode");
 
   fs.writeFileSync(path.join(fixture.repository, "drift.txt"), "drift\n");
   git(fixture.repository, ["add", "drift.txt"]);

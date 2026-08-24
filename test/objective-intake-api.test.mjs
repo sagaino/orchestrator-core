@@ -77,6 +77,14 @@ try {
   assert.equal(duplicate.response.headers.get("x-cache"), "IDEMPOTENT_HIT");
   assert.equal(duplicate.data.data.objective.objectiveId, objectiveId);
 
+  // A browser reload or a failed plan generation may produce a new idempotency
+  // key. The same active intake must still resume its original objective.
+  const retryWithNewKey = await request("POST", "/api/objectives", { body: { ...existingBody, request: "  Review   the starter project architecture.  " }, idempotencyKey: "objective-create-after-retry" });
+  assert.equal(retryWithNewKey.response.status, 200);
+  assert.equal(retryWithNewKey.response.headers.get("x-cache"), null);
+  assert.equal(retryWithNewKey.data.data.alreadyExisting, true);
+  assert.equal(retryWithNewKey.data.data.objective.objectiveId, objectiveId);
+
   const listed = await request("GET", "/api/objectives");
   assert.equal(listed.response.status, 200);
   assert.equal(listed.data.data.length, 1);

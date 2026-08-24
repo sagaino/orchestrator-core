@@ -195,6 +195,8 @@ export function enqueueTaskJob({
         baseCommit: orchestrationMetadata?.baseCommit ?? null,
         frozenSourceStatus: orchestrationMetadata?.frozenSourceStatus ?? null,
         frozenSourceStatusHash: orchestrationMetadata?.frozenSourceStatusHash ?? null,
+        allowFrozenBaselineDrift: orchestrationMetadata?.allowFrozenBaselineDrift === true,
+        allowedCurrentCommit: orchestrationMetadata?.allowedCurrentCommit ?? null,
         planApproval: orchestrationMetadata ? {
           decisionId: orchestrationMetadata.approvalDecisionId ?? null,
           planFingerprint: orchestrationMetadata.planFingerprint ?? null,

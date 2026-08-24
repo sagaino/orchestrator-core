@@ -82,6 +82,52 @@ function integrationEvidenceDto(evidence) {
   };
 }
 
+const NON_RUNNABLE_PREVIEW_NODE_TYPES = new Set(["INTEGRATION", "VERIFICATION"]);
+
+function hasIsolatedWorkspace(runsRoot, runId) {
+  if (!runsRoot || !runId) return false;
+  try {
+    const run = getRun(runsRoot, runId);
+    const workspacePath = run?.execution?.workspace?.path;
+    return typeof workspacePath === "string" && fs.existsSync(workspacePath);
+  } catch {
+    return false;
+  }
+}
+
+export function selectAggregatePreviewCandidates({ evidence, projects = [], runsRoot } = {}) {
+  const projectById = new Map(projects.map((project) => [project.id, project]));
+  const nodesByProject = new Map();
+  for (const node of evidence?.nodes ?? []) {
+    if (node.state !== "DONE" || !node.runId || !node.projectId) continue;
+    if (NON_RUNNABLE_PREVIEW_NODE_TYPES.has(String(node.type ?? "").toUpperCase())) continue;
+    const current = nodesByProject.get(node.projectId);
+    const currentHasWorkspace = current ? hasIsolatedWorkspace(runsRoot, current.runId) : false;
+    const candidateHasWorkspace = hasIsolatedWorkspace(runsRoot, node.runId);
+    if (!current || (!currentHasWorkspace && candidateHasWorkspace) || (!currentHasWorkspace && !candidateHasWorkspace)) {
+      nodesByProject.set(node.projectId, { node, hasWorkspace: candidateHasWorkspace });
+    }
+  }
+
+  const planApproved = evidence?.plan?.state === "APPROVED";
+  return (evidence?.objective?.projectIds ?? []).map((projectId) => {
+    const selected = nodesByProject.get(projectId);
+    const project = projectById.get(projectId);
+    const repository = selected?.hasWorkspace ? null : project?.repository ?? null;
+    const available = Boolean(selected && (selected.hasWorkspace || repository));
+    return {
+      projectId,
+      runId: selected?.node.runId ?? null,
+      repository,
+      environment: { ORCHESTRATOR_RUNS: path.resolve(runsRoot) },
+      unavailableReason: planApproved ? (available ? null : "NO_RUNNABLE_PREVIEW_SOURCE") : "PLAN_NOT_APPROVED",
+      unavailableMessage: planApproved
+        ? (available ? null : "Tidak ada isolated workspace atau repository terdaftar untuk preview project ini.")
+        : "Preview hanya tersedia setelah plan objective di-approve.",
+    };
+  });
+}
+
 function skillUsage({ runsRoot, skills }) {
   const usage = Object.fromEntries(skills.map((skill) => [`${skill.skillId}@${skill.version}`, {
     planAssignments: 0,
@@ -295,19 +341,20 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
           state: revision.objective.state,
         });
       }
+      const objectiveEvent = result.alreadyExisting ? "OBJECTIVE_INTAKE_IDEMPOTENT" : "OBJECTIVE_CREATED";
       appendAuditEntry(runsRoot, {
-        event: "OBJECTIVE_CREATED",
+        event: objectiveEvent,
         actor: req.operatorIdentity ?? "local:unknown",
         objectiveId: result.objective.objectiveId,
         mode: result.objective.mode,
         state: result.objective.state,
       });
-      eventHub.broadcast("OBJECTIVE_CREATED", {
+      eventHub.broadcast(objectiveEvent, {
         objectiveId: result.objective.objectiveId,
         mode: result.objective.mode,
         state: result.objective.state,
       });
-      sendJson(res, 201, { success: true, data: result });
+      sendJson(res, result.alreadyExisting ? 200 : 201, { success: true, data: result });
     } catch (error) {
       sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
@@ -377,19 +424,10 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
     try {
       const body = await parseJsonBody(req);
       const evidence = buildObjectiveEvidence({ runsRoot, objectiveId: params.id });
-      const nodesByProject = new Map();
-      for (const node of evidence.nodes) {
-        if (node.state === "DONE" && node.runId && node.projectId) nodesByProject.set(node.projectId, node);
-      }
-      const planApproved = evidence.plan?.state === "APPROVED";
-      const candidates = (evidence.objective.projectIds ?? []).map((projectId) => {
-        const node = nodesByProject.get(projectId);
-        return {
-          projectId,
-          runId: node?.runId ?? null,
-          unavailableReason: planApproved ? (node ? null : "NO_COMPLETED_RUN_EVIDENCE") : "PLAN_NOT_APPROVED",
-          unavailableMessage: planApproved ? (node ? null : "Tidak ada run DONE dengan evidence untuk project ini.") : "Preview hanya tersedia setelah plan objective di-approve.",
-        };
+      const candidates = selectAggregatePreviewCandidates({
+        evidence,
+        projects: listProjects(vaultRoot).projects,
+        runsRoot,
       });
       const result = await globalDevServerManager.startAggregateProjectPreview({
         runsRoot,
@@ -2009,7 +2047,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       eventHub.broadcast("DEV_SERVER_STARTED", { runId: params.id, ...serverInfo });
       sendJson(res, 200, { success: true, data: serverInfo });
     } catch (err) {
-      sendError(res, 500, err.message);
+      sendError(res, err.statusCode || 500, err.message, err.details ?? (err.code ? { code: err.code } : null));
     }
   });
 
