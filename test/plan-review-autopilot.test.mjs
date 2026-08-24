@@ -14,6 +14,16 @@ assert.equal(shouldAutomaticallyFinalizeReview({
   manifest: { state: "RETROSPECTIVE" },
 }), true);
 assert.equal(shouldAutomaticallyFinalizeReview({
+  env: { ORCHESTRATOR_APPROVAL_MODE: "PLAN_REVIEW_THEN_AUTOPILOT", ORCHESTRATOR_AUTO_FINALIZE_TASKS: "0" },
+  job: { objectiveId: "obj-1", orchestrationId: "orch-1", orchestration: { managed: true } },
+  manifest: { state: "RETROSPECTIVE" },
+}), false);
+assert.equal(shouldAutomaticallyFinalizeReview({
+  env: { ORCHESTRATOR_APPROVAL_MODE: "PLAN_REVIEW_THEN_AUTOPILOT", ORCHESTRATOR_AUTO_ACCEPT_TASKS: "false" },
+  job: { objectiveId: "obj-1", orchestrationId: "orch-1", orchestration: { managed: true } },
+  manifest: { state: "RETROSPECTIVE" },
+}), false);
+assert.equal(shouldAutomaticallyFinalizeReview({
   env: { ORCHESTRATOR_APPROVAL_MODE: "MANUAL" },
   job: { objectiveId: "obj-1", orchestrationId: "orch-1", orchestration: { managed: true } },
   manifest: { state: "RETROSPECTIVE" },
