@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DevServerManager } from "../src/dev-server-manager.mjs";
+import { DevServerManager, devServerEnvironment } from "../src/dev-server-manager.mjs";
 
 console.log("Running dev-server-manager.test.mjs...");
 
@@ -16,6 +16,7 @@ fs.writeFileSync(path.join(failedRepository, "package.json"), JSON.stringify({ s
 fs.writeFileSync(path.join(healthyRepository, "package.json"), JSON.stringify({ scripts: { dev: "node -e \"require('http').createServer((_, res) => res.end('ok')).listen(process.env.PORT, '127.0.0.1')\" --" } }));
 
 const manager = new DevServerManager();
+assert.equal(devServerEnvironment(runsRoot, { ORCHESTRATOR_RUNS: "/tmp/incorrect-runs" }).ORCHESTRATOR_RUNS, path.resolve(runsRoot));
 try {
   await assert.rejects(
     () => manager.startDevServer({ runsRoot, runId: "failed-run", projectId: "fixture-app", repository: failedRepository }),

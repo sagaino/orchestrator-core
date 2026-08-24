@@ -68,6 +68,55 @@ export function normalizeSafeRelativePath(value, { label = "Path" } = {}) {
   return normalized;
 }
 
+function normalizeComparablePath(value) {
+  return String(value ?? "")
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "")
+    .replace(/\/$/, "");
+}
+
+function globSegmentPattern(segment) {
+  let pattern = "";
+  for (let index = 0; index < segment.length; index += 1) {
+    const character = segment[index];
+    if (character === "*") {
+      pattern += "[^/]*";
+    } else if (character === "?") {
+      pattern += "[^/]";
+    } else {
+      pattern += /[\\^$+?.()|{}\[\]]/.test(character) ? `\\${character}` : character;
+    }
+  }
+  return pattern;
+}
+
+/**
+ * Match a repository-relative changed path against an allowed path or glob.
+ * A plain path keeps the historical directory-prefix behavior; glob paths
+ * follow segment boundaries so `src/pages/Skills/**` includes index.tsx.
+ */
+export function pathMatchesAllowed(candidatePath, allowedPath) {
+  const candidate = normalizeComparablePath(candidatePath);
+  const allowed = normalizeComparablePath(allowedPath);
+  if (!candidate || !allowed) return false;
+
+  if (!/[?*]/.test(allowed)) {
+    return candidate === allowed || candidate.startsWith(`${allowed}/`);
+  }
+
+  const segments = allowed.split("/");
+  let expression = "^";
+  segments.forEach((segment, index) => {
+    if (segment === "**") {
+      expression += "(?:/[^/]+)*";
+      return;
+    }
+    expression += `${index === 0 ? "" : "/"}${globSegmentPattern(segment)}`;
+  });
+  expression += "$";
+  return new RegExp(expression).test(candidate);
+}
+
 export function resolveContainedPath(root, relativePath, {
   label = "Path",
   mustExist = false,

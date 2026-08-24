@@ -90,6 +90,14 @@ export async function allocateFreePort(startPort = 5200, maxAttempts = 50) {
   throw new Error(`Tidak menemukan port kosong antara ${startPort} dan ${startPort + maxAttempts}`);
 }
 
+export function devServerEnvironment(runsRoot, environment = {}) {
+  return {
+    ...process.env,
+    ...environment,
+    ORCHESTRATOR_RUNS: path.resolve(runsRoot),
+  };
+}
+
 export function parseGitDiff(rawDiff) {
   if (!rawDiff || typeof rawDiff !== "string") return [];
   const files = [];
@@ -244,8 +252,7 @@ export class DevServerManager {
     const child = spawn("npm", ["run", "dev", "--", "--port", String(port), "--host", host], {
       cwd: workspacePath,
       env: {
-        ...process.env,
-        ...environment,
+        ...devServerEnvironment(runsRoot, environment),
         PORT: String(port),
       },
       stdio: ["ignore", "pipe", "pipe"],

@@ -11,6 +11,7 @@ import { listJobs } from "./job-queue.mjs";
 import { listRuns, RUN_STATES } from "./run-manager.mjs";
 import { buildRunEvidence } from "./interaction.mjs";
 import { planFingerprint } from "./plan-lifecycle.mjs";
+import { pathMatchesAllowed } from "./security.mjs";
 
 export const SEQUENTIAL_ORCHESTRATION_CERTIFICATION_SCHEMA_VERSION = 1;
 export const SEQUENTIAL_ORCHESTRATION_CERTIFICATION_KIND = "personal-ai-os-v2-sequential-orchestration-certification";
@@ -44,11 +45,7 @@ function inside(root, target) {
 }
 
 function pathWithinAllowed(candidate, allowedPaths) {
-  const normalizedCandidate = String(candidate ?? "").replaceAll("\\", "/").replace(/^\.\//, "");
-  return allowedPaths.some((allowed) => {
-    const normalizedAllowed = String(allowed ?? "").replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
-    return normalizedCandidate === normalizedAllowed || normalizedCandidate.startsWith(`${normalizedAllowed}/`);
-  });
+  return allowedPaths.some((allowed) => pathMatchesAllowed(candidate, allowed));
 }
 
 function repositoryStatus(repository) {

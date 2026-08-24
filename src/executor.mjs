@@ -18,7 +18,7 @@ import {
   snapshotFromObject,
 } from "./workspace-manager.mjs";
 import { appendRunTelemetry, createAgentTelemetryRecord } from "./telemetry.mjs";
-import { isDeniedPath } from "./security.mjs";
+import { isDeniedPath, pathMatchesAllowed } from "./security.mjs";
 import { formatReviewRevisionFeedback, formatInlineComments } from "./review-workflow.mjs";
 import { runDurableInvocation, runtimeOwner } from "./durable-runtime.mjs";
 import { capabilityForStage, prepareCapabilitySpawn } from "./capability-policy.mjs";
@@ -39,10 +39,7 @@ function compactLine(line) {
 }
 
 function pathAllowed(filePath, allowedPaths) {
-  return allowedPaths.some((allowedPath) => {
-    const normalized = String(allowedPath).replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
-    return filePath === normalized || filePath.startsWith(`${normalized}/`);
-  });
+  return allowedPaths.some((allowedPath) => pathMatchesAllowed(filePath, allowedPath));
 }
 
 const PACKAGE_MANAGER_PATHS = Object.freeze([
