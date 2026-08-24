@@ -60,6 +60,8 @@ try {
   const sourceSnapshots = Object.fromEntries(Object.entries(repositories).map(([id, repository]) => [id, fs.readFileSync(path.join(repository, "marker.txt"), "utf8")]));
   const initial = getProjectRelationships({ vaultRoot, projectId: "frontend" });
   assert.deepEqual(initial.relationships, []);
+  assert.deepEqual(initial.diagnostics, []);
+  assert.equal(initial.hasMetadataOnlyRelationships, false);
   assert.deepEqual(initial.registeredProjectIds, ["backend", "frontend"]);
   assert.deepEqual(listProjects(vaultRoot).projects.find((project) => project.id === "frontend").relationships, []);
 
@@ -86,8 +88,11 @@ try {
   assert.deepEqual(saved.relationships[0].contractPaths, ["a/client.ts", "z/openapi.yaml"]);
   assert.deepEqual(saved.relationships[0].verification, ["test:contract"]);
   assert.match(fs.readFileSync(path.join(vaultRoot, "project-registry.md"), "utf8"), /relationships/);
-  assert.deepEqual(getProjectRelationships({ vaultRoot, projectId: "frontend" }).relationships, saved.relationships);
-  assert.deepEqual(getProjectRelationships({ vaultRoot, projectId: "frontend" }).effectiveRelationships, saved.relationships);
+  const frontendRelationships = getProjectRelationships({ vaultRoot, projectId: "frontend" });
+  assert.deepEqual(frontendRelationships.relationships, saved.relationships);
+  assert.deepEqual(frontendRelationships.effectiveRelationships, saved.relationships);
+  assert.deepEqual(frontendRelationships.diagnostics, [{ type: "CONSUMES_API", targetProjectId: "backend", status: "READY", warnings: [] }]);
+  assert.equal(frontendRelationships.hasMetadataOnlyRelationships, false);
   const backendRelationships = getProjectRelationships({ vaultRoot, projectId: "backend" });
   assert.deepEqual(backendRelationships.relationships, []);
   assert.deepEqual(backendRelationships.incomingRelationships, [{ type: "PROVIDES_API", targetProjectId: "frontend", contractPaths: ["a/client.ts", "z/openapi.yaml"], verification: ["test:contract"] }]);

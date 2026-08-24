@@ -6,6 +6,7 @@ import { listJobs, JOB_STATES } from "./job-queue.mjs";
 import { listRuns } from "./run-manager.mjs";
 import { verifyAuditChain } from "./audit-chain.mjs";
 import { summarizeOperationsArtifacts } from "./operations-artifacts.mjs";
+import { runtimeConfigSnapshot } from "./runtime-config.mjs";
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
@@ -416,7 +417,9 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
       resolutionEvidenceRequired: true,
     };
   });
-  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, backupSchedule: { configured: Boolean(backupSchedule), launchctlActivated: backupSchedule?.launchctlActivated === true, intervalHours: backupSchedule?.intervalHours ?? null }, recoveryDrill: drill, runtime, artifacts, artifactCoverage, queue: { queued: queued.length, oldestAgeMs: queueAgeMs }, failures: { deadlineFailures, providerFailures } } };
+  const activeJobs = jobs.filter((job) => [JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state));
+  const parallel = daemonState?.parallel ?? {};
+  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, backupSchedule: { configured: Boolean(backupSchedule), launchctlActivated: backupSchedule?.launchctlActivated === true, intervalHours: backupSchedule?.intervalHours ?? null }, recoveryDrill: drill, runtime, artifacts, artifactCoverage, runtimeConfig: runtimeConfigSnapshot(), queue: { queued: queued.length, running: activeJobs.filter((job) => job.state === JOB_STATES.RUNNING).length, review: activeJobs.filter((job) => job.state === JOB_STATES.REVIEW).length, oldestAgeMs: queueAgeMs, maxWorkers: parallel.maxWorkers ?? null, activeWorkers: parallel.activeWorkers ?? activeJobs.length, availableWorkerSlots: parallel.availableWorkerSlots ?? null, eligibleQueuedJobCount: parallel.eligibleQueuedJobCount ?? null, blockedQueuedJobCount: parallel.blockedQueuedJobCount ?? null }, failures: { deadlineFailures, providerFailures } } };
 }
 
 export function assertOperationalReadiness({ runsRoot, now, config } = {}) {

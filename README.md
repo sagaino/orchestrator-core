@@ -114,9 +114,17 @@ ORCHESTRATOR_MIN_FREE_DISK_MB=1024
 ORCHESTRATOR_MAX_SSE_CLIENTS=20
 ORCHESTRATOR_MAX_BACKUP_AGE_HOURS=24
 
+# Profil runtime yang akan terlihat di Operations (deskriptif, tidak menggantikan flag)
+ORCHESTRATOR_PROFILE=LOCAL_SAFE
+
 # AI OS v2 objective intake tetap nonaktif sampai human gate
 ORCHESTRATOR_OBJECTIVES_ENABLED=0
 ```
+
+Untuk pilot lokal, gunakan profil eksplisit `LOCAL_PILOT` dan atur kapasitas
+worker sesuai kebutuhan. Review konfigurasi efektif di **Operations → Runtime
+profile** sebelum menerima pekerjaan baru; halaman tersebut juga menampilkan
+worker aktif, slot tersedia, dan job yang masih antre.
 
 ## 🛡️ Operations Center
 

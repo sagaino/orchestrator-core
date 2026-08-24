@@ -1506,7 +1506,9 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       autoStart,
     });
 
-    sendJson(res, 201, { success: true, data: result });
+    res.setHeader("Deprecation", "true");
+    res.setHeader("Link", "</api/objectives>; rel=\"successor-version\"");
+    sendJson(res, 201, { success: true, data: { ...result, flow: "LEGACY_TASK", migration: "Gunakan /api/objectives untuk intake canonical Objective." } });
   });
 
   router.post("/api/tasks/:projectId/:taskInput/cancel", async (req, res, { params }) => {

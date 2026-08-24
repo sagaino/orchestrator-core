@@ -35,6 +35,9 @@ try {
   assert.equal(ready.admission.allowed, true);
   assert.equal(ready.checks.find((item) => item.id === "backup").status, "PASS");
   assert.equal(ready.signals.failures.providerFailures, 0, "successful provider metadata must not be counted as a failure");
+  assert.equal(ready.signals.runtimeConfig.schemaVersion, 1);
+  assert.equal(typeof ready.signals.runtimeConfig.profile, "string");
+  assert.equal(typeof ready.signals.queue.maxWorkers, "number");
   const acknowledged = acknowledgeOperationsAlert({ runsRoot, alertId: "OPS_PROVIDER_FAILURES", acknowledgedBy: "operator", now: new Date("2026-08-22T01:01:00.000Z"), note: "investigating" });
   assert.equal(acknowledged.history.length, 1);
   assert.equal(listOperationsAlertAcknowledgements({ runsRoot, alertId: "OPS_PROVIDER_FAILURES" }).length, 1);

@@ -9,7 +9,7 @@ import { redactText } from "./redaction.mjs";
 import { verifyMigrationMatrixReport } from "./migration-upgrade.mjs";
 import { verifyFinalPilotCohortReport } from "./final-pilot-cohort.mjs";
 import { verifyRecoveryRehearsalReport } from "./operator-recovery-rehearsal.mjs";
-import { verifyReleaseArtifact } from "./release-artifact.mjs";
+import { buildReleaseArtifact, verifyReleaseArtifact } from "./release-artifact.mjs";
 import { DEFAULT_VAULT } from "./core.mjs";
 import { readBackupStatus } from "./operations-governance.mjs";
 
@@ -118,6 +118,31 @@ function safeEvidenceVerification(verify, reportPath) {
   try { return verify({ reportPath }); } catch (error) { return { valid: false, status: null, checksum: null, error: error.message }; }
 }
 
+function ensureCurrentReleaseArtifact({ reportRoot, repoRoot, dashboardRoot, releaseVersion }) {
+  const manifestPath = path.join(reportRoot, "runtime", "release-artifacts", `v${releaseVersion}`, "release-artifact.json");
+  const currentBackendCommit = repoCommit(repoRoot);
+  const currentDashboardCommit = repoCommit(dashboardRoot);
+  let verified = verifyReleaseArtifact({ manifestPath });
+  const current = verified.valid
+    && verified.manifest?.components?.some((item) => item.label === "backend" && item.commit === currentBackendCommit)
+    && verified.manifest?.components?.some((item) => item.label === "dashboard" && item.commit === currentDashboardCommit);
+  if (current) return verified;
+  if (!repositoryClean(repoRoot) || !repositoryClean(dashboardRoot)) {
+    return {
+      ...verified,
+      valid: false,
+      errors: [...(verified.errors ?? []), "Release artifact tidak cocok dengan commit saat ini dan repository masih memiliki perubahan lokal."],
+    };
+  }
+  try {
+    buildReleaseArtifact({ repoRoot, dashboardRoot, outputRoot: path.join(reportRoot, "runtime", "release-artifacts"), releaseVersion });
+    verified = verifyReleaseArtifact({ manifestPath });
+  } catch (error) {
+    return { ...verified, valid: false, errors: [...(verified.errors ?? []), `rebuild failed: ${error.message}`] };
+  }
+  return verified;
+}
+
 export async function runFinalV1Certification({ reportRoot = null, repoRoot = REPO_ROOT, dashboardRoot = null, gateResults = null, executeGates = true, allowInjectedTestEvidence = false, now = new Date(), releaseVersion = FINAL_CERTIFICATION_VERSION } = {}) {
   if (!executeGates && !allowInjectedTestEvidence) throw new Error("Injected gate evidence dilarang untuk final certification produksi.");
   const resolvedReportRoot = path.resolve(reportRoot ?? path.join(repoRoot, "runs"));
@@ -144,7 +169,7 @@ export async function runFinalV1Certification({ reportRoot = null, repoRoot = RE
     pilot: safeEvidenceVerification(verifyFinalPilotCohortReport, path.join(resolvedReportRoot, "runtime", "pilot-cohort", "p9.2-report.json")),
     recovery: safeEvidenceVerification(verifyRecoveryRehearsalReport, path.join(resolvedReportRoot, "runtime", "recovery-rehearsal", "p9.3-report.json")),
   };
-  const releaseArtifact = verifyReleaseArtifact({ manifestPath: path.join(resolvedReportRoot, "runtime", "release-artifacts", `v${releaseVersion}`, "release-artifact.json") });
+  const releaseArtifact = ensureCurrentReleaseArtifact({ reportRoot: resolvedReportRoot, repoRoot: path.resolve(repoRoot), dashboardRoot: resolvedDashboardRoot, releaseVersion });
   const documentationPaths = ["docs/P9_3_OPERATOR_RUNBOOK.md", "docs/P9_4_THREAT_MODEL.md", "docs/PHASE_9_GA_CONTRACT.md", "docs/PHASE_5_TO_V1_EXECUTION_PLAN.md", "docs/AI_OS_MVP_SCOPE.md"];
   const documentation = { valid: documentationPaths.every((item) => fs.existsSync(path.join(repoRoot, item))), paths: documentationPaths.map((item) => path.join(repoRoot, item)) };
   const checks = {

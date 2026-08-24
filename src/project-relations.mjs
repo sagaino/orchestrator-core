@@ -207,6 +207,20 @@ function relationshipsEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function relationshipDiagnostics(relationships) {
+  return relationships.map((relationship) => {
+    const warnings = [];
+    if (relationship.contractPaths.length === 0) warnings.push("Contract path belum dikonfigurasi; kompatibilitas API tidak dapat diverifikasi secara spesifik.");
+    if (relationship.verification.length === 0) warnings.push("Verification check belum dikonfigurasi; linked-project verification akan terbatas.");
+    return {
+      type: relationship.type,
+      targetProjectId: relationship.targetProjectId,
+      status: warnings.length === 0 ? "READY" : "METADATA_ONLY",
+      warnings,
+    };
+  });
+}
+
 export function getProjectRelationships({ vaultRoot, projectId: requestedProjectId } = {}) {
   const projectId = safeProjectId(requestedProjectId);
   const registry = readRegistry(vaultRoot);
@@ -217,12 +231,15 @@ export function getProjectRelationships({ vaultRoot, projectId: requestedProject
   });
   const effective = effectiveRelationships(registry, projectId, relationships);
   const incomingRelationships = effective.filter((relationship) => !relationships.some((explicit) => relationshipKey(explicit) === relationshipKey(relationship)));
+  const diagnostics = relationshipDiagnostics(effective);
   return {
     schemaVersion: PROJECT_RELATIONSHIP_SCHEMA_VERSION,
     projectId,
     relationships,
     incomingRelationships,
     effectiveRelationships: effective,
+    diagnostics,
+    hasMetadataOnlyRelationships: diagnostics.some((item) => item.status === "METADATA_ONLY"),
     allowedTypes: PROJECT_RELATIONSHIP_TYPES,
     registeredProjectIds: registry.rows.map((candidate) => candidate.id).sort(),
   };
