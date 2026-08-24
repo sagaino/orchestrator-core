@@ -84,7 +84,7 @@ export function decompositionPlanSchema() {
             type: { enum: ["DIAGNOSTIC", "IMPLEMENTATION", "INTEGRATION", "VERIFICATION"] },
             dependsOn: { type: "array", items: { type: "string" } },
             acceptanceCriteria: { type: "array", minItems: 1, items: { type: "string" } },
-            allowedPaths: { type: "array", items: { type: "string" } },
+            allowedPaths: { type: "array", items: { type: "string", description: "Repository-relative POSIX path only; never absolute and never use . or .. segments." } },
             verification: { type: "array", minItems: 1, items: { type: "string" } },
             risk: { type: "string" },
             complexity: { type: "string" },
@@ -242,6 +242,36 @@ export function buildDecompositionContext({ objective, projectContexts = [], kno
 
 function sortedProjectIds(value) {
   return [...new Set((Array.isArray(value) ? value : []).map((item) => String(item).trim()).filter(Boolean))].sort();
+}
+
+function normalizeAllowedPath(value, repository) {
+  const candidate = String(value ?? "").trim();
+  if (!candidate || !repository || (!path.isAbsolute(candidate) && !/^[A-Za-z]:[\\/]/.test(candidate))) return value;
+
+  const root = path.resolve(String(repository));
+  const absolute = path.resolve(candidate);
+  const relative = path.relative(root, absolute);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return value;
+  return relative.split(path.sep).join("/");
+}
+
+export function normalizePlanAllowedPaths(plan, projectContexts = []) {
+  if (!isRecord(plan) || !Array.isArray(plan.nodes)) return plan;
+  const repositories = new Map((Array.isArray(projectContexts) ? projectContexts : []).map((project) => [
+    String(project?.projectId ?? project?.id ?? ""),
+    project?.repository,
+  ]));
+  return {
+    ...plan,
+    nodes: plan.nodes.map((node) => {
+      if (!isRecord(node) || !Array.isArray(node.allowedPaths)) return node;
+      const repository = repositories.get(String(node.projectId ?? ""));
+      return {
+        ...node,
+        allowedPaths: node.allowedPaths.map((allowedPath) => normalizeAllowedPath(allowedPath, repository)),
+      };
+    }),
+  };
 }
 
 function unexpectedKeys(record, allowed, label) {
@@ -407,6 +437,7 @@ export async function decomposeProject({
     "approvedBy and approvedAt must remain null. skills must remain an empty array.",
     `The only allowed project IDs are: ${JSON.stringify(sortedProjectIds(objective.projectIds))}.`,
     `Budget ceilings: ${JSON.stringify(budget)}. Never exceed them silently.`,
+    "Every node.allowedPaths entry must be a repository-relative POSIX path such as src/components/Button.tsx or src/features/**. Never emit an absolute path, repository root path, drive-letter path, backslash path, or . / .. traversal segment. Never copy the repository path from context into allowedPaths. DIAGNOSTIC and VERIFICATION nodes must use allowedPaths=[] and requiresChanges=false.",
     "If a safe decomposition is impossible without a human answer, return only the clarification JSON shape with clarificationNeeded=true and a precise clarificationQuestion.",
     "integration.projectVerification and integration.crossProjectVerification may contain only approved scoped strings in the exact form projectId:script; never use objects, prose, acceptance criteria, or shell commands. For multi-project integration include at least one projectVerification entry per project and at least one crossProjectVerification entry.",
     ...(crossProjectDiagnosis ? [
@@ -451,9 +482,10 @@ export async function decomposeProject({
   };
   if (parsed.clarificationNeeded === true) return clarificationResult(parsed, metadata);
 
-  const validation = validateParsedPlan(parsed, objective, budget, projectContexts);
+  const normalizedPlan = normalizePlanAllowedPaths(parsed, projectContexts);
+  const validation = validateParsedPlan(normalizedPlan, objective, budget, projectContexts);
   if (!validation.errors.length && crossProjectDiagnosis) {
-    validation.errors.push(...validateCrossProjectPlan(parsed, crossProjectDiagnosis, objective));
+    validation.errors.push(...validateCrossProjectPlan(normalizedPlan, crossProjectDiagnosis, objective));
   }
   if (validation.errors.length) {
     throw errorWithCode(`Decomposition plan invalid: ${validation.errors.join("; ")}`, "INVALID_PLAN", {
@@ -464,7 +496,7 @@ export async function decomposeProject({
   }
   const skillRouting = runsRoot
     ? routePlanSkills({
-      plan: parsed,
+      plan: normalizedPlan,
       runsRoot,
       projectSignalsByProject: projectSignalsForProjects(projectContexts),
       env,

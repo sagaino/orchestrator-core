@@ -3,7 +3,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { injectFault } from "./fault-injection.mjs";
-import { isDeniedPath } from "./security.mjs";
+import { isDeniedPath, pathMatchesAllowed } from "./security.mjs";
 import { changedPaths, repositorySnapshot, snapshotFromObject, snapshotToObject } from "./workspace-manager.mjs";
 
 const WORKSPACE_ROOT = "integration";
@@ -131,12 +131,7 @@ function normalizedPath(value) {
 }
 
 function pathAllowed(filePath, allowedPaths = []) {
-  const candidate = normalizedPath(filePath);
-  return allowedPaths.some((allowed) => {
-    const normalized = normalizedPath(allowed);
-    const base = normalized.split(/[?*\[]/, 1)[0].replace(/\/$/, "");
-    return candidate === normalized || candidate === base || candidate.startsWith(`${base}/`);
-  });
+  return allowedPaths.some((allowed) => pathMatchesAllowed(normalizedPath(filePath), normalizedPath(allowed)));
 }
 
 function patchPaths({ sourceRepository, parentCommit, commitHash }) {

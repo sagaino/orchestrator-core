@@ -19,6 +19,7 @@ import { cleanupIsolatedWorkspace } from "./workspace-manager.mjs";
 import { appendRunTelemetry } from "./telemetry.mjs";
 import { acquireDurableLease, releaseDurableLease } from "./durable-runtime.mjs";
 import { createVisualRevisionRecord, normalizeVisualFeedback } from "./visual-revision.mjs";
+import { pathMatchesAllowed } from "./security.mjs";
 
 export function cleanTerminalOutput(rawOutput) {
   if (!rawOutput || typeof rawOutput !== "string") return "";
@@ -366,11 +367,7 @@ function isGeneratedVerificationArtifact(relativePath) {
 }
 
 function pathWithinAllowed(candidate, allowedPaths) {
-  const normalizedCandidate = String(candidate ?? "").replaceAll("\\", "/");
-  return allowedPaths.some((allowed) => {
-    const normalizedAllowed = String(allowed ?? "").replaceAll("\\", "/").replace(/\/$/, "");
-    return normalizedCandidate === normalizedAllowed || normalizedCandidate.startsWith(`${normalizedAllowed}/`);
-  });
+  return allowedPaths.some((allowed) => pathMatchesAllowed(candidate, allowed));
 }
 
 export function isSafeInfrastructureFailure({ rawError = "", manifest = {} } = {}) {

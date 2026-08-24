@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   decompositionOutputSchema,
   decomposeProject,
+  normalizePlanAllowedPaths,
   parseDecompositionResult,
 } from "../src/project-decomposer.mjs";
 import { resolveAgentRoute } from "../src/agent-routing.mjs";
@@ -66,6 +67,25 @@ assert.throws(() => parseDecompositionResult({ stdoutTail: JSON.stringify({ conv
 assert.throws(() => parseDecompositionResult({ stdoutTail: JSON.stringify({ conversation_id: "fixture", status: "SUCCESS", response: `${JSON.stringify(plan)}\n${JSON.stringify(plan)}`, error: null }) }), (error) => error.code === "INVALID_DECOMPOSITION_OUTPUT");
 assert.throws(() => parseDecompositionResult({ stdoutTail: `Here is the plan:\n${JSON.stringify(plan)}` }), (error) => error.code === "INVALID_DECOMPOSITION_OUTPUT");
 assert.throws(() => parseDecompositionResult({ stdoutTail: `${JSON.stringify(plan)}\n${JSON.stringify(plan)}` }), (error) => error.code === "INVALID_DECOMPOSITION_OUTPUT");
+
+const absolutePathPlan = {
+  ...plan,
+  nodes: [{
+    ...plan.nodes[0],
+    type: "IMPLEMENTATION",
+    requiresChanges: true,
+    writeConflictGroup: "checkout",
+    allowedPaths: ["/tmp/shop/src/fixture.js"],
+  }],
+};
+assert.deepEqual(
+  normalizePlanAllowedPaths(absolutePathPlan, [{ projectId: "shop", repository: "/tmp/shop" }]).nodes[0].allowedPaths,
+  ["src/fixture.js"],
+);
+assert.deepEqual(
+  normalizePlanAllowedPaths({ ...absolutePathPlan, nodes: [{ ...absolutePathPlan.nodes[0], allowedPaths: ["/tmp/other/src/fixture.js"] }] }, [{ projectId: "shop", repository: "/tmp/shop" }]).nodes[0].allowedPaths,
+  ["/tmp/other/src/fixture.js"],
+);
 
 const calls = [];
 const success = await decomposeProject({

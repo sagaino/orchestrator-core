@@ -1,6 +1,7 @@
 import { JOB_STATES, listJobs } from "./job-queue.mjs";
 import { listRuns, RUN_STATES } from "./run-manager.mjs";
 import { buildTelemetry, collectRunTelemetry, compactTelemetry } from "./telemetry.mjs";
+import { pathMatchesAllowed } from "./security.mjs";
 
 const ACCEPTABLE_STATES = new Set([
   RUN_STATES.REVIEW,
@@ -100,11 +101,7 @@ function aggregateStatus(results) {
 }
 
 function pathWithinAllowed(candidate, allowedPaths) {
-  const normalizedCandidate = String(candidate ?? "").replaceAll("\\", "/").replace(/^\.\//, "");
-  return allowedPaths.some((allowed) => {
-    const normalizedAllowed = String(allowed ?? "").replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
-    return normalizedCandidate === normalizedAllowed || normalizedCandidate.startsWith(`${normalizedAllowed}/`);
-  });
+  return allowedPaths.some((allowed) => pathMatchesAllowed(candidate, allowed));
 }
 
 function scopeEvidence(run) {

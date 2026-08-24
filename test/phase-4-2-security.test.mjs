@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { appendAuditEntry, verifyAuditChain, auditChainPath } from "../src/audit-chain.mjs";
+import { pathMatchesAllowed } from "../src/security.mjs";
 import { allowlistedEnvironment, CAPABILITY_PROFILES, capabilityForStage, prepareCapabilitySpawn, sandboxPolicy } from "../src/capability-policy.mjs";
 import { aiRepairApplicable, runProcess, verificationRequiresLoopback } from "../src/executor.mjs";
 import { OperatorSessionStore } from "../src/api/operator-session.mjs";
@@ -12,6 +13,10 @@ import { changedPaths, repositorySnapshot, snapshotFromObject, verificationRequi
 import { isSafeInfrastructureFailure } from "../src/task-workflow.mjs";
 
 console.log("Running phase-4-2-security.test.mjs...");
+assert.equal(pathMatchesAllowed("src/pages/Skills/index.tsx", "src/pages/Skills/**"), true);
+assert.equal(pathMatchesAllowed("src/pages/Skills/components/SkillCard.tsx", "src/pages/Skills/**"), true);
+assert.equal(pathMatchesAllowed("src/pages/Tasks/index.tsx", "src/pages/Skills/**"), false);
+assert.equal(pathMatchesAllowed("src/api/client.ts", "src/api/**"), true);
 assert.deepEqual(Object.keys(CAPABILITY_PROFILES).sort(), ["agent", "diagnostic", "graphify", "preview", "updater", "verification"]);
 
 const filtered = allowlistedEnvironment({ PATH: "/bin", HOME: "/Users/fixture", HOST_SECRET: "seeded-host-secret", API_KEY: "secret-api-key" }, "verification");
