@@ -1,4 +1,8 @@
 const enabled = (value) => ["1", "true", "on"].includes(String(value ?? "0").trim().toLowerCase());
+const approvalMode = (value) => {
+  const normalized = String(value ?? "MANUAL").trim().toUpperCase();
+  return ["MANUAL", "PLAN_REVIEW_THEN_AUTOPILOT", "FINAL_ACCEPT_ONLY"].includes(normalized) ? normalized : "MANUAL";
+};
 
 function boundedInteger(value, fallback, maximum = 8) {
   const parsed = Number(value);
@@ -25,6 +29,16 @@ export function runtimeConfigSnapshot(env = process.env) {
     },
     capacity: {
       maxParallelJobs: boundedInteger(env.ORCHESTRATOR_MAX_PARALLEL_JOBS, 2),
+    },
+    automation: {
+      approvalMode: approvalMode(env.ORCHESTRATOR_APPROVAL_MODE),
+      planReviewRequired: approvalMode(env.ORCHESTRATOR_APPROVAL_MODE) === "PLAN_REVIEW_THEN_AUTOPILOT",
+      automaticPlanApproval: approvalMode(env.ORCHESTRATOR_APPROVAL_MODE) === "FINAL_ACCEPT_ONLY",
+      automaticMaterialization: approvalMode(env.ORCHESTRATOR_APPROVAL_MODE) !== "MANUAL",
+      automaticDeliveryCertification: approvalMode(env.ORCHESTRATOR_APPROVAL_MODE) !== "MANUAL",
+      automaticRecoveryAttempts: Number.isInteger(Number(env.ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS))
+        ? Number(env.ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS)
+        : 2,
     },
   };
 }

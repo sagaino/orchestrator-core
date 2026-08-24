@@ -50,9 +50,10 @@ import { cancelOrchestration, requestNodeRetry, resolveDecision } from "./orches
 import { getIntegrationEvidence, recoverIntegration, startIntegration } from "./integration-manager.mjs";
 import { acceptObjective, buildObjectiveEvidence } from "./objective-evidence.mjs";
 import { buildObjectiveVisualEvidence } from "./objective-visual-evidence.mjs";
-import { acceptDeliveryCertification, createDeliveryCertification, getDeliveryCertification, listDeliveryCertifications } from "./delivery-certification.mjs";
+import { acceptDeliveryCertification, buildDeliveryCertificationEvidence, createDeliveryCertification, getDeliveryCertification, listDeliveryCertifications } from "./delivery-certification.mjs";
 import { getProjectRelationships, replaceProjectRelationships } from "./project-relations.mjs";
 import { planObjective } from "./objective-planning.mjs";
+import { approvalMode, autopilotAfterPlanApprovalEnabled, automaticDeliveryCertificationEnabled, finalAcceptOnlyEnabled, planReviewThenAutopilotEnabled } from "./approval-policy.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -179,6 +180,77 @@ export function idempotencyScopeKey({ key, method, requestTarget, rawBody = "" }
   return createHash("sha256")
     .update(`${String(method).toUpperCase()}\n${requestTarget}\n${normalizedKey}\n${rawBody}`)
     .digest("hex");
+}
+
+function automaticallyStartObjective({ result, vaultRoot, runsRoot, env }) {
+  if (!finalAcceptOnlyEnabled(env) || !result?.plan || result.status === "NEEDS_CLARIFICATION") {
+    return { ...result, automation: { approvalMode: approvalMode(env), started: false } };
+  }
+  const objectiveId = result.objective.objectiveId;
+  const identity = "system:autopilot";
+  const approved = result.plan.state === "APPROVED"
+    ? { objective: result.objective, plan: result.plan, planFingerprint: result.plan.planFingerprint, decision: null, alreadyApproved: true }
+    : approvePlan({
+      runsRoot,
+      objectiveId,
+      planId: result.plan.planId,
+      expectedFingerprint: result.plan.planFingerprint,
+      approvedBy: identity,
+    });
+  const currentObjective = getObjective(runsRoot, objectiveId);
+  if (currentObjective?.activeOrchestrationId) {
+    return {
+      ...result,
+      objective: currentObjective,
+      plan: approved.plan,
+      status: "RUNNING",
+      automation: { approvalMode: approvalMode(env), started: true, alreadyStarted: true, planApproved: true, materialized: true, approvedBy: identity },
+    };
+  }
+  const materialized = materializeApprovedPlan({
+    vaultRoot,
+    runsRoot,
+    objectiveId,
+    planId: approved.plan.planId,
+    expectedFingerprint: approved.planFingerprint,
+  });
+  return {
+    ...materialized,
+    summary: result.summary,
+    planning: { ...(result.planning ?? {}), started: true, readOnly: false, tasksCreated: materialized.tasks.length, jobsCreated: 0, runsCreated: 0 },
+    decisions: [...(result.decisions ?? []), ...(approved.decision ? [approved.decision] : [])],
+    status: "RUNNING",
+    automation: { approvalMode: approvalMode(env), started: true, alreadyStarted: false, planApproved: true, materialized: true, approvedBy: identity, userAction: "FINAL_ACCEPT" },
+  };
+}
+
+function automaticallyContinueAfterPlanApproval({ result, vaultRoot, runsRoot, env, approvedBy = "local:unknown" }) {
+  if (!autopilotAfterPlanApprovalEnabled(env) || !result?.plan || result.plan.state !== "APPROVED") return result;
+  const objectiveId = result.objective.objectiveId;
+  const currentObjective = getObjective(runsRoot, objectiveId);
+  if (currentObjective?.activeOrchestrationId) {
+    return {
+      ...result,
+      objective: currentObjective,
+      status: "RUNNING",
+      automation: { approvalMode: approvalMode(env), started: true, alreadyStarted: true, planApproved: true, materialized: true, approvedBy },
+    };
+  }
+  const materialized = materializeApprovedPlan({
+    vaultRoot,
+    runsRoot,
+    objectiveId,
+    planId: result.plan.planId,
+    expectedFingerprint: result.planFingerprint ?? result.plan.planFingerprint,
+  });
+  return {
+    ...materialized,
+    summary: result.summary,
+    planning: { ...(result.planning ?? {}), started: true, readOnly: false, tasksCreated: materialized.tasks.length, jobsCreated: 0, runsCreated: 0 },
+    decisions: result.decisions ?? [],
+    status: "RUNNING",
+    automation: { approvalMode: approvalMode(env), started: true, alreadyStarted: false, planApproved: true, materialized: true, approvedBy, userAction: "APPROVE_PLAN" },
+  };
 }
 
 export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRoot = process.cwd(), releaseCandidateRoot = process.env.ORCHESTRATOR_RELEASE_CANDIDATE_ROOT ?? null, env = process.env }) {
@@ -337,6 +409,14 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         requestedBy: req.operatorIdentity ?? body?.requestedBy ?? "user",
         isCrossProjectEnabled: services?.crossProjectEnabled ?? crossProjectEnabled,
       });
+      if ((finalAcceptOnlyEnabled(env) || planReviewThenAutopilotEnabled(env)) && result.objective.mode === "FRESH_PROJECT" && result.objective.state === "GENESIS_REVIEW") {
+        const genesisApprover = services?.approveFreshProjectGenesis ?? approveFreshProjectGenesis;
+        const genesis = await genesisApprover({ vaultRoot, runsRoot, objectiveId: result.objective.objectiveId, approvedBy: "system:autopilot" });
+        const planner = services?.planObjective ?? planObjective;
+        const planned = await planner({ vaultRoot, runsRoot, objectiveId: result.objective.objectiveId, requestedBy: "system:autopilot", env });
+        result = automaticallyStartObjective({ result: { ...planned, summary: result.summary }, vaultRoot, runsRoot, env });
+        result.automation = { ...(result.automation ?? {}), freshProjectGenesis: "COMPLETED", genesisDecisionId: genesis.decision?.decisionId ?? null };
+      }
       if (body?.plan && result.objective.state === "PLANNING") {
         const planner = services?.createPlanRevision ?? createPlanRevision;
         const revision = planner({ runsRoot, objectiveId: result.objective.objectiveId, candidate: body.plan });
@@ -362,6 +442,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
           planFingerprint: revision.plan.planFingerprint,
           state: revision.objective.state,
         });
+        result = automaticallyStartObjective({ result, vaultRoot, runsRoot, env });
       }
       const objectiveEvent = result.alreadyExisting ? "OBJECTIVE_INTAKE_IDEMPOTENT" : "OBJECTIVE_CREATED";
       appendAuditEntry(runsRoot, {
@@ -405,11 +486,16 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk objective planning.", { code: "IDEMPOTENCY_REQUIRED" });
       const body = await parseJsonBody(req);
       const planner = services?.planObjective ?? planObjective;
-      const result = await planner({ vaultRoot, runsRoot, objectiveId: params.id, clarification: body?.clarification ?? body?.answer ?? null, requestedBy: req.operatorIdentity ?? "local:unknown", env });
-      const event = result.status === "NEEDS_CLARIFICATION" ? "PLAN_CLARIFICATION_REQUIRED" : result.alreadyPlanned ? "PLAN_GENERATION_IDEMPOTENT" : "PLAN_GENERATED";
-      appendAuditEntry(runsRoot, { event, actor: req.operatorIdentity ?? "local:unknown", objectiveId: result.objective.objectiveId, planId: result.plan?.planId ?? null, planFingerprint: result.plan?.planFingerprint ?? null, state: result.objective.state, readOnly: true });
-      eventHub.broadcast(event, { objectiveId: result.objective.objectiveId, planId: result.plan?.planId ?? null, state: result.objective.state });
-      sendJson(res, result.alreadyPlanned ? 200 : 201, { success: true, data: result });
+      const planned = await planner({ vaultRoot, runsRoot, objectiveId: params.id, clarification: body?.clarification ?? body?.answer ?? null, requestedBy: req.operatorIdentity ?? "local:unknown", env });
+      const result = automaticallyStartObjective({ result: planned, vaultRoot, runsRoot, env });
+      const event = result.status === "NEEDS_CLARIFICATION"
+        ? "PLAN_CLARIFICATION_REQUIRED"
+        : result.automation?.started
+          ? (result.automation.alreadyStarted ? "OBJECTIVE_AUTOMATION_IDEMPOTENT" : "OBJECTIVE_AUTOMATION_STARTED")
+          : result.alreadyPlanned ? "PLAN_GENERATION_IDEMPOTENT" : "PLAN_GENERATED";
+      appendAuditEntry(runsRoot, { event, actor: result.automation?.started ? "system:autopilot" : req.operatorIdentity ?? "local:unknown", objectiveId: result.objective.objectiveId, planId: result.plan?.planId ?? null, planFingerprint: result.plan?.planFingerprint ?? null, state: result.objective.state, readOnly: !result.automation?.started, automation: result.automation ?? null });
+      eventHub.broadcast(event, { objectiveId: result.objective.objectiveId, planId: result.plan?.planId ?? null, state: result.objective.state, automation: result.automation ?? null });
+      sendJson(res, result.alreadyPlanned && !result.automation?.started ? 200 : 201, { success: true, data: result });
     } catch (error) {
       sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
@@ -436,7 +522,22 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   router.get("/api/objectives/:id/evidence", async (req, res, { params }) => {
     try {
-      sendJson(res, 200, { success: true, data: buildObjectiveEvidence({ runsRoot, objectiveId: params.id }) });
+      const evidence = buildObjectiveEvidence({ runsRoot, objectiveId: params.id });
+      if (autopilotAfterPlanApprovalEnabled(env)) {
+        const certification = buildDeliveryCertificationEvidence({ runsRoot, objectiveId: params.id, automatic: true });
+        evidence.automation = {
+          approvalMode: approvalMode(env),
+          finalAcceptOnly: finalAcceptOnlyEnabled(env),
+          autopilot: true,
+          planReviewRequired: planReviewThenAutopilotEnabled(env),
+          deliveryCertification: { status: certification.status, blockers: certification.blockers, checks: certification.checks },
+        };
+        evidence.finalAcceptance = {
+          ...evidence.finalAcceptance,
+          canAccept: evidence.finalAcceptance.canAccept && certification.blockers.length === 0,
+        };
+      }
+      sendJson(res, 200, { success: true, data: evidence });
     } catch (error) {
       sendError(res, error.statusCode || 404, error.message, error.details);
     }
@@ -630,8 +731,19 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   router.post("/api/objectives/:id/final-acceptance", async (req, res, { params }) => {
     try {
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk final acceptance objective.", { code: "IDEMPOTENCY_REQUIRED" });
+      let automaticCertification = null;
+      if (autopilotAfterPlanApprovalEnabled(env)) {
+        const preflight = buildDeliveryCertificationEvidence({ runsRoot, objectiveId: params.id, automatic: true });
+        if (preflight.blockers.length > 0) {
+          return sendError(res, 409, "Orchestrator masih menyelesaikan blocker sebelum Final Accept tersedia.", { code: "AUTOMATION_NOT_READY", blockers: preflight.blockers, certification: preflight });
+        }
+      }
       const accept = services?.acceptObjective ?? acceptObjective;
       const result = accept({ runsRoot, objectiveId: params.id, acceptedBy: req.operatorIdentity });
+      if (automaticDeliveryCertificationEnabled(env)) {
+        automaticCertification = createDeliveryCertification({ runsRoot, objectiveId: params.id, automatic: true });
+        appendAuditEntry(runsRoot, { event: "DELIVERY_CERTIFICATION_AUTO_COMPLETED", actor: "system:autopilot", objectiveId: params.id, certificationId: automaticCertification.certificationId, status: automaticCertification.status, blockers: automaticCertification.blockers });
+      }
       appendAuditEntry(runsRoot, {
         event: result.alreadyAccepted ? "OBJECTIVE_ACCEPTANCE_IDEMPOTENT" : "OBJECTIVE_ACCEPTED",
         actor: req.operatorIdentity ?? "local:unknown",
@@ -645,7 +757,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         decisionId: result.decision?.decisionId ?? result.evidence?.finalAcceptance?.decisionId ?? null,
         state: result.objective?.state ?? result.evidence?.objective?.state ?? null,
       });
-      sendJson(res, result.alreadyAccepted ? 200 : 201, { success: true, data: result });
+      sendJson(res, result.alreadyAccepted ? 200 : 201, { success: true, data: { ...result, deliveryCertification: automaticCertification, automation: automaticDeliveryCertificationEnabled(env) ? { approvalMode: approvalMode(env), deliveryCertification: "COMPLETED" } : undefined } });
     } catch (error) {
       sendError(res, error.statusCode || 409, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }
@@ -914,27 +1026,36 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         expectedFingerprint: body?.planFingerprint ?? null,
         approvedBy: req.operatorIdentity,
       });
-      appendAuditEntry(runsRoot, {
-        event: result.alreadyApproved ? "PLAN_APPROVAL_IDEMPOTENT" : "PLAN_APPROVED",
-        actor: req.operatorIdentity ?? "local:unknown",
-        objectiveId: result.objective.objectiveId,
-        planId: result.plan.planId,
-        revision: planRevision(result.plan),
-        planFingerprint: result.planFingerprint,
-        decisionId: result.decision?.decisionId ?? null,
-        projects: result.plan.projects,
-        risk: result.plan.risk,
-        budget: result.objective.budget,
+      const continued = automaticallyContinueAfterPlanApproval({
+        result,
+        vaultRoot,
+        runsRoot,
+        env,
+        approvedBy: req.operatorIdentity ?? "local:unknown",
       });
-      eventHub.broadcast(result.alreadyApproved ? "PLAN_APPROVAL_IDEMPOTENT" : "PLAN_APPROVED", {
-        objectiveId: result.objective.objectiveId,
-        planId: result.plan.planId,
-        revision: planRevision(result.plan),
-        planFingerprint: result.planFingerprint,
+      appendAuditEntry(runsRoot, {
+        event: continued.automation?.started ? "OBJECTIVE_AUTOMATION_STARTED" : (result.alreadyApproved ? "PLAN_APPROVAL_IDEMPOTENT" : "PLAN_APPROVED"),
+        actor: continued.automation?.started ? "system:autopilot" : (req.operatorIdentity ?? "local:unknown"),
+        objectiveId: continued.objective.objectiveId,
+        planId: continued.plan.planId,
+        revision: planRevision(continued.plan),
+        planFingerprint: continued.planFingerprint ?? continued.plan.planFingerprint,
+        decisionId: result.decision?.decisionId ?? null,
+        projects: continued.plan.projects,
+        risk: continued.plan.risk,
+        budget: continued.objective.budget,
+        automation: continued.automation ?? null,
+      });
+      eventHub.broadcast(continued.automation?.started ? "OBJECTIVE_AUTOMATION_STARTED" : (result.alreadyApproved ? "PLAN_APPROVAL_IDEMPOTENT" : "PLAN_APPROVED"), {
+        objectiveId: continued.objective.objectiveId,
+        planId: continued.plan.planId,
+        revision: planRevision(continued.plan),
+        planFingerprint: continued.planFingerprint ?? continued.plan.planFingerprint,
         decisionId: result.decision?.decisionId ?? null,
         alreadyApproved: result.alreadyApproved,
+        automation: continued.automation ?? null,
       });
-      sendJson(res, result.alreadyApproved ? 200 : 201, { success: true, data: result });
+      sendJson(res, continued.automation?.alreadyStarted || result.alreadyApproved ? 200 : 201, { success: true, data: continued });
     } catch (error) {
       sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }

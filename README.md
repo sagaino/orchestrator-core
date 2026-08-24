@@ -117,6 +117,11 @@ ORCHESTRATOR_MAX_BACKUP_AGE_HOURS=24
 # Profil runtime yang akan terlihat di Operations (deskriptif, tidak menggantikan flag)
 ORCHESTRATOR_PROFILE=LOCAL_SAFE
 
+# Mode pilot: operator menyetujui ringkasan plan sekali, lalu orchestrator
+# mengurus materialisasi, recovery, dan delivery certification otomatis.
+ORCHESTRATOR_APPROVAL_MODE=PLAN_REVIEW_THEN_AUTOPILOT
+ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS=2
+
 # AI OS v2 objective intake tetap nonaktif sampai human gate
 ORCHESTRATOR_OBJECTIVES_ENABLED=0
 ```
@@ -125,6 +130,16 @@ Untuk pilot lokal, gunakan profil eksplisit `LOCAL_PILOT` dan atur kapasitas
 worker sesuai kebutuhan. Review konfigurasi efektif di **Operations → Runtime
 profile** sebelum menerima pekerjaan baru; halaman tersebut juga menampilkan
 worker aktif, slot tersedia, dan job yang masih antre.
+
+Pada `ORCHESTRATOR_APPROVAL_MODE=PLAN_REVIEW_THEN_AUTOPILOT`, intake objective
+akan menghasilkan plan dan menampilkan ringkasan task untuk satu kali approval
+operator. Setelah approval, orchestrator menangani materialisasi, retry aman,
+recovery, preview, dan delivery certification. Operator hanya meninjau evidence
+dan melakukan **Final Acceptance**; blocker yang tidak aman untuk diselesaikan
+otomatis tetap ditampilkan sebagai exception.
+
+`FINAL_ACCEPT_ONLY` tetap tersedia untuk lingkungan yang ingin melewati approval
+plan dan hanya menyisakan Final Acceptance sebagai human gate.
 
 ## 🛡️ Operations Center
 

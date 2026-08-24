@@ -64,7 +64,7 @@ function latestPreview(previews) {
   return [...previews].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] ?? null;
 }
 
-export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now = new Date() } = {}) {
+export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now = new Date(), automatic = false } = {}) {
   if (!runsRoot || !SAFE_ID.test(String(objectiveId ?? ""))) throw new Error("runsRoot dan objectiveId valid wajib diisi.");
   const objectiveEvidence = buildObjectiveEvidence({ runsRoot, objectiveId });
   const runIds = [...new Set(objectiveEvidence.nodes.map((node) => node.runId).filter(Boolean))];
@@ -95,18 +95,20 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
     result("INTEGRATION_COMPLETE", integrationComplete, "Required integration verification is passing or not required.", { required: integrationRequired, status: objectiveEvidence.verification.integration.status }),
     result("PREVIEW_COMPLETE", previewComplete, previewRequired ? "Aggregate preview reached READY for the objective." : "Aggregate preview is not required by the approved plan.", { required: previewRequired, sessionId: preview?.sessionId ?? null, status: previewRequired ? (preview?.status ?? "MISSING") : "NOT_REQUIRED", previewCount: preview?.previews?.length ?? 0, unavailableCount: preview?.unavailable?.length ?? 0 }),
     result("VISUAL_E2E_EVIDENCE_COMPLETE", !visualEvidenceRequired || visualEvidenceComplete, visualEvidenceRequired ? "Every runnable node has linked visual evidence and passing node checks." : "Visual/E2E capture evidence is not required by the approved plan.", { required: visualEvidenceRequired, evidenceCount: visual?.summary?.evidenceCount ?? 0, captureCount: visual?.summary?.captureCount ?? 0, nodeCount: visualNodes.length }),
-    result("HUMAN_ACCEPTANCE_COMPLETE", objectiveEvidence.finalAcceptance.state === "ACCEPTED", "Objective final acceptance is recorded by a human gate.", { state: objectiveEvidence.finalAcceptance.state, acceptedBy: objectiveEvidence.finalAcceptance.acceptedBy ?? null, acceptedAt: objectiveEvidence.finalAcceptance.acceptedAt ?? null }),
+    result("HUMAN_ACCEPTANCE_COMPLETE", automatic || objectiveEvidence.finalAcceptance.state === "ACCEPTED", automatic ? "Final acceptance is handled by the single final user gate." : "Objective final acceptance is recorded by a human gate.", { required: !automatic, state: objectiveEvidence.finalAcceptance.state, acceptedBy: objectiveEvidence.finalAcceptance.acceptedBy ?? null, acceptedAt: objectiveEvidence.finalAcceptance.acceptedAt ?? null }),
     result("CLEANUP_COMPLETE", cleanupComplete, previewRequired ? "Aggregate preview and isolated run workspaces are cleaned." : "Isolated run workspaces are cleaned; aggregate preview was not required.", { previewRequired, previewCleanup: previewRequired ? (preview?.cleanup?.status ?? "MISSING") : "NOT_REQUIRED", runCleanups }),
     result("KNOWLEDGE_CAPTURE_COMPLETE", knowledge.length > 0 && knowledge.every((item) => item.approved && item.synced), "Knowledge approval/capture is present for every source run.", { knowledge }),
   ];
   const blockers = checks.filter((check) => check.status !== "PASS").map((check) => check.id);
+  const machineReady = blockers.length === 0;
+  const certified = automatic && machineReady && objectiveEvidence.finalAcceptance.state === "ACCEPTED";
   return {
     schemaVersion: DELIVERY_CERTIFICATION_SCHEMA_VERSION,
     kind: DELIVERY_CERTIFICATION_KIND,
     objectiveId,
     createdAt: now.toISOString(),
-    status: blockers.length ? "BLOCKED" : "HUMAN_GATE_REQUIRED",
-    humanGate: { required: true, confirmed: false, approvedBy: null, approvedAt: null },
+    status: blockers.length ? "BLOCKED" : automatic ? (certified ? "CERTIFIED" : "READY_FOR_FINAL_ACCEPTANCE") : "HUMAN_GATE_REQUIRED",
+    humanGate: { required: !automatic, confirmed: certified, approvedBy: certified ? "system:autopilot" : null, approvedAt: certified ? now.toISOString() : null },
     checks,
     blockers,
     evidence: {
@@ -116,12 +118,16 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
       visualSummary: visual?.summary ?? null,
       finalAcceptance: objectiveEvidence.finalAcceptance,
     },
-    nextAction: blockers.length ? "Resolve delivery certification blockers, then rerun certification." : "Human gate must explicitly accept this delivery certification.",
+    nextAction: blockers.length
+      ? "Orchestrator will retry safe failures and refresh this certification when the blockers are resolved."
+      : automatic
+        ? certified ? "Delivery certification completed automatically." : "Review the completed evidence, then use Final Accept once."
+        : "Human gate must explicitly accept this delivery certification.",
   };
 }
 
-export function createDeliveryCertification({ runsRoot, objectiveId, now = new Date() } = {}) {
-  const evidence = buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now });
+export function createDeliveryCertification({ runsRoot, objectiveId, now = new Date(), automatic = false } = {}) {
+  const evidence = buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now, automatic });
   const certificationId = `delivery-${objectiveId}-${now.toISOString().replace(/[-:.]/g, "").replace("Z", "Z")}-${randomUUID().slice(0, 8)}`;
   const bundle = { ...evidence, certificationId };
   const persisted = writeBundle(path.join(certificationDirectory(runsRoot, objectiveId), `${certificationId}.json`), bundle);
@@ -153,7 +159,7 @@ export function verifyDeliveryCertification({ bundlePath } = {}) {
   const recorded = fs.existsSync(`${bundlePath}.sha256`) ? fs.readFileSync(`${bundlePath}.sha256`, "utf8").trim().split(/\s+/)[0] : null;
   const checksumValid = recorded === sha256(text);
   const checksPass = Array.isArray(bundle?.checks) && bundle.checks.length > 0 && bundle.checks.every((check) => check.status === "PASS");
-  const valid = Boolean(checksumValid && bundle?.schemaVersion === DELIVERY_CERTIFICATION_SCHEMA_VERSION && bundle?.kind === DELIVERY_CERTIFICATION_KIND && checksPass && ["HUMAN_GATE_REQUIRED", "CERTIFIED"].includes(bundle.status));
+  const valid = Boolean(checksumValid && bundle?.schemaVersion === DELIVERY_CERTIFICATION_SCHEMA_VERSION && bundle?.kind === DELIVERY_CERTIFICATION_KIND && checksPass && ["HUMAN_GATE_REQUIRED", "READY_FOR_FINAL_ACCEPTANCE", "CERTIFIED"].includes(bundle.status));
   return { valid, checksumValid, checksPass, status: bundle?.status ?? null, certificationId: bundle?.certificationId ?? null, bundle };
 }
 
