@@ -17,6 +17,7 @@ import { redactSensitive, redactText } from "./redaction.mjs";
 import { operationsReadiness } from "./operations-governance.mjs";
 import { automaticNodeRecoveryTick, orchestrationSchedulerEnabled, orchestrationSchedulerTick } from "./orchestration-scheduler.mjs";
 import { autopilotAfterPlanApprovalEnabled } from "./approval-policy.mjs";
+import { automaticPostRunTick } from "./objective-post-run.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -1058,6 +1059,7 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
   let heartbeat;
   let jobPollerTimeout;
   let reviewFinalizationInFlight = null;
+  let postRunAutomationInFlight = null;
   let isRunning = true;
   try {
     const pollTick = () => {
@@ -1109,6 +1111,30 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
               })
               .finally(() => {
                 reviewFinalizationInFlight = null;
+              });
+          }
+
+          if (!postRunAutomationInFlight && autopilotAfterPlanApprovalEnabled(process.env)) {
+            const postRunner = services?.automaticPostRunTick ?? automaticPostRunTick;
+            postRunAutomationInFlight = Promise.resolve(postRunner({ vaultRoot, runsRoot, env: process.env, services }))
+              .then((result) => {
+                if (result.completed?.length || result.blocked?.length || result.exceptions?.length) {
+                  appendLog(paths.log, {
+                    event: "AUTOMATIC_POST_RUN_TICK",
+                    completed: result.completed ?? [],
+                    blocked: result.blocked ?? [],
+                    exceptions: result.exceptions ?? [],
+                  });
+                }
+                return result;
+              })
+              .catch((error) => {
+                appendLog(paths.log, { event: "AUTOMATIC_POST_RUN_ERROR", error: error.message });
+                health.counters.errors += 1;
+                return { enabled: true, completed: [], blocked: [], exceptions: [{ error: error.message }] };
+              })
+              .finally(() => {
+                postRunAutomationInFlight = null;
               });
           }
         } catch (error) {
