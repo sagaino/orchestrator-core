@@ -66,6 +66,13 @@ try {
   fs.appendFileSync(certificate.bundlePath, "tamper\n");
   assert.equal(verifyDeliveryCertification({ bundlePath: certificate.bundlePath }).valid, false);
 
+  // Backend-only implementation nodes use automated/API evidence and must
+  // not be blocked merely because they have no screenshot capture.
+  fs.rmSync(path.join(runsRoot, "runtime", "visual-evidence"), { recursive: true, force: true });
+  const backendNoVisualCertificate = createDeliveryCertification({ runsRoot, objectiveId, now: new Date("2026-08-23T01:30:00.000Z") });
+  assert.equal(backendNoVisualCertificate.blockers.includes("VISUAL_E2E_EVIDENCE_COMPLETE"), false, JSON.stringify(backendNoVisualCertificate, null, 2));
+  assert.equal(backendNoVisualCertificate.checks.find((check) => check.id === "VISUAL_E2E_EVIDENCE_COMPLETE").evidence.required, false);
+
   // A read-only/API diagnostic plan may explicitly opt out of aggregate
   // preview and visual capture. Certification must not block that plan.
   updatePlan({

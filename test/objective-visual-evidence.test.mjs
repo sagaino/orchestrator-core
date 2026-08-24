@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildObjectiveVisualEvidence } from "../src/objective-visual-evidence.mjs";
+import { buildObjectiveVisualEvidence, nodeRequiresVisualEvidence } from "../src/objective-visual-evidence.mjs";
 import { createVisualEvidence, persistVisualEvidence } from "../src/visual-evidence.mjs";
 import { createVisualRevisionRecord } from "../src/visual-revision.mjs";
 
 console.log("Running objective-visual-evidence.test.mjs...");
+
+assert.equal(nodeRequiresVisualEvidence({ type: "IMPLEMENTATION", role: "FRONTEND" }), true);
+assert.equal(nodeRequiresVisualEvidence({ type: "IMPLEMENTATION", role: "BACKEND" }), false);
+assert.equal(nodeRequiresVisualEvidence({ type: "VERIFICATION", role: "TESTING" }), false);
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "objective-visual-evidence-"));
 const runsRoot = path.join(root, "runs");

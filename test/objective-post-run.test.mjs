@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createObjective } from "../src/objective-store.mjs";
+import { createObjective, getObjective, updateObjective } from "../src/objective-store.mjs";
 import { createPlan } from "../src/plan-store.mjs";
 import { createOrchestration, getOrchestration, updateOrchestration } from "../src/orchestration-store.mjs";
 import { automaticPostRunTick } from "../src/objective-post-run.mjs";
@@ -110,7 +110,7 @@ try {
       usage: { totalTokens: 0, agentInvocations: 0, retries: 0 },
       createdAt: timestamp,
       updatedAt: timestamp,
-      postRunAutomation: { status: "BLOCKED", phase: "INTEGRATION", lastAttemptAt: "2026-08-23T00:00:00.000Z" },
+      postRunAutomation: { status: "WAITING", phase: "INTEGRATION", lastAttemptAt: "2026-08-23T00:00:00.000Z" },
     },
     validationOptions: { plan },
   });
@@ -138,10 +138,45 @@ try {
   assert.equal(result.completed.length, 1);
   assert.equal(result.exceptions.length, 0);
   assert.equal(getOrchestration(runsRoot, orchestrationId, { plan }).postRunAutomation.status, "COMPLETED");
+  assert.equal(getObjective(runsRoot, objectiveId).state, "RESULT_REVIEW");
 
   const idempotent = await automaticPostRunTick({ runsRoot, vaultRoot, env: { ORCHESTRATOR_APPROVAL_MODE: "PLAN_REVIEW_THEN_AUTOPILOT" }, now: new Date("2026-08-24T00:02:00.000Z") });
   assert.equal(idempotent.completed.length, 0);
-  assert.equal(idempotent.skipped[0].reason, "ALREADY_COMPLETED");
+  assert.equal(idempotent.blocked.length, 0);
+  assert.equal(idempotent.exceptions.length, 0);
+  assert.equal(idempotent.skipped.length, 0);
+
+  updateObjective({
+    runsRoot,
+    objectiveId,
+    expectedRevision: getObjective(runsRoot, objectiveId).revision,
+    now: new Date("2026-08-24T00:03:00.000Z"),
+    patch: { state: "RUNNING" },
+  });
+  const blockedOrchestration = getOrchestration(runsRoot, orchestrationId, { plan });
+  updateOrchestration({
+    runsRoot,
+    orchestrationId,
+    expectedRevision: blockedOrchestration.revision,
+    now: new Date("2026-08-24T00:03:00.000Z"),
+    update: (record) => ({ ...record, postRunAutomation: { ...record.postRunAutomation, status: "BLOCKED", phase: "DELIVERY_GATES", lastAttemptAt: timestamp } }),
+    validationOptions: { plan },
+  });
+  let previewCalls = 0;
+  const blocked = await automaticPostRunTick({
+    runsRoot,
+    vaultRoot,
+    env: { ORCHESTRATOR_APPROVAL_MODE: "PLAN_REVIEW_THEN_AUTOPILOT" },
+    now: new Date("2026-08-24T00:04:00.000Z"),
+    services: {
+      devServerManager: { startAggregateProjectPreview: async () => { previewCalls += 1; throw new Error("must not retry blocked post-run"); } },
+    },
+  });
+  assert.equal(blocked.completed.length, 0);
+  assert.equal(blocked.exceptions.length, 0);
+  assert.equal(blocked.skipped[0].reason, "BLOCKED_REQUIRES_REVIEW");
+  assert.equal(previewCalls, 0);
+  assert.equal(getObjective(runsRoot, objectiveId).state, "BLOCKED");
 
   const disabled = await automaticPostRunTick({ runsRoot, vaultRoot, env: { ORCHESTRATOR_APPROVAL_MODE: "MANUAL" } });
   assert.equal(disabled.enabled, false);
