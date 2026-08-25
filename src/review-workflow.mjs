@@ -23,13 +23,13 @@ async function openWithVsCode(workspacePath) {
     }
   };
   try {
-    await execute("code", [workspacePath]);
-    return { command: "code", args: [workspacePath] };
+    await execute("code", ["-n", workspacePath]);
+    return { command: "code", args: ["-n", workspacePath] };
   } catch (error) {
     const missingCommand = error.code === "ENOENT" || error.code === 127 || /execvp|not found/i.test(String(error.stderr ?? ""));
     if (process.platform !== "darwin" || !missingCommand) throw error;
-    await execute("open", ["-a", "Visual Studio Code", workspacePath]);
-    return { command: "open", args: ["-a", "Visual Studio Code", workspacePath] };
+    await execute("open", ["-n", "-a", "Visual Studio Code", workspacePath]);
+    return { command: "open", args: ["-n", "-a", "Visual Studio Code", workspacePath] };
   }
 }
 
