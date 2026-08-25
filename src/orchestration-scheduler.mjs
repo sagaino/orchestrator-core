@@ -271,7 +271,7 @@ function reconcileRuntimeNodes({ plan, orchestration, jobs }) {
       }
       continue;
     }
-    if (current.state === "BLOCKED" && !current.lastError && node.dependsOn.every((dependency) => nextNodes[dependency]?.state === "DONE")) {
+    if (current.state === "BLOCKED" && (!current.lastError || current.lastError.code === "PREDECESSOR_FAILED") && node.dependsOn.every((dependency) => nextNodes[dependency]?.state === "DONE")) {
       current.state = "READY";
       current.blockedBy = [];
       current.lastError = null;
