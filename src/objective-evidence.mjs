@@ -143,7 +143,9 @@ export function buildObjectiveEvidence({ runsRoot, objectiveId } = {}) {
     ? integration.verification
     : Array.isArray(integration?.verification?.results) ? integration.verification.results : [];
   const verificationResults = [...runVerification, ...integrationVerification];
-  const integrationRequired = plan?.integration?.required === true;
+  const integrationRequired = objective.mode === "CROSS_PROJECT_INCIDENT"
+    && plan?.integration?.required === true
+    && ((plan.projects?.length ?? 0) > 1 || (objective.projectIds?.length ?? 0) > 1);
   const integrationStatus = integration
     ? integration.status === "PASSED" ? "PASS" : integration.status === "BLOCKED" ? "FAIL" : "UNKNOWN"
     : integrationRequired ? "UNKNOWN" : "NOT_REQUIRED";
