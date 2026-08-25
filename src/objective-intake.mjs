@@ -278,5 +278,10 @@ export function getObjectiveIntake({ runsRoot, objectiveId } = {}) {
 }
 
 export function listObjectiveIntake({ runsRoot } = {}) {
-  return listObjectives(runsRoot).map(objectiveSummary);
+  return listObjectives(runsRoot)
+    .sort((left, right) => (
+      String(right?.createdAt ?? right?.objectiveId ?? "").localeCompare(String(left?.createdAt ?? left?.objectiveId ?? ""))
+      || String(right?.objectiveId ?? "").localeCompare(String(left?.objectiveId ?? ""))
+    ))
+    .map(objectiveSummary);
 }
