@@ -364,8 +364,15 @@ function persistOrchestration({ runsRoot, orchestration, plan, nodes, state, now
 
 function updateObjectiveState({ runsRoot, objective, orchestration }) {
   if (!objective || objective.activeOrchestrationId !== orchestration.orchestrationId) return objective;
-  if (["CANCELLED", "FAILED", "DONE"].includes(objective.state)) return objective;
-  const desiredState = orchestration.state === "BLOCKED" ? "BLOCKED" : orchestration.state === "RUNNING" ? "RUNNING" : null;
+  if (["CANCELLED", "DONE"].includes(objective.state)) return objective;
+  let desiredState = null;
+  if (orchestration.state === "BLOCKED") desiredState = "BLOCKED";
+  else if (orchestration.state === "RUNNING") desiredState = "RUNNING";
+  else if (orchestration.state === "INTEGRATING") desiredState = "INTEGRATING";
+  else if (orchestration.state === "DONE") desiredState = "RESULT_REVIEW";
+  else if (orchestration.state === "FAILED") desiredState = "FAILED";
+  else if (orchestration.state === "CANCELLED") desiredState = "CANCELLED";
+
   if (!desiredState || objective.state === desiredState) return objective;
   return updateObjective({
     runsRoot,
