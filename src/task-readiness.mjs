@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { parseVerificationCommand } from "./verification-parser.mjs";
 
 const VALID_TASK_STATES = new Set([
   "BACKLOG",
@@ -130,16 +131,25 @@ function verificationCheck(context, metadata) {
   const requested = metadata.verification;
   const body = context.task.instruction;
   const scripts = context.project.packageScripts ?? {};
+  const hasPackageScripts = Object.keys(scripts).length > 0;
   if (Array.isArray(requested) && requested.length > 0) {
-    const unknown = requested.map(String).filter((name) => !scripts[name]);
-    return unknown.length
-      ? check("VERIFICATION", "FAIL", "Verification frontmatter merujuk script yang tidak tersedia.", unknown)
+    const invalid = requested.map(String).filter((name) => {
+      if (hasPackageScripts && scripts[name]) return false;
+      try {
+        parseVerificationCommand(name);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    return invalid.length
+      ? check("VERIFICATION", "FAIL", "Verification frontmatter merujuk script atau command yang tidak didukung.", invalid)
       : check("VERIFICATION", "PASS", "Verification eksplisit tersedia di frontmatter.", requested.map(String));
   }
   if (requested !== undefined && !Array.isArray(requested)) {
     return check("VERIFICATION", "FAIL", "Field verification harus berupa array, misalnya [typecheck, build].");
   }
-  const commands = String(body ?? "").match(/(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:typecheck|test|lint|build)|npx\s+tsc\s+--noEmit/gi) ?? [];
+  const commands = String(body ?? "").match(/(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:typecheck|test|lint|build)|npx\s+tsc\s+--noEmit|go\s+(?:test|build|vet)|pytest|\.\/mvnw\s+\w+|\.\/gradlew\s+\w+|cargo\s+\w+/gi) ?? [];
   return commands.length
     ? check("VERIFICATION", "PASS", "Command verification ditemukan pada task.", [...new Set(commands)])
     : check("VERIFICATION", "FAIL", "Task belum menentukan verification yang harus lulus.");

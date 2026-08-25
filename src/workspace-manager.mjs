@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { isDeniedPath, validateSymlink } from "./security.mjs";
 import { injectFault } from "./fault-injection.mjs";
+import { parseVerificationCommand } from "./verification-parser.mjs";
 
 const SNAPSHOT_EXCLUDES = new Set([
   ".git",
@@ -362,14 +363,10 @@ export function verificationRequiresLoopback(scriptName, scriptCommand = "") {
     || /playwright|cypress/i.test(String(scriptCommand));
 }
 
-function parseVerificationCommand(command) {
-  const match = String(command).match(/^npm run ([A-Za-z0-9:_-]+)$/);
-  if (!match) throw new Error(`Verification command tidak didukung saat apply workspace: ${command}`);
-  return { command: "npm", args: ["run", match[1]], scriptName: match[1] };
-}
-
 function packageInstallInvocation(repository) {
-  const packageDocument = JSON.parse(fs.readFileSync(path.join(repository, "package.json"), "utf8"));
+  const pkgPath = path.join(repository, "package.json");
+  if (!fs.existsSync(pkgPath)) return null;
+  const packageDocument = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
   const declared = String(packageDocument.packageManager ?? "").split("@")[0].trim();
   const manager = declared
     || (fs.existsSync(path.join(repository, "pnpm-lock.yaml")) ? "pnpm" : null)

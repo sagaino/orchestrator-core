@@ -35,9 +35,14 @@ function buildProjectContexts(vaultRoot, objective) {
         details: { code: "PROJECT_NOT_READY", projectId },
       });
     }
-    const availableScripts = Object.keys(getPackageScripts(project.repository));
-    const defaults = (project.verificationDefaults ?? []).filter((script) => availableScripts.includes(script));
-    const verification = defaults.length ? defaults : availableScripts;
+    const packageScripts = getPackageScripts(project.repository);
+    const availableScripts = Object.keys(packageScripts);
+    const configuredDefaults = Array.isArray(project.verificationDefaults) && project.verificationDefaults.length > 0
+      ? project.verificationDefaults
+      : [];
+    const verification = configuredDefaults.length > 0
+      ? configuredDefaults
+      : availableScripts;
     if (!verification.length) {
       fail(`Project tidak memiliki verification script yang dapat digunakan: ${projectId}`, {
         statusCode: 422,
@@ -51,7 +56,7 @@ function buildProjectContexts(vaultRoot, objective) {
       repository: project.repository,
       summary: bounded(document?.body, 4_000),
       verification,
-      verificationScripts: availableScripts,
+      verificationScripts: availableScripts.length > 0 ? availableScripts : verification,
       activeTasks: [],
       graph: readGraphSummary(project.graphifyOutput),
     };

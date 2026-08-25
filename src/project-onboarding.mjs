@@ -8,6 +8,7 @@ import { createAgentTelemetryRecord } from "./telemetry.mjs";
 import { JOB_STATES, listJobs } from "./job-queue.mjs";
 import { RUN_STATES, listRuns } from "./run-manager.mjs";
 import { applyDeterministicTemplate } from "./template-scaffolder.mjs";
+import { parseVerificationCommand } from "./verification-parser.mjs";
 
 const DEFAULT_BLUEPRINT = "frontend-vite";
 const SHADCN_VERSION = "4.18.0";
@@ -248,13 +249,38 @@ async function runRequired(processRunner, invocation, label, onProgress) {
 async function runVerification({ repository, scripts, processRunner, eventLogPath, onProgress }) {
   const results = [];
   for (const script of scripts) {
-    const result = await runRequired(processRunner, {
-      command: "npm",
-      args: ["run", script],
-      cwd: repository,
-      stage: `project-onboarding:verification:${script}`,
-      eventLogPath,
-    }, `Verification npm run ${script}`, onProgress);
+    let invocation;
+    if (
+      script.includes(" ")
+      || script.startsWith("./")
+      || script.startsWith("mvn")
+      || script.startsWith("gradle")
+      || script.startsWith("pytest")
+      || script.startsWith("cargo")
+      || script.startsWith("go")
+      || script.startsWith("php")
+      || script.startsWith("composer")
+      || script.startsWith("dotnet")
+      || script.startsWith("python")
+    ) {
+      const parsed = parseVerificationCommand(script);
+      invocation = {
+        command: parsed.command,
+        args: parsed.args,
+        cwd: repository,
+        stage: `project-onboarding:verification:${script}`,
+        eventLogPath,
+      };
+    } else {
+      invocation = {
+        command: "npm",
+        args: ["run", script],
+        cwd: repository,
+        stage: `project-onboarding:verification:${script}`,
+        eventLogPath,
+      };
+    }
+    const result = await runRequired(processRunner, invocation, `Verification ${script}`, onProgress);
     results.push({ script, exitCode: result.exitCode });
   }
   return results;
@@ -885,6 +911,165 @@ function cleanupStaging(stageRoot) {
   }
 }
 
+export function detectProjectManifest(repository) {
+  const pkgPath = path.join(repository, "package.json");
+  const pomPath = path.join(repository, "pom.xml");
+  const gradlePath = path.join(repository, "build.gradle");
+  const gradleKtsPath = path.join(repository, "build.gradle.kts");
+  const pyprojectPath = path.join(repository, "pyproject.toml");
+  const reqPath = path.join(repository, "requirements.txt");
+  const pipfilePath = path.join(repository, "Pipfile");
+  const setupPyPath = path.join(repository, "setup.py");
+  const goModPath = path.join(repository, "go.mod");
+  const cargoPath = path.join(repository, "Cargo.toml");
+  const composerPath = path.join(repository, "composer.json");
+
+  // 1. Node.js / TypeScript
+  if (fs.existsSync(pkgPath)) {
+    let pkg = {};
+    try {
+      pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    } catch {}
+    const id = slugify(pkg.name || path.basename(repository));
+    const title = titleFromId(id);
+    const scripts = verificationScripts(pkg);
+    return {
+      type: "node",
+      id,
+      title,
+      packageDocument: pkg,
+      scripts,
+      tags: frameworkTags(pkg),
+    };
+  }
+
+  // 2. Java / Kotlin - Maven (Spring Boot)
+  if (fs.existsSync(pomPath)) {
+    const pomContent = fs.readFileSync(pomPath, "utf8");
+    const artifactMatch = pomContent.match(/<artifactId>([^<]+)<\/artifactId>/);
+    const id = slugify(artifactMatch?.[1] || path.basename(repository));
+    const isSpringBoot = pomContent.includes("spring-boot");
+    const hasMvnw = fs.existsSync(path.join(repository, "mvnw"));
+    const runner = hasMvnw ? "./mvnw" : "mvn";
+    const scripts = [`${runner} compile`, `${runner} test`];
+    const tags = ["project", "backend", "java"];
+    if (isSpringBoot) tags.push("spring-boot");
+    return {
+      type: "java-maven",
+      id,
+      title: titleFromId(id),
+      packageDocument: null,
+      scripts,
+      tags,
+      manifestFile: "pom.xml",
+    };
+  }
+
+  // 3. Java / Kotlin - Gradle
+  if (fs.existsSync(gradlePath) || fs.existsSync(gradleKtsPath)) {
+    const id = slugify(path.basename(repository));
+    const hasGradlew = fs.existsSync(path.join(repository, "gradlew"));
+    const runner = hasGradlew ? "./gradlew" : "gradle";
+    const scripts = [`${runner} compileJava`, `${runner} test`];
+    const tags = ["project", "backend", "java", "gradle"];
+    return {
+      type: "java-gradle",
+      id,
+      title: titleFromId(id),
+      packageDocument: null,
+      scripts,
+      tags,
+      manifestFile: fs.existsSync(gradlePath) ? "build.gradle" : "build.gradle.kts",
+    };
+  }
+
+  // 4. Python
+  if (fs.existsSync(pyprojectPath) || fs.existsSync(reqPath) || fs.existsSync(pipfilePath) || fs.existsSync(setupPyPath)) {
+    const id = slugify(path.basename(repository));
+    const scripts = ["pytest"];
+    const tags = ["project", "python"];
+    if (fs.existsSync(pyprojectPath)) {
+      const content = fs.readFileSync(pyprojectPath, "utf8");
+      if (content.includes("fastapi")) tags.push("fastapi");
+      if (content.includes("django")) tags.push("django");
+      if (content.includes("flask")) tags.push("flask");
+      if (content.includes("mypy")) scripts.push("mypy .");
+      if (content.includes("ruff")) scripts.push("ruff check .");
+    }
+    return {
+      type: "python",
+      id,
+      title: titleFromId(id),
+      packageDocument: null,
+      scripts,
+      tags,
+      manifestFile: fs.existsSync(pyprojectPath) ? "pyproject.toml" : "requirements.txt",
+    };
+  }
+
+  // 5. Go (Golang)
+  if (fs.existsSync(goModPath)) {
+    const modContent = fs.readFileSync(goModPath, "utf8");
+    const moduleMatch = modContent.match(/^module\s+([^\s\r\n]+)/m);
+    const rawName = moduleMatch?.[1] ? path.basename(moduleMatch[1]) : path.basename(repository);
+    const id = slugify(rawName);
+    const scripts = ["go test ./...", "go vet ./..."];
+    const tags = ["project", "backend", "golang"];
+    return {
+      type: "go",
+      id,
+      title: titleFromId(id),
+      packageDocument: null,
+      scripts,
+      tags,
+      manifestFile: "go.mod",
+    };
+  }
+
+  // 6. Rust
+  if (fs.existsSync(cargoPath)) {
+    const cargoContent = fs.readFileSync(cargoPath, "utf8");
+    const nameMatch = cargoContent.match(/name\s*=\s*"([^"]+)"/);
+    const id = slugify(nameMatch?.[1] || path.basename(repository));
+    const scripts = ["cargo check", "cargo test"];
+    const tags = ["project", "rust"];
+    return {
+      type: "rust",
+      id,
+      title: titleFromId(id),
+      packageDocument: null,
+      scripts,
+      tags,
+      manifestFile: "Cargo.toml",
+    };
+  }
+
+  // 7. PHP
+  if (fs.existsSync(composerPath)) {
+    let composer = {};
+    try {
+      composer = JSON.parse(fs.readFileSync(composerPath, "utf8"));
+    } catch {}
+    const rawName = composer.name ? composer.name.split("/").pop() : path.basename(repository);
+    const id = slugify(rawName);
+    const isLaravel = fs.existsSync(path.join(repository, "artisan"));
+    const scripts = isLaravel ? ["php artisan test"] : ["composer test"];
+    const tags = ["project", "backend", "php"];
+    if (isLaravel) tags.push("laravel");
+    return {
+      type: "php",
+      id,
+      title: titleFromId(id),
+      packageDocument: null,
+      scripts,
+      tags,
+      manifestFile: "composer.json",
+    };
+  }
+
+  throw new Error(`Tidak ditemukan manifest project yang didukung di ${repository} (package.json, pom.xml, build.gradle, pyproject.toml, requirements.txt, go.mod, Cargo.toml, composer.json).`);
+}
+
 export async function addExistingProject({
   vaultRoot,
   runsRoot,
@@ -898,15 +1083,18 @@ export async function addExistingProject({
   if (!fs.existsSync(path.join(repository, ".git"))) {
     throw new Error("Existing project harus berupa Git repository sebelum didaftarkan.");
   }
-  const packageDocument = readPackage(repository);
-  const identity = projectIdentity(repository, packageDocument, projectId);
+  const manifest = detectProjectManifest(repository);
+  const identity = {
+    id: projectId ? slugify(projectId) : manifest.id,
+    title: manifest.title || titleFromId(projectId || manifest.id),
+  };
   const alreadyRegistered = assertRegistrationAvailable(vaultRoot, identity.id, repository);
   const onboardingId = `existing-${identity.id}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const events = eventLogPath(runsRoot, onboardingId);
   let registrationTransaction = null;
   const stages = [];
   try {
-    const scripts = verificationScripts(packageDocument);
+    const scripts = manifest.scripts;
     const verification = await runVerification({ repository, scripts, processRunner, eventLogPath: events, onProgress });
     stages.push("VERIFIED");
     const graphify = await updateGraphify({ repository, processRunner, eventLogPath: events, onProgress });
@@ -920,7 +1108,7 @@ export async function addExistingProject({
         repository,
         graphifyOutput: graphify.output,
         verificationDefaults: scripts,
-        tags: frameworkTags(packageDocument),
+        tags: manifest.tags,
         blueprint: null,
       },
     });

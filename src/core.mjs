@@ -409,14 +409,34 @@ export function buildContext(vaultRoot, projectId, taskInput) {
   };
 }
 
-export function chooseVerificationCommands(packageScripts, requestedScripts = []) {
+export function chooseVerificationCommands(packageScripts = {}, requestedScripts = []) {
   const preferred = ["typecheck", "test", "lint", "build"];
   const requested = Array.isArray(requestedScripts) && requestedScripts.length > 0
     ? requestedScripts.map(String)
     : preferred;
   return requested
-    .filter((name) => /^[A-Za-z0-9:_-]+$/.test(name) && packageScripts[name])
-    .map((name) => `npm run ${name}`);
+    .map((name) => {
+      if (
+        name.includes(" ")
+        || name.startsWith("./")
+        || name.startsWith("mvn")
+        || name.startsWith("gradle")
+        || name.startsWith("pytest")
+        || name.startsWith("cargo")
+        || name.startsWith("go")
+        || name.startsWith("php")
+        || name.startsWith("composer")
+        || name.startsWith("dotnet")
+        || name.startsWith("python")
+      ) {
+        return name;
+      }
+      if (/^[A-Za-z0-9:_-]+$/.test(name) && packageScripts?.[name]) {
+        return `npm run ${name}`;
+      }
+      return null;
+    })
+    .filter(Boolean);
 }
 
 export function buildPlan(context) {
