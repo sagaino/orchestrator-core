@@ -25,6 +25,7 @@ import { capabilityForStage, prepareCapabilitySpawn } from "./capability-policy.
 import { redactSensitive, redactText } from "./redaction.mjs";
 import { buildStageContext, roleAssignmentForTask } from "./context-compactor.mjs";
 import { loadAssignedSkillInstructions } from "./skill-router.mjs";
+import { parseVerificationCommand } from "./verification-parser.mjs";
 
 function appendEvent(eventLogPath, event) {
   if (!eventLogPath || typeof eventLogPath !== "string") return;
@@ -550,12 +551,6 @@ export function buildAgyRevisionInvocation(
   };
 }
 
-function parseVerificationCommand(command) {
-  const match = command.match(/^npm run ([A-Za-z0-9:_-]+)$/);
-  if (!match) throw new Error(`Verification command tidak didukung: ${command}`);
-  return { command: "npm", args: ["run", match[1]], scriptName: match[1] };
-}
-
 export function verificationRequiresLoopback(scriptName, scriptCommand = "") {
   return /^(?:test|verify)(?:$|[:_-])/i.test(String(scriptName))
     || /(?:^|[:_-])(?:e2e|browser)(?:$|[:_-])/i.test(String(scriptName))
@@ -585,7 +580,8 @@ export function assertVerificationScriptsUnmodified(repository, frozenScripts) {
   if (!frozenScripts || Object.keys(frozenScripts).length === 0) return;
   const packagePath = path.join(repository, "package.json");
   if (!fs.existsSync(packagePath)) {
-    throw new Error("package.json tidak ditemukan saat validasi verification script.");
+    // Non-JS project (e.g. Java, Python, Go, Rust) where verification scripts are native commands
+    return;
   }
   let pkg;
   try {

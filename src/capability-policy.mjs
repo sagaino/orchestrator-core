@@ -5,6 +5,11 @@ import path from "node:path";
 const BASE_ENV = Object.freeze([
   "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "SHELL", "USER", "LOGNAME", "NO_COLOR", "ORCHESTRATOR_PROJECT_URLS",
   "ORCHESTRATOR_CAPABILITY_SANDBOX",
+  "GOPATH", "GOROOT", "GOCACHE", "GOTMPDIR",
+  "CARGO_HOME", "RUSTUP_HOME",
+  "GRADLE_USER_HOME", "M2_HOME", "MAVEN_HOME", "JAVA_HOME",
+  "PYTHONPATH", "VIRTUAL_ENV", "PYENV_ROOT",
+  "BUN_INSTALL", "DENO_INSTALL_ROOT", "NVM_DIR", "PNPM_HOME",
 ]);
 const PROVIDER_ENV = Object.freeze([
   "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -117,6 +122,26 @@ export function prepareCapabilitySpawn({ command, args = [], cwd, env = process.
   fs.chmodSync(temporaryRoot, 0o700);
   sanitizedEnv.TMPDIR = temporaryRoot;
   const effectiveWritableRoots = [...(writableRoots ?? [cwd]), temporaryRoot];
+
+  // Permit standard language toolchain build and package caches
+  const buildCacheRoots = [
+    path.join(effectiveHome, "Library", "Caches"),
+    path.join(effectiveHome, ".cache"),
+    path.join(effectiveHome, "go"),
+    path.join(effectiveHome, ".m2"),
+    path.join(effectiveHome, ".gradle"),
+    path.join(effectiveHome, ".cargo"),
+    path.join(effectiveHome, ".rustup"),
+    path.join(effectiveHome, ".npm"),
+    path.join(effectiveHome, ".bun"),
+    path.join(effectiveHome, ".deno"),
+  ];
+  for (const cacheDir of buildCacheRoots) {
+    if (fs.existsSync(cacheDir)) {
+      effectiveWritableRoots.push(cacheDir);
+    }
+  }
+
   const providerManagedSandbox = ["agent", "diagnostic"].includes(profileName) && path.basename(command) === "agy";
   if (profileName === "agent" || profileName === "diagnostic") {
     effectiveWritableRoots.push(path.join(effectiveHome, ".gemini", "antigravity-cli"));

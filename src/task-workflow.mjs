@@ -387,10 +387,11 @@ export function isSafeInfrastructureFailure({ rawError = "", manifest = {} } = {
   const loopbackSandboxFailure = /listen EPERM: operation not permitted\s+127\.0\.0\.1:/i.test(rawError)
     && includesNetworkedTest;
   const nestedSandboxFailure = /sandbox-exec:\s*sandbox_apply:\s*Operation not permitted/i.test(rawError);
+  const sandboxCacheFailure = /(?:go-build|Library\/Caches|\.cache|\.gradle|\.cargo).*operation not permitted|operation not permitted.*(?:go-build|Library\/Caches|\.cache|\.gradle|\.cargo)/i.test(rawError);
   const legacySafeFailure = /\bENOENT\b|executable.*not found|command not found/i.test(rawError)
     && !manifest.execution?.agent
     && !(manifest.execution?.scopeAudit?.changedPaths?.length > 0);
-  return legacySafeFailure || artifactScopeFailure || loopbackSandboxFailure || nestedSandboxFailure;
+  return legacySafeFailure || artifactScopeFailure || loopbackSandboxFailure || nestedSandboxFailure || sandboxCacheFailure;
 }
 
 async function discardWorkspace({ runsRoot, manifest }) {

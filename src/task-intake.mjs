@@ -294,14 +294,19 @@ export function resolveTaskComplexity(rawComplexity, request = "") {
 
 function normalizeDraft(raw, project, request = "") {
   const scripts = packageScripts(project.repository);
-  const configuredDefaults = (project.verificationDefaults ?? []).map(String).filter((name) => scripts[name]);
-  const verification = configuredDefaults.length
-    ? [...new Set(configuredDefaults)]
-    : [...new Set((raw.verification ?? []).map(String).filter((name) => scripts[name]))];
-  if (!verification.length) {
-    for (const preferred of ["typecheck", "test", "build", "lint"]) {
-      if (scripts[preferred]) verification.push(preferred);
+  const hasPackageScripts = Object.keys(scripts).length > 0;
+  let verification = [];
+  if (Array.isArray(project.verificationDefaults) && project.verificationDefaults.length > 0) {
+    verification = [...new Set(project.verificationDefaults.map(String))];
+  } else if (hasPackageScripts) {
+    verification = [...new Set((raw.verification ?? []).map(String).filter((name) => scripts[name]))];
+    if (!verification.length) {
+      for (const preferred of ["typecheck", "test", "build", "lint"]) {
+        if (scripts[preferred]) verification.push(preferred);
+      }
     }
+  } else if (Array.isArray(raw.verification) && raw.verification.length > 0) {
+    verification = [...new Set(raw.verification.map(String))];
   }
   const draft = {
     title: String(raw.title ?? "").trim(),
