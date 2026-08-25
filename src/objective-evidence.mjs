@@ -125,9 +125,10 @@ export function buildObjectiveEvidence({ runsRoot, objectiveId } = {}) {
     ...nodes.map(blockerForNode).filter(Boolean),
     ...openDecisions.map((decision) => ({ id: decision.decisionId, kind: "DECISION", decisionId: decision.decisionId, state: decision.state, message: decision.requestedAction })),
   ];
-  if (objective.mode === "CROSS_PROJECT_INCIDENT") {
+  if (objective.mode === "CROSS_PROJECT_INCIDENT" && plan?.integration?.required === true) {
     const repositoryAcceptance = Array.isArray(integration?.repositoryAcceptance) ? integration.repositoryAcceptance : [];
-    for (const projectId of objective.projectIds ?? []) {
+    const targetProjects = plan?.projects?.length ? plan.projects : (objective.projectIds ?? []);
+    for (const projectId of targetProjects) {
       const acceptance = repositoryAcceptance.find((item) => item.projectId === projectId);
       if (!acceptance || acceptance.acceptance?.status !== "PASS") {
         blockers.push({ id: `repository-${projectId}`, kind: "REPOSITORY_ACCEPTANCE", projectId, state: acceptance?.acceptance?.status ?? "MISSING", message: `Per-repository acceptance untuk ${projectId} belum lulus.` });
