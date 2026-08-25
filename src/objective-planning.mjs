@@ -1,4 +1,5 @@
-import { getPackageScripts, listProjects, projectPagePath, readGraphSummary, readMarkdown } from "./core.mjs";
+import path from "node:path";
+import { findRelevantKnowledge, getPackageScripts, listProjects, projectPagePath, readGraphSummary, readMarkdown } from "./core.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 import { getObjective, updateObjective } from "./objective-store.mjs";
 import { createPlanRevision } from "./plan-lifecycle.mjs";
@@ -22,6 +23,48 @@ function fail(message, options = {}) {
 function bounded(value, limit) {
   const text = String(value ?? "").trim();
   return text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+function buildObjectiveKnowledge(vaultRoot, objective) {
+  const knowledgeMap = new Map();
+  if (!vaultRoot) return [];
+
+  // 1. Resolve explicitly linked sources from each project.md
+  try {
+    const registry = listProjects(vaultRoot).projects;
+    for (const projectId of (objective.projectIds ?? [])) {
+      const project = registry.find((candidate) => candidate.id === projectId);
+      if (!project) continue;
+      const document = readMarkdown(projectPagePath(vaultRoot, project.projectPage), vaultRoot);
+      const sources = Array.isArray(document?.metadata?.sources) ? document.metadata.sources : [];
+      for (const source of sources) {
+        const cleanPath = String(source).replace(/^\[\[/, "").replace(/\]\]$/, "").split("|")[0].trim();
+        const relativePath = cleanPath.endsWith(".md") ? cleanPath : `${cleanPath}.md`;
+        const fullPath = path.join(vaultRoot, relativePath);
+        const doc = readMarkdown(fullPath, vaultRoot);
+        if (doc && !knowledgeMap.has(doc.path)) {
+          knowledgeMap.set(doc.path, {
+            path: doc.path,
+            title: doc.title || path.basename(doc.path, ".md"),
+            summary: doc.body.slice(0, 1000),
+            score: 10,
+          });
+        }
+      }
+    }
+  } catch {}
+
+  // 2. Also retrieve relevant knowledge based on objective request text
+  try {
+    const matched = findRelevantKnowledge(vaultRoot, { title: objective.request.slice(0, 100), body: objective.request });
+    for (const item of matched) {
+      if (!knowledgeMap.has(item.path)) {
+        knowledgeMap.set(item.path, item);
+      }
+    }
+  } catch {}
+
+  return Array.from(knowledgeMap.values());
 }
 
 function buildProjectContexts(vaultRoot, objective) {
@@ -117,9 +160,11 @@ export async function planObjective({
     }
 
     const contexts = buildProjectContexts(vaultRoot, objective);
+    const knowledge = buildObjectiveKnowledge(vaultRoot, objective);
     const result = await decomposer({
       objective: effectiveObjective(objective, clarification),
       projectContexts: contexts,
+      knowledge,
       graphifyContext: bounded(JSON.stringify(contexts.map((project) => ({ projectId: project.projectId, graph: project.graph }))), 3_000),
       runsRoot,
       now,
