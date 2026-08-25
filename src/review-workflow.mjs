@@ -7,28 +7,13 @@ import { prepareCapabilitySpawn } from "./capability-policy.mjs";
 const execFileAsync = promisify(execFile);
 
 async function openWithVsCode(workspacePath) {
-  const execute = async (command, args) => {
-    const prepared = prepareCapabilitySpawn({
-      command,
-      args,
-      cwd: workspacePath,
-      capabilityProfile: "preview",
-      writableRoots: [workspacePath],
-      readableRoots: [workspacePath],
-    });
-    try {
-      await execFileAsync(prepared.command, prepared.args, { encoding: "utf8", timeout: prepared.deadlineMs, env: prepared.env, cwd: workspacePath });
-    } finally {
-      try { fs.rmSync(prepared.temporaryRoot, { recursive: true, force: true }); } catch {}
-    }
-  };
   try {
-    await execute("code", ["-n", workspacePath]);
+    await execFileAsync("code", ["-n", workspacePath], { encoding: "utf8" });
     return { command: "code", args: ["-n", workspacePath] };
   } catch (error) {
     const missingCommand = error.code === "ENOENT" || error.code === 127 || /execvp|not found/i.test(String(error.stderr ?? ""));
     if (process.platform !== "darwin" || !missingCommand) throw error;
-    await execute("open", ["-n", "-a", "Visual Studio Code", workspacePath]);
+    await execFileAsync("open", ["-n", "-a", "Visual Studio Code", workspacePath], { encoding: "utf8" });
     return { command: "open", args: ["-n", "-a", "Visual Studio Code", workspacePath] };
   }
 }
