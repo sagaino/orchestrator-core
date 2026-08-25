@@ -300,8 +300,15 @@ function validateParsedPlan(plan, objective, budget, projectContexts = []) {
   if (plan.revision !== PROJECT_DECOMPOSITION_REVISION) errors.push("plan.revision harus 1");
   if (plan.state !== PLAN_STATE) errors.push("plan.state harus PENDING_APPROVAL");
   if (plan.approvedBy !== null || plan.approvedAt !== null) errors.push("model tidak boleh mengisi approval fields");
-  if (plan.clarificationNeeded !== false || plan.clarificationQuestion !== null) errors.push("reviewable plan tidak boleh meminta clarification");
-  if (JSON.stringify(sortedProjectIds(plan.projects)) !== JSON.stringify(expectedProjects)) errors.push("plan.projects harus sama dengan objective.projectIds");
+  const expectedProjectSet = new Set(expectedProjects);
+  const planProjects = sortedProjectIds(plan.projects);
+  const unknownProjects = planProjects.filter((id) => !expectedProjectSet.has(id));
+  if (unknownProjects.length > 0) {
+    errors.push(`plan.projects memuat project tidak dikenal: ${unknownProjects.join(", ")}`);
+  }
+  if (planProjects.length === 0) {
+    errors.push("plan.projects tidak boleh kosong");
+  }
 
   const schemaValidation = validatePlanRecord({ ...plan, nodes: Array.isArray(plan.nodes) ? plan.nodes : [] }, {
     knownProjectIds: expectedProjects,
@@ -313,7 +320,6 @@ function validateParsedPlan(plan, objective, budget, projectContexts = []) {
   const graphValidation = validateTaskGraph(plan.nodes);
   errors.push(...schemaValidation.errors, ...graphValidation.errors.map((message) => `graph: ${message}`));
 
-  const expectedProjectSet = new Set(expectedProjects);
   const scriptsByProject = new Map(projectContexts.map((project) => [
     String(project.projectId ?? project.id),
     new Set((project.verificationScripts ?? project.verification ?? []).map(String)),
