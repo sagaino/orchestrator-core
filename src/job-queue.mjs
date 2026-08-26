@@ -348,8 +348,17 @@ export function reconcileJobs(runsRoot, runs) {
   const runsById = new Map(runs.map((run) => [run.runId, run]));
   const reconciled = [];
   for (const job of listJobs(runsRoot)) {
-    if (![JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state)) continue;
     const run = job.runId ? runsById.get(job.runId) : null;
+    if (job.state === JOB_STATES.FAILED && run?.state === "DONE") {
+      reconciled.push(updateJob(runsRoot, job.jobId, {
+        state: JOB_STATES.DONE,
+        runState: run.state,
+        error: null,
+        recovery: "RECONCILED_FROM_RUN_DONE",
+      }));
+      continue;
+    }
+    if (![JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state)) continue;
     let patch = null;
 
     if (!run && job.state === JOB_STATES.RUNNING) {
