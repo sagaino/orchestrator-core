@@ -5,6 +5,7 @@ import { runProcess } from "./executor.mjs";
 import { agyConfigArgs } from "./agent-config.mjs";
 import { createAgentTelemetryRecord, persistKnowledgeTelemetry } from "./telemetry.mjs";
 import { redactText } from "./redaction.mjs";
+import { reviewDateFrom, KNOWLEDGE_PROVENANCE_OWNER, KNOWLEDGE_PROVENANCE_SCHEMA_VERSION } from "./knowledge-provenance.mjs";
 
 export const VALID_DOMAINS = new Set([
   "frontend",
@@ -517,6 +518,9 @@ export function formatHarvestMarkdown({
     ? `[candidate, pattern, ${domain}]`
     : `[${(pattern.tags || ["pattern", domain]).join(", ")}]`;
 
+  const confidence = Number(pattern.confidence) >= 0 && Number(pattern.confidence) <= 1 ? Number(pattern.confidence) : destination === "CANDIDATE" ? 0.75 : 0.95;
+  const reviewBy = reviewDateFrom({ now: new Date() });
+
   const frontmatter = [
     "---",
     `title: ${JSON.stringify(pattern.title)}`,
@@ -524,6 +528,11 @@ export function formatHarvestMarkdown({
     `tags: ${tags}`,
     `created: ${today}`,
     `updated: ${today}`,
+    `provenance_schema: ${KNOWLEDGE_PROVENANCE_SCHEMA_VERSION}`,
+    `confidence: ${confidence}`,
+    `owner: ${JSON.stringify(KNOWLEDGE_PROVENANCE_OWNER)}`,
+    `review_by: ${reviewBy}`,
+    `supersession: "ACTIVE"`,
     `orchestrator_run: ${harvestId}`,
     `sources: ["[[${sourcePath}]]"]`,
     "---",

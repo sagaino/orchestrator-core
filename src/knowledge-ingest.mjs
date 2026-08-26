@@ -5,6 +5,7 @@ import { runProcess } from "./executor.mjs";
 import { agyConfigArgs } from "./agent-config.mjs";
 import { createAgentTelemetryRecord, persistKnowledgeTelemetry } from "./telemetry.mjs";
 import { redactText } from "./redaction.mjs";
+import { reviewDateFrom, KNOWLEDGE_PROVENANCE_OWNER, KNOWLEDGE_PROVENANCE_SCHEMA_VERSION } from "./knowledge-provenance.mjs";
 
 export const VALID_DOMAINS = new Set([
   "frontend",
@@ -264,6 +265,9 @@ function formatKnowledgeMarkdown({
     ? `[candidate, ${type}, ${domain}]`
     : `[${synthesis.tags.join(", ")}]`;
 
+  const confidence = destination === "CANDIDATE" ? 0.75 : 0.95;
+  const reviewBy = reviewDateFrom({ now: new Date() });
+
   const frontmatter = [
     "---",
     `title: ${JSON.stringify(title)}`,
@@ -271,6 +275,11 @@ function formatKnowledgeMarkdown({
     `tags: ${tags}`,
     `created: ${today}`,
     `updated: ${today}`,
+    `provenance_schema: ${KNOWLEDGE_PROVENANCE_SCHEMA_VERSION}`,
+    `confidence: ${confidence}`,
+    `owner: ${JSON.stringify(KNOWLEDGE_PROVENANCE_OWNER)}`,
+    `review_by: ${reviewBy}`,
+    `supersession: "ACTIVE"`,
     `orchestrator_run: ${ingestId}`,
     `sources: ["[[${sourcePath}]]"]`,
     "---",
