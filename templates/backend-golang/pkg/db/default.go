@@ -30,14 +30,26 @@ func Default() (*gorm.DB, error) {
 	password = os.Getenv("PG_PASSWORD")
 	dbName = os.Getenv("PG_DATABASE")
 	port = os.Getenv("PG_PORT")
+	host = os.Getenv("PG_HOST")
 
-	switch os.Getenv("ENVIRONMENT") {
-	case "development":
-		host = os.Getenv("PG_HOST_DEV")
-	case "staging":
-		host = os.Getenv("PG_HOST_STAG_DOCKER")
-	case "docker":
-		host = os.Getenv("PG_HOST_DOCKER")
+	if host == "" {
+		switch os.Getenv("ENVIRONMENT") {
+		case "development":
+			host = os.Getenv("PG_HOST_DEV")
+		case "staging":
+			host = os.Getenv("PG_HOST_STAG_DOCKER")
+		case "docker":
+			host = os.Getenv("PG_HOST_DOCKER")
+		}
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if port == "" {
+		port = "5432"
+	}
+	if username == "" {
+		username = "postgres"
 	}
 
 	dbConn, err := gorm.Open(
