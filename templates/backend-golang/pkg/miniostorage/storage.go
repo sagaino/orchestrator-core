@@ -30,6 +30,14 @@ func NewConnection(conn Conn) StorageMinio {
 		panic(fmt.Errorf("connection to miniostorage err => %s", err.Error()))
 	}
 
+	if conn.Bucket != "" {
+		ctx := context.Background()
+		exists, errBucket := client.BucketExists(ctx, conn.Bucket)
+		if errBucket == nil && !exists {
+			_ = client.MakeBucket(ctx, conn.Bucket, minio.MakeBucketOptions{})
+		}
+	}
+
 	return StorageMinio{client: client, bucket: conn.Bucket}
 }
 
