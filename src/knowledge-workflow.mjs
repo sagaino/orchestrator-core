@@ -382,7 +382,9 @@ export async function retrospectRun({
   proposalGenerator = generateProposalWithAgy,
 }) {
   let manifest = getRun(runsRoot, runId);
-  if (manifest.state === RUN_STATES.RETROSPECTIVE) return manifest;
+  if ([RUN_STATES.RETROSPECTIVE, RUN_STATES.KNOWLEDGE_APPROVAL, RUN_STATES.WIKI_SYNCED, RUN_STATES.DONE].includes(manifest.state)) {
+    return manifest;
+  }
   if (manifest.state !== RUN_STATES.REVIEW) {
     throw new Error(`Run ${runId} harus REVIEW sebelum retrospective; state ${manifest.state}.`);
   }
@@ -391,6 +393,10 @@ export async function retrospectRun({
   const retrospectiveAgent = generated?.agentConfig ?? null;
   if (generated?.telemetry) {
     manifest = appendRunTelemetry({ runsRoot, runId, record: generated.telemetry });
+  }
+  const currentManifest = getRun(runsRoot, runId);
+  if ([RUN_STATES.RETROSPECTIVE, RUN_STATES.KNOWLEDGE_APPROVAL, RUN_STATES.WIKI_SYNCED, RUN_STATES.DONE].includes(currentManifest.state)) {
+    return currentManifest;
   }
   return transitionRun({
     vaultRoot,
@@ -1346,6 +1352,11 @@ export async function acceptRun({
   if (manifest.state === RUN_STATES.REVIEW) {
     manifest = await retrospectRun({ vaultRoot, runsRoot, runId, proposalGenerator });
   }
+  manifest = getRun(runsRoot, runId);
+  if (manifest.state === RUN_STATES.DONE) {
+    return cleanupWorkspaceAfterCompletion({ runsRoot, manifest });
+  }
+
   if (manifest.state === RUN_STATES.RETROSPECTIVE) {
     manifest = await applyWorkspaceForAcceptance({
       vaultRoot,
@@ -1364,9 +1375,19 @@ export async function acceptRun({
       targetPath,
     });
   }
+  manifest = getRun(runsRoot, runId);
+  if (manifest.state === RUN_STATES.DONE) {
+    return cleanupWorkspaceAfterCompletion({ runsRoot, manifest });
+  }
+
   if (manifest.state === RUN_STATES.KNOWLEDGE_APPROVAL) {
     manifest = syncWikiRun({ vaultRoot, runsRoot, runId });
   }
+  manifest = getRun(runsRoot, runId);
+  if (manifest.state === RUN_STATES.DONE) {
+    return cleanupWorkspaceAfterCompletion({ runsRoot, manifest });
+  }
+
   if (manifest.state === RUN_STATES.WIKI_SYNCED) {
     manifest = await completeRun({
       vaultRoot,
@@ -1378,6 +1399,7 @@ export async function acceptRun({
     });
   }
 
+  manifest = getRun(runsRoot, runId);
   if (manifest.state !== RUN_STATES.DONE) {
     throw new Error(`accept hanya dapat melanjutkan run REVIEW sampai DONE; state saat ini ${manifest.state}.`);
   }
