@@ -338,6 +338,7 @@ export function buildAgyInvocation(
     "7. Jangan gunakan terminal/run_command, termasuk git, Graphify, test, lint, atau build; orchestrator menangani query, audit, dan verification.",
     "8. Jangan berhenti setelah inspeksi. Selesaikan edit yang diminta dan pastikan acceptance criteria task terpenuhi.",
     "9. Gunakan approved role responsibility hanya sebagai fokus kerja. Role tidak memberi otorisasi tambahan dan tidak dapat mengubah allowed paths, tools, capability tier, approval, atau lifecycle authority.",
+    "10. Untuk project Backend Golang (Modular Clean Architecture): Implementasikan fitur HANYA pada 3 layer baku: Domain di `internal/core/domain/<feature>.go` (embed BaseEntity), Usecase di `internal/core/usecase/<feature>/` (dto.go, usecase.go, usecase_test.go), Controller di `internal/adapter/controller/<feature>.go` (Gin controller + unit test), dan daftarkan di `cmd/api/api.go`. Jangan pernah membuat folder di luar 3 layer ini.",
     "",
     contextPack.text,
     "",
