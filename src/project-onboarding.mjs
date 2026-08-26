@@ -1455,6 +1455,15 @@ export async function addNewProject({
 
     fs.renameSync(generated, target);
     movedToTarget = true;
+
+    if (isGo) {
+      const examplePath = path.join(target, ".env.example");
+      const devPath = path.join(target, ".env.dev");
+      if (fs.existsSync(examplePath) && !fs.existsSync(devPath)) {
+        fs.copyFileSync(examplePath, devPath);
+      }
+    }
+
     const graphify = await updateGraphify({ repository: target, processRunner, eventLogPath: events, onProgress });
     stages.push("GRAPHIFY_BOOTSTRAPPED");
 
