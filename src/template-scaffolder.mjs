@@ -79,9 +79,17 @@ export function applyDeterministicTemplate({ repository, blueprint, expectedPoli
   }
 
   const projectName = String(packageDocument?.name ?? path.basename(repository));
+  const snakeCaseName = projectName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+  const kebabCaseName = projectName.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase();
   const substitutions = {
     __PROJECT_NAME__: projectName,
-    ...(isGo ? { "base-be-golang": projectName } : {}),
+    __PROJECT_NAME_SNAKE__: snakeCaseName,
+    __PROJECT_NAME_KEBAB__: kebabCaseName,
+    ...(isGo ? {
+      "base-be-golang": projectName,
+      "base_be": snakeCaseName,
+      "base-be": kebabCaseName,
+    } : {}),
   };
   const hash = createHash("sha256");
   hash.update(fs.readFileSync(manifestPath));
