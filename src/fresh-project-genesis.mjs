@@ -25,7 +25,7 @@ function assertProposal(objective) {
     throw proposalError("Objective bukan Fresh Project atau proposal genesis tidak tersedia.", { statusCode: 409, code: "GENESIS_NOT_AVAILABLE", details: { code: "GENESIS_NOT_AVAILABLE" } });
   }
   const proposal = objective.freshProject;
-  if (!proposal.projectId || !proposal.targetDirectory || proposal.blueprint !== "frontend-vite") {
+  if (!proposal.projectId || !proposal.targetDirectory || !["frontend-vite", "backend-golang"].includes(proposal.blueprint)) {
     throw proposalError("Proposal Fresh Project tidak lengkap atau blueprint tidak didukung.", { statusCode: 409, code: "GENESIS_INVALID", details: { code: "GENESIS_INVALID" } });
   }
   return proposal;

@@ -112,7 +112,7 @@ export function validateObjectiveRecord(objective) {
   if (isRecord(objective.freshProject)) {
     add(errors, identifier(objective.freshProject.projectId), "objective.freshProject.projectId must be a stable identifier");
     add(errors, typeof objective.freshProject.targetDirectory === "string" && objective.freshProject.targetDirectory.length > 0, "objective.freshProject.targetDirectory must be non-empty");
-    add(errors, objective.freshProject.blueprint === "frontend-vite", "objective.freshProject.blueprint is unsupported");
+    add(errors, ["frontend-vite", "backend-golang"].includes(objective.freshProject.blueprint), "objective.freshProject.blueprint is unsupported");
   }
   add(errors, objective.attachments === undefined || Array.isArray(objective.attachments), "objective.attachments must be an array");
   for (const [index, attachment] of (objective.attachments ?? []).entries()) {

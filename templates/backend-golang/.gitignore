@@ -1,0 +1,8 @@
+.idea
+.env
+.env.*
+!.env.example
+graphify-out/
+bin/
+/api
+AGENTS.md

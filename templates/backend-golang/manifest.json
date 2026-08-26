@@ -1,0 +1,11 @@
+{
+  "blueprint": "backend-golang",
+  "templateVersion": 1,
+  "policyVersion": 1,
+  "wikiBlueprint": "01-Knowledge/patterns/backend/project-skeleton-template.md",
+  "toolchain": "go",
+  "verificationDefaults": [
+    "go test ./...",
+    "go vet ./..."
+  ]
+}
