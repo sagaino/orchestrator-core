@@ -7,7 +7,7 @@ import { createObjective, getObjective, listObjectives } from "./objective-store
 import { withDurableLease } from "./durable-runtime.mjs";
 
 const OBJECTIVE_MODES = new Set(["FRESH_PROJECT", "EXISTING_PROJECT", "CROSS_PROJECT_INCIDENT"]);
-const BLUEPRINTS = new Set(["frontend-vite"]);
+const BLUEPRINTS = new Set(["frontend-vite", "backend-golang"]);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export class ObjectiveIntakeError extends Error {

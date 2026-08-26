@@ -14,27 +14,46 @@ const DEFAULT_BLUEPRINT = "frontend-vite";
 const SHADCN_VERSION = "4.18.0";
 const BLUEPRINT_PATHS = Object.freeze({
   "frontend-vite": "01-Knowledge/patterns/frontend/project-skeleton-template.md",
+  "backend-golang": "01-Knowledge/patterns/backend/project-skeleton-template.md",
 });
 const BLUEPRINT_POLICIES = Object.freeze({
   "frontend-vite": Object.freeze({
     version: 3,
+    toolchain: "node",
     shadcnVersion: SHADCN_VERSION,
     managedDevDependencies: Object.freeze({
       typescript: "~5.9.3",
     }),
+    verificationDefaults: Object.freeze(["npm run typecheck", "npm run lint", "npm run build"]),
+  }),
+  "backend-golang": Object.freeze({
+    version: 1,
+    toolchain: "go",
+    verificationDefaults: Object.freeze(["go test ./...", "go vet ./..."]),
   }),
 });
-const REQUIRED_NEW_PROJECT_PATHS = Object.freeze([
-  "src/components/ui",
-  "src/hooks/useLocalStorage.ts",
-  "src/lib/constant/endpoints.ts",
-  "src/lib/axios.ts",
-  "src/lib/signature.ts",
-  "src/lib/error-utils.ts",
-  "src/pages/Login",
-  "src/routes",
-  "src/services/auth.ts",
-]);
+const REQUIRED_NEW_PROJECT_PATHS = Object.freeze({
+  "frontend-vite": Object.freeze([
+    "src/components/ui",
+    "src/hooks/useLocalStorage.ts",
+    "src/lib/constant/endpoints.ts",
+    "src/lib/axios.ts",
+    "src/lib/signature.ts",
+    "src/lib/error-utils.ts",
+    "src/pages/Login",
+    "src/routes",
+    "src/services/auth.ts",
+  ]),
+  "backend-golang": Object.freeze([
+    "cmd/api/api.go",
+    "internal/core/domain/base.go",
+    "internal/adapter/controller",
+    "pkg/db",
+    "pkg/mapper/errors.go",
+    "shared/payload/response.go",
+    "go.mod",
+  ]),
+});
 const NEW_PROJECT_REQUIRED_SCRIPTS = Object.freeze(["typecheck", "lint", "build"]);
 const ACTIVE_PROJECT_JOB_STATES = new Set([JOB_STATES.QUEUED, JOB_STATES.RUNNING, JOB_STATES.REVIEW]);
 const ACTIVE_PROJECT_RUN_STATES = new Set([
@@ -131,6 +150,14 @@ function writePackage(repository, packageDocument) {
 export function applyBlueprintDependencyPolicy(repository, blueprint = DEFAULT_BLUEPRINT) {
   const policy = BLUEPRINT_POLICIES[blueprint];
   if (!policy) throw new Error(`Dependency policy belum tersedia untuk blueprint ${blueprint}.`);
+  if (policy.toolchain === "go" || blueprint === "backend-golang") {
+    return {
+      blueprint,
+      policyVersion: policy.version,
+      packagePath: null,
+      changes: [],
+    };
+  }
   const packageDocument = readPackage(repository);
   const changes = [];
   packageDocument.dependencies = { ...(packageDocument.dependencies ?? {}) };
@@ -159,7 +186,7 @@ export function applyBlueprintDependencyPolicy(repository, blueprint = DEFAULT_B
 }
 
 function verificationScripts(packageDocument, { requireNewBaseline = false } = {}) {
-  const scripts = packageDocument.scripts ?? {};
+  const scripts = packageDocument?.scripts ?? {};
   if (requireNewBaseline) {
     const missing = NEW_PROJECT_REQUIRED_SCRIPTS.filter((name) => !scripts[name]);
     if (missing.length > 0) {
@@ -176,8 +203,11 @@ function verificationScripts(packageDocument, { requireNewBaseline = false } = {
   return selected;
 }
 
-function frameworkTags(packageDocument) {
-  const dependencies = { ...(packageDocument.dependencies ?? {}), ...(packageDocument.devDependencies ?? {}) };
+function frameworkTags(packageDocument, blueprint = null) {
+  if (blueprint === "backend-golang" || !packageDocument) {
+    return ["project", "backend", "golang"];
+  }
+  const dependencies = { ...(packageDocument?.dependencies ?? {}), ...(packageDocument?.devDependencies ?? {}) };
   const tags = ["project"];
   if (dependencies.react) tags.push("frontend", "react");
   if (dependencies.vite) tags.push("vite");
@@ -321,6 +351,23 @@ async function installBlueprintDependencies({
     label: `Dependency policy v${policy.policyVersion}`,
     elapsedSeconds: 0,
   });
+
+  if (blueprint === "backend-golang" || BLUEPRINT_POLICIES[blueprint]?.toolchain === "go") {
+    const downloadResult = await runObserved(processRunner, {
+      command: "go",
+      args: ["mod", "download"],
+      cwd: repository,
+      stage: "project-onboarding:go-mod-download",
+      eventLogPath,
+    }, "Go modules download", onProgress);
+    return {
+      blueprint,
+      policyVersion: policy.policyVersion,
+      attempts: [{ attempt: 1, exitCode: downloadResult.exitCode, dependencyConflict: false }],
+      history: [],
+      repeatedAfterFallback: false,
+    };
+  }
 
   const attempts = [];
   const preflight = async (stage) => {
@@ -859,14 +906,18 @@ function assertNoSensitiveEnvironmentFiles(repository) {
   return { forbiddenFiles };
 }
 
-function assertBlueprintResult(repository) {
-  const missing = REQUIRED_NEW_PROJECT_PATHS.filter((relative) => !fs.existsSync(path.join(repository, relative)));
+function assertBlueprintResult(repository, blueprint = DEFAULT_BLUEPRINT) {
+  const required = REQUIRED_NEW_PROJECT_PATHS[blueprint] ?? REQUIRED_NEW_PROJECT_PATHS["frontend-vite"];
+  const missing = required.filter((relative) => !fs.existsSync(path.join(repository, relative)));
   if (missing.length > 0) throw new Error(`Blueprint belum lengkap; path wajib tidak ditemukan: ${missing.join(", ")}.`);
+  if (blueprint === "backend-golang" || BLUEPRINT_POLICIES[blueprint]?.toolchain === "go") {
+    return { requiredPaths: required.length };
+  }
   const uiRoot = path.join(repository, "src", "components", "ui");
   const componentCount = fs.readdirSync(uiRoot, { withFileTypes: true })
     .filter((entry) => entry.isFile() && /\.(tsx|ts)$/.test(entry.name)).length;
   if (componentCount === 0) throw new Error("Shadcn add --all tidak menghasilkan komponen UI.");
-  return { requiredPaths: REQUIRED_NEW_PROJECT_PATHS.length, shadcnComponentCount: componentCount };
+  return { requiredPaths: required.length, shadcnComponentCount: componentCount };
 }
 
 function scaffoldFallbackAgentInvocation({ repository, projectId, blueprintPath, verificationError }) {
@@ -1199,112 +1250,38 @@ export async function addNewProject({
   let registrationTransaction = null;
 
   try {
-    await runRequired(processRunner, {
-      command: "npx",
-      args: ["-y", `shadcn@${SHADCN_VERSION}`, "init", "-t", "vite", "-b", "base", "-n", projectId, "-p", "nova", "--no-monorepo", "-y"],
-      cwd: stageRoot,
-      stage: "project-onboarding:shadcn-init",
-      eventLogPath: events,
-    }, "Vite + Shadcn initialization", onProgress);
-    stages.push("SHADCN_INIT");
-    if (!fs.existsSync(generated) || !fs.statSync(generated).isDirectory()) {
-      throw new Error(`Shadcn tidak membuat project pada path yang diharapkan: ${generated}`);
-    }
-
-    await runRequired(processRunner, {
-      command: "npx",
-      args: ["-y", `shadcn@${SHADCN_VERSION}`, "add", "--all", "-y"],
-      cwd: generated,
-      stage: "project-onboarding:shadcn-add-all",
-      eventLogPath: events,
-    }, "Shadcn add --all", onProgress);
-    stages.push("SHADCN_ADD_ALL");
-
-    templateAudit = applyDeterministicTemplate({
-      repository: generated,
-      blueprint,
-      expectedPolicyVersion: BLUEPRINT_POLICIES[blueprint].version,
-    });
-    emitProgress(onProgress, {
-      state: "COMPLETED",
-      stage: "project-onboarding:deterministic-template",
-      label: `Deterministic template v${templateAudit.templateVersion}`,
-      elapsedSeconds: 0,
-    });
-    stages.push("DETERMINISTIC_TEMPLATE_APPLIED", "BLUEPRINT_APPLIED");
-
-    dependency = await installBlueprintDependencies({
-      repository: generated,
-      blueprint,
-      processRunner,
-      eventLogPath: events,
-      onProgress,
-    });
-    stages.push("DEPENDENCY_POLICY_APPLIED", "DEPENDENCIES_RESOLVED");
-    stages.push("DEPENDENCIES_INSTALLED");
-
-    let packageDocument = readPackage(generated);
-    let scripts = verificationScripts(packageDocument, { requireNewBaseline: true });
-    let blueprintAudit = assertBlueprintResult(generated);
+    const isGo = blueprint === "backend-golang" || BLUEPRINT_POLICIES[blueprint]?.toolchain === "go";
+    let scripts;
+    let blueprintAudit;
     let verification;
-    try {
-      verification = await runVerification({
-        repository: generated,
-        scripts,
-        processRunner,
-        eventLogPath: events,
-        onProgress,
-      });
-    } catch (verificationError) {
-      if (!allowAgentFallback) {
-        throw new Error(`${verificationError.message}\nAI fallback dinonaktifkan oleh ORCHESTRATOR_ONBOARDING_AI_FALLBACK.`);
-      }
-      const beforeAgent = repositoryFileSnapshot(generated);
-      const agentInvocation = scaffoldFallbackAgentInvocation({
-        repository: generated,
-        projectId,
-        blueprintPath,
-        verificationError: verificationError.message,
-      });
-      const agentResult = await runRequired(processRunner, {
-        ...agentInvocation,
-        cwd: generated,
-        stage: "project-onboarding:blueprint-agent",
-        eventLogPath: events,
-      }, "Blueprint fallback agent", onProgress);
-      const fallbackChangedPaths = changedSnapshotPaths(beforeAgent, repositoryFileSnapshot(generated));
-      agentFallback = {
-        used: true,
-        reason: "DETERMINISTIC_VERIFICATION_FAILED",
-        initialError: verificationError.message,
-        scopeAudit: assertFallbackScope(fallbackChangedPaths, templateAudit.filesWritten),
-      };
-      assertNoSensitiveEnvironmentFiles(generated);
-      agentTelemetry = createAgentTelemetryRecord({
-        stage: "PROJECT_ONBOARDING_FALLBACK",
-        result: agentResult,
-        agentConfig: agentInvocation.agentConfig,
-        invocationId: onboardingId,
-        metadata: { onboardingId, projectId, blueprint },
-      });
-      stages.push("AI_FALLBACK_APPLIED");
 
-      const initialDependency = dependency;
-      const fallbackDependency = await installBlueprintDependencies({
+    if (isGo) {
+      fs.mkdirSync(generated, { recursive: true });
+      templateAudit = applyDeterministicTemplate({
+        repository: generated,
+        blueprint,
+        expectedPolicyVersion: BLUEPRINT_POLICIES[blueprint].version,
+      });
+      emitProgress(onProgress, {
+        state: "COMPLETED",
+        stage: "project-onboarding:deterministic-template",
+        label: `Deterministic template v${templateAudit.templateVersion}`,
+        elapsedSeconds: 0,
+      });
+      stages.push("DETERMINISTIC_TEMPLATE_APPLIED", "BLUEPRINT_APPLIED");
+
+      dependency = await installBlueprintDependencies({
         repository: generated,
         blueprint,
         processRunner,
         eventLogPath: events,
         onProgress,
       });
-      dependency = {
-        ...fallbackDependency,
-        repeatedAfterFallback: true,
-        history: [initialDependency, fallbackDependency],
-      };
-      packageDocument = readPackage(generated);
-      scripts = verificationScripts(packageDocument, { requireNewBaseline: true });
-      blueprintAudit = assertBlueprintResult(generated);
+      stages.push("DEPENDENCY_POLICY_APPLIED", "DEPENDENCIES_RESOLVED");
+      stages.push("DEPENDENCIES_INSTALLED");
+
+      scripts = [...BLUEPRINT_POLICIES[blueprint].verificationDefaults];
+      blueprintAudit = assertBlueprintResult(generated, blueprint);
       verification = await runVerification({
         repository: generated,
         scripts,
@@ -1312,7 +1289,121 @@ export async function addNewProject({
         eventLogPath: events,
         onProgress,
       });
-      stages.push("AI_FALLBACK_VERIFIED");
+    } else {
+      await runRequired(processRunner, {
+        command: "npx",
+        args: ["-y", `shadcn@${SHADCN_VERSION}`, "init", "-t", "vite", "-b", "base", "-n", projectId, "-p", "nova", "--no-monorepo", "-y"],
+        cwd: stageRoot,
+        stage: "project-onboarding:shadcn-init",
+        eventLogPath: events,
+      }, "Vite + Shadcn initialization", onProgress);
+      stages.push("SHADCN_INIT");
+      if (!fs.existsSync(generated) || !fs.statSync(generated).isDirectory()) {
+        throw new Error(`Shadcn tidak membuat project pada path yang diharapkan: ${generated}`);
+      }
+
+      await runRequired(processRunner, {
+        command: "npx",
+        args: ["-y", `shadcn@${SHADCN_VERSION}`, "add", "--all", "-y"],
+        cwd: generated,
+        stage: "project-onboarding:shadcn-add-all",
+        eventLogPath: events,
+      }, "Shadcn add --all", onProgress);
+      stages.push("SHADCN_ADD_ALL");
+
+      templateAudit = applyDeterministicTemplate({
+        repository: generated,
+        blueprint,
+        expectedPolicyVersion: BLUEPRINT_POLICIES[blueprint].version,
+      });
+      emitProgress(onProgress, {
+        state: "COMPLETED",
+        stage: "project-onboarding:deterministic-template",
+        label: `Deterministic template v${templateAudit.templateVersion}`,
+        elapsedSeconds: 0,
+      });
+      stages.push("DETERMINISTIC_TEMPLATE_APPLIED", "BLUEPRINT_APPLIED");
+
+      dependency = await installBlueprintDependencies({
+        repository: generated,
+        blueprint,
+        processRunner,
+        eventLogPath: events,
+        onProgress,
+      });
+      stages.push("DEPENDENCY_POLICY_APPLIED", "DEPENDENCIES_RESOLVED");
+      stages.push("DEPENDENCIES_INSTALLED");
+
+      let packageDocument = readPackage(generated);
+      scripts = verificationScripts(packageDocument, { requireNewBaseline: true });
+      blueprintAudit = assertBlueprintResult(generated, blueprint);
+      try {
+        verification = await runVerification({
+          repository: generated,
+          scripts,
+          processRunner,
+          eventLogPath: events,
+          onProgress,
+        });
+      } catch (verificationError) {
+        if (!allowAgentFallback) {
+          throw new Error(`${verificationError.message}\nAI fallback dinonaktifkan oleh ORCHESTRATOR_ONBOARDING_AI_FALLBACK.`);
+        }
+        const beforeAgent = repositoryFileSnapshot(generated);
+        const agentInvocation = scaffoldFallbackAgentInvocation({
+          repository: generated,
+          projectId,
+          blueprintPath,
+          verificationError: verificationError.message,
+        });
+        const agentResult = await runRequired(processRunner, {
+          ...agentInvocation,
+          cwd: generated,
+          stage: "project-onboarding:blueprint-agent",
+          eventLogPath: events,
+        }, "Blueprint fallback agent", onProgress);
+        const fallbackChangedPaths = changedSnapshotPaths(beforeAgent, repositoryFileSnapshot(generated));
+        agentFallback = {
+          used: true,
+          reason: "DETERMINISTIC_VERIFICATION_FAILED",
+          initialError: verificationError.message,
+          scopeAudit: assertFallbackScope(fallbackChangedPaths, templateAudit.filesWritten),
+        };
+        assertNoSensitiveEnvironmentFiles(generated);
+        agentTelemetry = createAgentTelemetryRecord({
+          stage: "PROJECT_ONBOARDING_FALLBACK",
+          result: agentResult,
+          agentConfig: agentInvocation.agentConfig,
+          invocationId: onboardingId,
+          metadata: { onboardingId, projectId, blueprint },
+        });
+        stages.push("AI_FALLBACK_APPLIED");
+
+        const initialDependency = dependency;
+        const fallbackDependency = await installBlueprintDependencies({
+          repository: generated,
+          blueprint,
+          processRunner,
+          eventLogPath: events,
+          onProgress,
+        });
+        dependency = {
+          ...fallbackDependency,
+          repeatedAfterFallback: true,
+          history: [initialDependency, fallbackDependency],
+        };
+        packageDocument = readPackage(generated);
+        scripts = verificationScripts(packageDocument, { requireNewBaseline: true });
+        blueprintAudit = assertBlueprintResult(generated, blueprint);
+        verification = await runVerification({
+          repository: generated,
+          scripts,
+          processRunner,
+          eventLogPath: events,
+          onProgress,
+        });
+        stages.push("AI_FALLBACK_VERIFIED");
+      }
     }
     assertNoSensitiveEnvironmentFiles(generated);
     stages.push("VERIFIED");
@@ -1367,7 +1458,7 @@ export async function addNewProject({
     const graphify = await updateGraphify({ repository: target, processRunner, eventLogPath: events, onProgress });
     stages.push("GRAPHIFY_BOOTSTRAPPED");
 
-    const finalPackage = readPackage(target);
+    const finalPackage = isGo ? null : readPackage(target);
     registrationTransaction = registerProject({
       vaultRoot,
       registeredBy: auditIdentity(registeredBy),
@@ -1377,7 +1468,7 @@ export async function addNewProject({
         repository: target,
         graphifyOutput: graphify.output,
         verificationDefaults: scripts,
-        tags: frameworkTags(finalPackage),
+        tags: frameworkTags(finalPackage, blueprint),
         blueprint,
         templateVersion: templateAudit.templateVersion,
         blueprintPolicyVersion: templateAudit.policyVersion,
@@ -1403,7 +1494,7 @@ export async function addNewProject({
         repository: target,
         blueprint,
         scaffoldMode: agentFallback.used ? "DETERMINISTIC_WITH_AI_FALLBACK" : "DETERMINISTIC_TEMPLATE",
-        shadcn: { version: SHADCN_VERSION, base: "base", preset: "nova", allComponents: true },
+        ...(isGo ? {} : { shadcn: { version: SHADCN_VERSION, base: "base", preset: "nova", allComponents: true } }),
         graphify: true,
         graphifyOutput: graphify.output,
         verificationDefaults: scripts,

@@ -65,16 +65,23 @@ export function applyDeterministicTemplate({ repository, blueprint, expectedPoli
     throw new Error(`Template policy version ${manifest.policyVersion} tidak sesuai orchestrator policy ${expectedPolicyVersion}.`);
   }
 
-  const packagePath = path.join(repository, "package.json");
-  const packageDocument = readJson(packagePath, "package.json");
+  const isGo = manifest.toolchain === "go" || blueprint === "backend-golang";
+  let packageDocument = null;
   const packageChanges = [];
-  packageDocument.scripts = { ...(packageDocument.scripts ?? {}), ...(manifest.scripts ?? {}) };
-  mergePackageSection(packageDocument, "dependencies", manifest.dependencies, packageChanges);
-  mergePackageSection(packageDocument, "devDependencies", manifest.devDependencies, packageChanges);
-  writeAtomic(packagePath, `${JSON.stringify(packageDocument, null, 2)}\n`);
 
+  if (!isGo) {
+    const packagePath = path.join(repository, "package.json");
+    packageDocument = readJson(packagePath, "package.json");
+    packageDocument.scripts = { ...(packageDocument.scripts ?? {}), ...(manifest.scripts ?? {}) };
+    mergePackageSection(packageDocument, "dependencies", manifest.dependencies, packageChanges);
+    mergePackageSection(packageDocument, "devDependencies", manifest.devDependencies, packageChanges);
+    writeAtomic(packagePath, `${JSON.stringify(packageDocument, null, 2)}\n`);
+  }
+
+  const projectName = String(packageDocument?.name ?? path.basename(repository));
   const substitutions = {
-    __PROJECT_NAME__: String(packageDocument.name ?? path.basename(repository)),
+    __PROJECT_NAME__: projectName,
+    ...(isGo ? { "base-be-golang": projectName } : {}),
   };
   const hash = createHash("sha256");
   hash.update(fs.readFileSync(manifestPath));
