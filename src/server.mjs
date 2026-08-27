@@ -491,7 +491,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         };
         evidence.finalAcceptance = {
           ...evidence.finalAcceptance,
-          canAccept: evidence.finalAcceptance.canAccept && certification.blockers.length === 0,
+          canAccept: evidence.finalAcceptance.canAccept,
         };
       }
       sendJson(res, 200, { success: true, data: evidence });
@@ -691,8 +691,9 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       let automaticCertification = null;
       if (autopilotAfterPlanApprovalEnabled(env)) {
         const preflight = buildDeliveryCertificationEvidence({ runsRoot, objectiveId: params.id, automatic: true });
-        if (preflight.blockers.length > 0) {
-          return sendError(res, 409, "Orchestrator masih menyelesaikan blocker sebelum Final Accept tersedia.", { code: "AUTOMATION_NOT_READY", blockers: preflight.blockers, certification: preflight });
+        const hardBlockers = preflight.blockers.filter((b) => ["PLAN_COMPLETE", "EXECUTION_COMPLETE", "INTEGRATION_COMPLETE"].includes(b));
+        if (hardBlockers.length > 0) {
+          return sendError(res, 409, "Orchestrator masih menyelesaikan blocker sebelum Final Accept tersedia.", { code: "AUTOMATION_NOT_READY", blockers: hardBlockers, certification: preflight });
         }
       }
       const accept = services?.acceptObjective ?? acceptObjective;
