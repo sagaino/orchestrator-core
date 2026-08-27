@@ -224,9 +224,13 @@ async function finalizeGitCommit({ manifest, workspace, changed, processRunner, 
 
   const subject = String(commitMessage ?? "").trim()
     || `feat(${manifest.task?.id || "TASK"}): ${manifest.task?.title || "completed task"}`;
+  const includeTrailer = String(process.env.ORCHESTRATOR_GIT_COMMIT_TRAILER ?? "0") === "1";
+  const commitArgs = includeTrailer
+    ? ["commit", "--only", "-m", subject, "-m", `AI-OS-Run: ${manifest.runId}`, "--", ...changed]
+    : ["commit", "--only", "-m", subject, "--", ...changed];
   await requireSuccessfulProcess(processRunner, {
     command: "git",
-    args: ["commit", "--only", "-m", subject, "-m", `AI-OS-Run: ${manifest.runId}`, "--", ...changed],
+    args: commitArgs,
     cwd: repository,
     stage: "workspace-apply:git-commit",
     eventLogPath,
