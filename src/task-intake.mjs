@@ -7,6 +7,7 @@ import { enqueueTaskJob } from "./job-queue.mjs";
 import { createAgentTelemetryRecord, persistIntakeTelemetry } from "./telemetry.mjs";
 import { tryDeterministicTaskDraft } from "./fast-path-intake.mjs";
 import { buildStageContext } from "./context-compactor.mjs";
+import { loadRulePolicy, formatRulePromptConstraint } from "./rule-policy.mjs";
 
 function taskDraftSchema() {
   return JSON.stringify({
@@ -222,7 +223,7 @@ export async function planTaskWithAgy({
     "3. Verification hanya boleh menggunakan nama script package.json atau verificationDefaults yang tersedia.",
     "4. Dependencies hanya diisi bila task benar-benar bergantung pada task existing.",
     "5. Set clarificationNeeded=true hanya jika implementasi aman tidak mungkin direncanakan tanpa jawaban user.",
-    "6. Pertimbangkan standar arsitektur dan pola implementasi yang relevan dari Wiki. Untuk project Backend Golang (Modular Clean Architecture), allowedPaths WAJIB строго mengikuti struktur: `internal/core/domain/<module>.go`, `internal/core/usecase/<module>/**`, `internal/adapter/controller/<module>.go`, `internal/adapter/controller/<module>_test.go`, dan `cmd/api/api.go`. Jangan pernah membuat folder di luar 3 layer ini (jangan buat `internal/<module>/`, `internal/domain/`, `internal/models/`, `internal/routes/`).",
+    `6. Pertimbangkan standar arsitektur dan pola implementasi yang relevan dari Wiki. ${formatRulePromptConstraint(loadRulePolicy(vaultRoot, project.blueprint || (project.toolchain === "go" ? "backend-golang" : "frontend-vite")))}`,
     "7. Jika terdapat UI Mockup atau Asset terlampir, sertakan implementasi komponen UI yang mereferensikan desain/aset tersebut.",
     "",
     `Project: ${project.id} (${project.repository})`,

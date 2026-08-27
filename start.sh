@@ -429,7 +429,7 @@ trap 'stop_services_once' EXIT
 # 7. Launch Services
 echo ""
 log_info "Menjalankan Backend Daemon (Worker Engine & API Server)..."
-(cd "$BACKEND_DIR" && ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD=1 node src/orchestrator.mjs daemon-worker --vault "$VAULT_PATH" --runs "$BACKEND_DIR/runs") &
+(cd "$BACKEND_DIR" && ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD="${ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD:-0}" node src/orchestrator.mjs daemon-worker --vault "$VAULT_PATH" --runs "$BACKEND_DIR/runs") &
 BACKEND_PID=$!
 echo "$BACKEND_PID" > "$PID_FILE"
 
