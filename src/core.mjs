@@ -334,6 +334,10 @@ export function validateProject(vaultRoot, project) {
     ...project,
     repositoryExists,
     projectPageExists: exists(projectPage),
+    blueprint: projectDocument?.metadata?.blueprint ?? project.blueprint ?? null,
+    tags: Array.isArray(projectDocument?.metadata?.tags)
+      ? projectDocument.metadata.tags.map(String)
+      : (Array.isArray(project.tags) ? project.tags.map(String) : []),
     verificationDefaults: Array.isArray(projectDocument?.metadata?.verification_defaults)
       ? projectDocument.metadata.verification_defaults.map(String)
       : [],

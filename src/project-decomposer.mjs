@@ -3,6 +3,7 @@ import { detectTaskComplexity, resolveAgyConfig, agyConfigArgs } from "./agent-c
 import { resolveAgentRoute } from "./agent-routing.mjs";
 import { buildStageContext, estimateTokenCount } from "./context-compactor.mjs";
 import { validatePlanRecord } from "./orchestration-schema.mjs";
+import { loadRulePolicy, formatRulePromptConstraint, normalizeVerificationForRule } from "./rule-policy.mjs";
 import { validateTaskGraph } from "./task-graph.mjs";
 import { runProcess } from "./executor.mjs";
 import { diagnoseCrossProject, validateCrossProjectPlan } from "./cross-project-diagnostics.mjs";
@@ -255,21 +256,7 @@ function normalizeAllowedPath(value, repository) {
   return relative.split(path.sep).join("/");
 }
 
-function normalizeVerificationScript(script, availableScripts = []) {
-  const candidate = String(script ?? "").trim();
-  if (availableScripts.includes(candidate)) return candidate;
-  if (/^go\s+test\b/i.test(candidate) && availableScripts.includes("go test ./...")) {
-    return "go test ./...";
-  }
-  if (/^go\s+vet\b/i.test(candidate) && availableScripts.includes("go vet ./...")) {
-    return "go vet ./...";
-  }
-  const cleanCmd = candidate.replace(/^(?:npm\s+run\s+|pnpm\s+|yarn\s+)/i, "").trim();
-  if (availableScripts.includes(cleanCmd)) return cleanCmd;
-  return candidate;
-}
-
-export function normalizePlanAllowedPaths(plan, projectContexts = []) {
+export function normalizePlanAllowedPaths(plan, projectContexts = [], vaultRoot = null) {
   if (!isRecord(plan) || !Array.isArray(plan.nodes)) return plan;
   const projectMap = new Map((Array.isArray(projectContexts) ? projectContexts : []).map((project) => [
     String(project?.projectId ?? project?.id ?? ""),
@@ -281,6 +268,8 @@ export function normalizePlanAllowedPaths(plan, projectContexts = []) {
       if (!isRecord(node)) return node;
       const project = projectMap.get(String(node.projectId ?? ""));
       const repository = project?.repository;
+      const blueprint = project?.blueprint || "backend-golang";
+      const policy = loadRulePolicy(vaultRoot, blueprint);
       const availableScripts = (project?.verificationScripts ?? project?.verification ?? []).map(String);
 
       const allowedPaths = Array.isArray(node.allowedPaths)
@@ -288,7 +277,7 @@ export function normalizePlanAllowedPaths(plan, projectContexts = []) {
         : node.allowedPaths;
 
       const verification = Array.isArray(node.verification)
-        ? [...new Set(node.verification.map((v) => normalizeVerificationScript(v, availableScripts)))]
+        ? [...new Set(node.verification.map((v) => normalizeVerificationForRule(v, policy, availableScripts)))]
         : node.verification;
 
       return {
@@ -413,6 +402,7 @@ export async function decomposeProject({
   knowledge = [],
   graphifyContext = "",
   runsRoot = null,
+  vaultRoot = null,
   processRunner = runProcess,
   now = new Date(),
   env = process.env,
@@ -470,7 +460,7 @@ export async function decomposeProject({
     `The only allowed project IDs are: ${JSON.stringify(sortedProjectIds(objective.projectIds))}.`,
     `Budget ceilings: ${JSON.stringify(budget)}. Never exceed them silently.`,
     "Every node.allowedPaths entry must be a repository-relative POSIX path such as src/components/Button.tsx or src/features/**. Never emit an absolute path, repository root path, drive-letter path, backslash path, or . / .. traversal segment. Never copy the repository path from context into allowedPaths. DIAGNOSTIC and VERIFICATION nodes must use allowedPaths=[] and requiresChanges=false.",
-    "For backend Go projects (Modular Clean Architecture): allowedPaths for any business feature MUST strictly be inside `internal/core/domain/<feature>.go`, `internal/core/usecase/<feature>/**`, `internal/adapter/controller/<feature>.go`, `internal/adapter/controller/<feature>_test.go`, and `cmd/api/api.go`. Do NOT create or allow ad-hoc root directories like `internal/<feature>/**`, `internal/models/**`, `internal/routes/**`, or `internal/domain/**`.",
+    ...projectContexts.map((project) => formatRulePromptConstraint(loadRulePolicy(vaultRoot, project?.blueprint || "backend-golang"))).filter(Boolean),
     "Every node.verification MUST contain ONLY exact script names from the project verification list (e.g. \"go test ./...\", \"go vet ./...\"). Never invent package-specific or sub-path script names (such as \"go test ./internal/...\").",
     "If a safe decomposition is impossible without a human answer, return only the clarification JSON shape with clarificationNeeded=true and a precise clarificationQuestion.",
     "integration.projectVerification and integration.crossProjectVerification may contain only approved scoped strings in the exact form projectId:script; never use objects, prose, acceptance criteria, or shell commands. For multi-project integration include at least one projectVerification entry per project and at least one crossProjectVerification entry.",

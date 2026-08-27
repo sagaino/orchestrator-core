@@ -17,13 +17,25 @@ export function projectSignalsForProjects(projects = []) {
   const entries = Array.isArray(projects) ? projects : projects?.projects ?? [];
   return Object.fromEntries(entries.map((project) => {
     const projectId = project.id ?? project.projectId;
-    return [projectId, [
-    projectId,
-    project.agent ? `agent:${project.agent}` : null,
-    ...(project.verificationDefaults ?? []).map((script) => `verification:${script}`),
-    ...(project.verificationScripts ?? []).map((script) => `verification:${script}`),
-    project.graphify ? "graphify" : "no-graphify",
-  ].filter(Boolean)];
+    const signals = [
+      projectId,
+      project.agent ? `agent:${project.agent}` : null,
+      project.blueprint ? String(project.blueprint).toLowerCase() : null,
+      ...(Array.isArray(project.tags) ? project.tags.map((t) => String(t).toLowerCase()) : []),
+      ...(project.verificationDefaults ?? []).map((script) => `verification:${script}`),
+      ...(project.verificationScripts ?? []).map((script) => `verification:${script}`),
+      project.graphify ? "graphify" : "no-graphify",
+    ];
+
+    const combined = signals.filter(Boolean).join(" ").toLowerCase();
+    if (combined.includes("vite") || combined.includes("react") || combined.includes("frontend") || combined.includes("typecheck") || combined.includes("lint") || combined.includes("npm")) {
+      signals.push("node", "vite", "react", "frontend-vite", "frontend");
+    }
+    if (combined.includes("golang") || combined.includes("go") || combined.includes("be-") || combined.includes("backend") || combined.includes("go test") || combined.includes("go vet")) {
+      signals.push("go", "golang", "backend-golang", "backend");
+    }
+
+    return [projectId, [...new Set(signals.filter(Boolean))]];
   }));
 }
 

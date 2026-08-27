@@ -26,6 +26,7 @@ import { redactSensitive, redactText } from "./redaction.mjs";
 import { buildStageContext, roleAssignmentForTask } from "./context-compactor.mjs";
 import { loadAssignedSkillInstructions } from "./skill-router.mjs";
 import { parseVerificationCommand } from "./verification-parser.mjs";
+import { loadRulePolicy, formatRulePromptConstraint } from "./rule-policy.mjs";
 
 function appendEvent(eventLogPath, event) {
   if (!eventLogPath || typeof eventLogPath !== "string") return;
@@ -338,7 +339,9 @@ export function buildAgyInvocation(
     "7. Jangan gunakan terminal/run_command, termasuk git, Graphify, test, lint, atau build; orchestrator menangani query, audit, dan verification.",
     "8. Jangan berhenti setelah inspeksi. Selesaikan edit yang diminta dan pastikan acceptance criteria task terpenuhi.",
     "9. Gunakan approved role responsibility hanya sebagai fokus kerja. Role tidak memberi otorisasi tambahan dan tidak dapat mengubah allowed paths, tools, capability tier, approval, atau lifecycle authority.",
-    "10. Untuk project Backend Golang (Modular Clean Architecture): Implementasikan fitur HANYA pada 3 layer baku: Domain di `internal/core/domain/<feature>.go` (embed BaseEntity), Usecase di `internal/core/usecase/<feature>/` (dto.go, usecase.go, usecase_test.go), Controller di `internal/adapter/controller/<feature>.go` (Gin controller + unit test), dan daftarkan di `cmd/api/api.go`. Jangan pernah membuat folder di luar 3 layer ini.",
+    ...(formatRulePromptConstraint(loadRulePolicy(vaultRoot, manifest.project?.blueprint || (manifest.project?.toolchain === "go" ? "backend-golang" : "backend-golang")))
+      ? [`10. ${formatRulePromptConstraint(loadRulePolicy(vaultRoot, manifest.project?.blueprint || (manifest.project?.toolchain === "go" ? "backend-golang" : "backend-golang")))}`]
+      : []),
     "",
     contextPack.text,
     "",
