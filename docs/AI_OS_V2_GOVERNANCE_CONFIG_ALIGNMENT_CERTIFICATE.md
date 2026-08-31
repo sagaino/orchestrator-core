@@ -33,9 +33,10 @@ after those revisions so the repository history preserves their relationship.
 | Operations readiness | `npm run operations:readiness` | PASS — `READY`, no blockers |
 | Audit chain | `npm run security:verify-audit` | PASS — 681 valid entries |
 | Dashboard release gate | `npm run test:verify` | PASS — 20 browser tests passed, 1 intentionally skipped |
+| Pilot cross-project browser supplement | `ORCHESTRATOR_CROSS_PROJECT=1 npm run test:browser` | PASS — all 21 browser tests passed |
 | Repository review | `git diff --check` and working-tree review | PASS |
 
-Machine verification completed on **2026-08-31 15:39 (Asia/Jakarta)**. The
+Machine verification completed on **2026-08-31 15:57 (Asia/Jakarta)**. The
 Dashboard lint gate completed with zero errors and ten remaining Fast Refresh
 warnings; these warnings do not affect the release result.
 
