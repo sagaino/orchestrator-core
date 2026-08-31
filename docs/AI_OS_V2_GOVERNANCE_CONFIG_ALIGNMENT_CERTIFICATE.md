@@ -11,16 +11,16 @@ This durable record separates technical verification from human acceptance. It
 does not authorize feature activation, public exposure, multi-user operation,
 or optional Telegram capabilities.
 
-## Provenance Baseline
+## Provenance
 
-| Component | Baseline commit | Working-tree scope |
+| Component | Baseline commit | Verified implementation commit |
 |---|---|---|
-| Backend | `0fbf7b808b4bac90e4b3ecb03cff7e4aba914cfd` | Runtime-profile enforcement, certification tests, documentation evidence |
-| Dashboard | `2276f7f` | Lint and browser-contract remediation |
+| Backend | `0fbf7b808b4bac90e4b3ecb03cff7e4aba914cfd` | `b83f7576f3a12a055ebd663599f2710dba7cca75` |
+| Dashboard | `2276f7f` | `c53ec2678eeea3815bf45e34d12e1a75474f9e26` |
 
-Final commit IDs must be recorded after the reviewed changes are committed.
-Until then, the changed-path list and fresh verification results below are the
-authoritative evidence for this working tree.
+The backend and Dashboard implementation commits above are the exact revisions
+covered by the machine gates below. This certificate is committed immediately
+after those revisions so the repository history preserves their relationship.
 
 ## Required Machine Gates
 
