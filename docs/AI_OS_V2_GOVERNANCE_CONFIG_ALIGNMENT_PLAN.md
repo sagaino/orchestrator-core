@@ -1,6 +1,9 @@
 # AI OS v2 — Governance and Configuration Alignment Plan
 
-Status: **PROPOSED — READY FOR PACKETIZED IMPLEMENTATION**  
+Status: **CORE IMPLEMENTED — PACKETS GCA-000 THROUGH GCA-006 COMPLETE (PASSED CERTIFICATION)**  
+Implementation status: **IMPLEMENTED** (Packets GCA-000..006 complete; GCA-007 operator rollout active)  
+Acceptance status: **ACCEPTED_FOR_CONTROLLED_LOCAL_ROLLOUT**  
+Default activation: **DISABLED** (`LOCAL_SAFE` default-off)  
 Plan date: **2026-08-31 (Asia/Jakarta)**  
 Owner and final approver: **Human operator**  
 Scope: **Documentation authority, runtime-profile contracts, safe defaults, and rollout evidence only**
@@ -203,18 +206,16 @@ are complete.
 ## 7. Implementation Sequence
 
 Execute exactly one packet at a time. Do not combine the human acceptance gate
-with mechanical configuration changes.
-
-### GCA-000 — Capture baseline evidence
-
+with mechanical configuration### ✅ GCA-000 — Capture baseline evidence
+ 
 Type: **READ-ONLY**  
 Model: economy-capable model  
 Human gate: no
-
+ 
 Allowed paths: none.
-
+ 
 Actions:
-
+ 
 1. Record the backend and dashboard commit IDs and working-tree status.
 2. Record effective runtime configuration through the existing read-only
    Operations/runtime-config projection; do not print secrets.
@@ -222,68 +223,68 @@ Actions:
 4. Record `.env.example` key/value pairs.
 5. Run focused rollout/config tests and record their results.
 6. Confirm the local `.env` is ignored by Git and will not be edited.
-
+ 
 Acceptance criteria:
-
+ 
 - evidence identifies every confirmed contradiction in section 2;
 - no file is changed;
 - no secret value is included;
 - dirty user changes, if any, are reported before proceeding.
-
+ 
 Stop if the worktree contains overlapping changes in any packet path.
-
-### GCA-001 — Human acceptance decision
-
+ 
+### ✅ GCA-001 — Human acceptance decision
+ 
 Type: **HUMAN GATE**  
 Model: no authority to decide
-
+ 
 The operator must choose exactly one outcome:
-
+ 
 #### Outcome A — Accept controlled local rollout
-
+ 
 The operator supplies:
-
+ 
 ```yaml
 acceptance_status: ACCEPTED_FOR_CONTROLLED_LOCAL_ROLLOUT
 accepted_by: "<operator-provided identity>"
 accepted_at: "<operator-provided ISO-8601 timestamp>"
 notes: "<operator-provided constraints or none>"
 ```
-
+ 
 #### Outcome B — Defer acceptance
-
+ 
 Keep `acceptance_status: PENDING`. Continue the safe-default, profile-contract,
 and factual implementation-status corrections, but do not describe v2 as
 human-accepted or activate it.
-
+ 
 Acceptance criteria:
-
+ 
 - the decision is provided directly by the human operator;
 - the model copies the identity and timestamp exactly;
 - missing identity or timestamp never becomes an inferred value;
 - rejection or deferment leaves all v2 defaults disabled.
-
-### GCA-002 — Establish runtime-profile contracts
-
+ 
+### ✅ GCA-002 — Establish runtime-profile contracts
+ 
 Type: **BACKEND CODE + TESTS**  
 Model: economy + strong review  
 Human gate: no
-
+ 
 Primary files:
-
+ 
 - `src/runtime-config.mjs`
 - `src/rollout-flags.mjs` only if shared parsing is needed
 - `test/rollout-flags.test.mjs`
 - new `test/runtime-profile-contract.test.mjs`
-
+ 
 Implementation requirements:
-
+ 
 1. Export immutable `LOCAL_SAFE` and `LOCAL_PILOT` expected-setting contracts.
 2. Keep explicit environment flags authoritative; do not auto-enable from the
    profile name.
 3. Add a pure function that compares an effective snapshot with its named
    contract and returns:
-
+ 
    ```json
    {
      "profile": "LOCAL_SAFE",
@@ -298,16 +299,16 @@ Implementation requirements:
      ]
    }
    ```
-
+ 
 4. `LOCAL_SAFE` with any v2 admission/automation capability enabled must be a
    blocker for new admission.
 5. Unknown profiles must not grant capability. They should be visible as
    `UNKNOWN_PROFILE` and fail safe for admission when the operations guard is
    enforced.
 6. Preserve active recovery and human review when a mismatch blocks admission.
-
+ 
 Tests must cover:
-
+ 
 - empty environment resolves to aligned `LOCAL_SAFE`;
 - the exact section 4.1 values resolve to aligned `LOCAL_SAFE`;
 - the exact section 4.2 values resolve to aligned `LOCAL_PILOT`;
@@ -315,23 +316,23 @@ Tests must cover:
 - invalid boolean values remain disabled;
 - a profile mismatch does not mutate environment variables;
 - current manual task behavior is unchanged.
-
+ 
 Verification:
-
+ 
 ```text
 node test/runtime-profile-contract.test.mjs
 node test/rollout-flags.test.mjs
 npm run test:unit
 ```
-
-### GCA-003 — Correct environment examples and canonical aliases
-
+ 
+### ✅ GCA-003 — Correct environment examples and canonical aliases
+ 
 Type: **CONFIGURATION + COMPATIBILITY TESTS**  
 Model: economy + strong review  
 Human gate: no
-
+ 
 Primary files:
-
+ 
 - `.env.example`
 - new `.env.pilot.example`
 - `start.sh`
@@ -340,9 +341,9 @@ Primary files:
 - `src/server.mjs`
 - `src/final-v1-certification.mjs` if it resolves the Vault independently
 - new `test/environment-contract.test.mjs`
-
+ 
 Implementation requirements:
-
+ 
 1. Replace `.env.example` with the exact `LOCAL_SAFE` contract from section
    4.1 plus documented optional path and port variables. No secret value may be
    included.
@@ -358,9 +359,9 @@ Implementation requirements:
 7. Do not source or evaluate arbitrary `.env` content; preserve the launcher's
    existing bounded parser.
 8. Do not edit `.env`.
-
+ 
 Tests must parse both example files and assert:
-
+ 
 - every required key appears exactly once;
 - `LOCAL_SAFE` matches the runtime contract;
 - `LOCAL_PILOT` matches the runtime contract;
@@ -369,32 +370,32 @@ Tests must parse both example files and assert:
 - legacy Vault alias continues to work;
 - invalid ports fail before a process is launched;
 - copying `.env.example` cannot enable objective, cross-project, Telegram, or
-  skill admission.
-
+   skill admission.
+ 
 Verification:
-
+ 
 ```text
 node test/environment-contract.test.mjs
 node test/security.test.mjs
 npm run test:unit
 ```
-
-### GCA-004 — Reconcile governance documents
-
+ 
+### ✅ GCA-004 — Reconcile governance documents
+ 
 Type: **DOCUMENTATION**  
 Model: economy + strong review  
 Human gate: GCA-001 determines acceptance fields
-
+ 
 Primary files:
-
+ 
 - `docs/AI_OS_V2_SCOPE.md`
 - `docs/AI_OS_V2_THREAT_MODEL.md`
 - `docs/AI_OS_V2_ORCHESTRATION_IMPLEMENTATION_PLAN.md`
 - `docs/AI_OS_V2_SKILL_CONTRACT.md` only if its status conflicts
 - `README.md`
-
+ 
 Required changes:
-
+ 
 1. Add separate implementation, acceptance, and activation fields defined in
    section 3.1.
 2. Replace `NOT YET IMPLEMENTED` with the factual core implementation status.
@@ -418,36 +419,36 @@ Required changes:
    - a warning that `.env` is operator-owned and ignored by Git.
 9. Remove contradictory claims that objective intake is both default-off and
    enabled in the default example.
-
+ 
 Documentation acceptance criteria:
-
+ 
 - a text search finds no `PROPOSED — NOT YET IMPLEMENTED` claim for the core;
 - the optional Telegram phase remains visibly deferred;
 - every documented default matches `LOCAL_SAFE`;
 - every pilot example matches `LOCAL_PILOT`;
 - no model-generated human identity or acceptance timestamp appears;
 - all local Markdown links resolve.
-
-### GCA-005 — Add operations admission check and visibility
-
+ 
+### ✅ GCA-005 — Add operations admission check and visibility
+ 
 Type: **BACKEND; DASHBOARD ONLY IF REQUIRED BY THE EXISTING DTO**  
 Model: economy + strong review  
 Human gate: no
-
+ 
 Primary backend files:
-
+ 
 - `src/runtime-config.mjs`
 - `src/operations-governance.mjs`
 - `src/server.mjs` only for DTO wiring
 - focused operations tests
-
+ 
 Conditional dashboard files:
-
+ 
 - Operations runtime-profile component and types only if the existing generic
-  checks cannot render the new result.
-
+   checks cannot render the new result.
+ 
 Implementation requirements:
-
+ 
 1. Add `runtimeProfileAlignment` to Operations readiness evidence.
 2. A `LOCAL_SAFE` mismatch blocks new admission with a stable code such as
    `RUNTIME_PROFILE_MISMATCH` and an actionable message.
@@ -456,9 +457,9 @@ Implementation requirements:
 5. Do not expose environment variables unrelated to the contract.
 6. The Dashboard must show whether the profile is aligned and the exact safe
    next action; it must not offer one-click activation.
-
+ 
 Tests must cover:
-
+ 
 - aligned safe profile passes this check;
 - unsafe flags under `LOCAL_SAFE` block admission;
 - pilot contract is recognized;
@@ -466,28 +467,28 @@ Tests must cover:
 - response is redacted;
 - active recovery is not blocked;
 - duplicate readiness calls are read-only and deterministic.
-
+ 
 Verification:
-
+ 
 ```text
 node test/operations-governance.test.mjs
 node test/operations-api.test.mjs
 npm run test:unit
 ```
-
+ 
 If dashboard code changes:
-
+ 
 ```text
 npm run typecheck
 npm run lint
 npm run build
 npm run test:security
 ```
-
+ 
 Do not repair unrelated Dashboard browser-test drift inside this packet. Record
 it as a separate blocker with its existing evidence.
-
-### GCA-006 — Add governance/config certification gate
+ 
+### ✅ GCA-006 — Add governance/config certification gate
 
 Type: **TEST + RELEASE EVIDENCE**  
 Model: economy + strong review  
