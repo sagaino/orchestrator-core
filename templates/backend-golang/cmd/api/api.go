@@ -1,6 +1,8 @@
 package main
 
 import (
+	"base-be-golang/internal/adapter/controller"
+	"base-be-golang/internal/core/domain"
 	"base-be-golang/pkg/health"
 	"base-be-golang/shared/api"
 	"base-be-golang/shared/base"
@@ -29,16 +31,26 @@ func main() {
 		return health.NewHealthController(port, ctrl)
 	})
 
+	// AUTH MODULE: Authentication & session endpoints (/api/v1/auth/register, /login, /refresh, /logout)
+	start.Register(func(dbConn *gorm.DB, port base.Port, ctrl base.BaseController) api.Router {
+		return controller.NewAuthController(dbConn, port, ctrl)
+	})
+
 	// BUSINESS MODULES: Register your business controllers here
 	// Example:
 	// start.Register(func(dbConn *gorm.DB, port base.Port, ctrl base.BaseController) api.Router {
-	// 	return controller.NewOrderController(dbConn, port, ctrl)
+	// 	tokenService := controller.NewTokenServiceFromPort(port)
+	// 	return controller.NewProtectedRouter(controller.NewOrderController(dbConn, port, ctrl), tokenService, port.Cache)
 	// })
 
 	// ========================= DATABASE AUTO MIGRATE =========================
 	// Register domain entities for GORM AutoMigrate here
-	// Example:
-	// start.DB().AutoMigrate(&domain.Order{})
+	if start.DB() != nil {
+		err = start.DB().AutoMigrate(&domain.User{})
+		if err != nil {
+			log.Println("AutoMigrate error:", err)
+		}
+	}
 
 	err = start.Start()
 	if err != nil {
