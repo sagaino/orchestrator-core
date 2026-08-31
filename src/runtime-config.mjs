@@ -66,6 +66,84 @@ export const RUNTIME_PROFILE_CONTRACTS = Object.freeze({
 
 export const RUNTIME_PROFILE_LOCAL_SAFE = RUNTIME_PROFILE_CONTRACTS.LOCAL_SAFE;
 export const RUNTIME_PROFILE_LOCAL_PILOT = RUNTIME_PROFILE_CONTRACTS.LOCAL_PILOT;
+export const RUNTIME_PROFILE_MISMATCH_CODE = "RUNTIME_PROFILE_MISMATCH";
+
+const PILOT_APPROVAL_MODES = new Set(["MANUAL", "PLAN_REVIEW_THEN_AUTOPILOT", "FINAL_ACCEPT_ONLY"]);
+
+function mismatch(field, expected, actual) {
+  return { field, expected, actual, severity: "BLOCKER" };
+}
+
+function pilotProfileAlignment(snapshot, contract) {
+  const mismatches = [];
+  const overrides = [];
+  const recordOverride = (field, baseline, actual) => {
+    if (actual !== baseline) overrides.push({ field, baseline, actual, classification: "EXPLICIT_OVERRIDE" });
+  };
+
+  for (const [flag, baseline] of Object.entries(contract.flags)) {
+    const actual = snapshot?.flags?.[flag];
+    if (typeof actual !== "boolean") {
+      mismatches.push(mismatch(`flags.${flag}`, "boolean", actual));
+      continue;
+    }
+    if (flag === "telegram" && actual !== false) {
+      mismatches.push(mismatch("flags.telegram", false, actual));
+      continue;
+    }
+    recordOverride(`flags.${flag}`, baseline, actual);
+  }
+
+  if (snapshot?.flags?.skillAutoRouting === true && snapshot?.flags?.skills !== true) {
+    mismatches.push(mismatch("flags.skillAutoRouting", "false unless flags.skills=true", true));
+  }
+
+  const maxParallelJobs = snapshot?.capacity?.maxParallelJobs;
+  if (!Number.isInteger(maxParallelJobs) || maxParallelJobs < 1 || maxParallelJobs > contract.capacity.maxParallelJobs) {
+    mismatches.push(mismatch("capacity.maxParallelJobs", `integer 1-${contract.capacity.maxParallelJobs}`, maxParallelJobs));
+  } else {
+    recordOverride("capacity.maxParallelJobs", contract.capacity.maxParallelJobs, maxParallelJobs);
+  }
+
+  const mode = snapshot?.automation?.approvalMode;
+  if (!PILOT_APPROVAL_MODES.has(mode)) {
+    mismatches.push(mismatch("automation.approvalMode", [...PILOT_APPROVAL_MODES].join(" | "), mode));
+  } else {
+    recordOverride("automation.approvalMode", contract.automation.approvalMode, mode);
+    const derivedAutomation = {
+      planReviewRequired: mode === "PLAN_REVIEW_THEN_AUTOPILOT",
+      automaticPlanApproval: mode === "FINAL_ACCEPT_ONLY",
+      automaticMaterialization: mode !== "MANUAL",
+      automaticDeliveryCertification: mode !== "MANUAL",
+    };
+    for (const [field, expected] of Object.entries(derivedAutomation)) {
+      const actual = snapshot?.automation?.[field];
+      if (actual !== expected) mismatches.push(mismatch(`automation.${field}`, expected, actual));
+      else recordOverride(`automation.${field}`, contract.automation[field], actual);
+    }
+  }
+
+  const automaticReviewFinalization = snapshot?.automation?.automaticReviewFinalization;
+  if (automaticReviewFinalization !== false) {
+    mismatches.push(mismatch("automation.automaticReviewFinalization", false, automaticReviewFinalization));
+  }
+
+  const recoveryAttempts = snapshot?.automation?.automaticRecoveryAttempts;
+  if (!Number.isInteger(recoveryAttempts) || recoveryAttempts < 0 || recoveryAttempts > 3) {
+    mismatches.push(mismatch("automation.automaticRecoveryAttempts", "integer 0-3", recoveryAttempts));
+  } else {
+    recordOverride("automation.automaticRecoveryAttempts", contract.automation.automaticRecoveryAttempts, recoveryAttempts);
+  }
+
+  return {
+    profile: contract.profile,
+    contractFound: true,
+    aligned: mismatches.length === 0,
+    severity: mismatches.length === 0 ? "INFO" : "BLOCKER",
+    mismatches,
+    overrides,
+  };
+}
 
 /**
  * Compares an effective runtime configuration snapshot against its declared profile contract.
@@ -84,13 +162,19 @@ export function validateRuntimeProfileAlignment(snapshot) {
       mismatches: [
         {
           field: "profile",
-          expected: "LOCAL_SAFE | LOCAL_PILOT",
+          expected: Object.keys(RUNTIME_PROFILE_CONTRACTS).join(" | "),
           actual: snapshot?.profile ?? null,
           severity: "BLOCKER",
         },
       ],
+      overrides: [],
     };
   }
+
+  // LOCAL_SAFE is an exact lock. LOCAL_PILOT is a bounded operating envelope:
+  // its documented values remain the baseline, while implemented opt-ins and
+  // safe reductions are accepted only when their dependencies and limits hold.
+  if (normalizedProfile === "LOCAL_PILOT") return pilotProfileAlignment(snapshot, contract);
 
   const mismatches = [];
 
@@ -133,6 +217,7 @@ export function validateRuntimeProfileAlignment(snapshot) {
     aligned: mismatches.length === 0,
     severity: mismatches.length === 0 ? "INFO" : "BLOCKER",
     mismatches,
+    overrides: [],
   };
 }
 
@@ -168,5 +253,31 @@ export function runtimeConfigSnapshot(env = process.env) {
         ? Number(env.ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS)
         : 2,
     },
+  };
+}
+
+/**
+ * Returns the fail-closed admission decision for the effective runtime profile.
+ * Only contract fields are returned, so callers can expose this result without
+ * leaking provider credentials or unrelated environment values.
+ */
+export function runtimeProfileAdmission(env = process.env) {
+  const runtimeConfig = runtimeConfigSnapshot(env);
+  const alignment = validateRuntimeProfileAlignment(runtimeConfig);
+  return {
+    allowed: alignment.aligned,
+    code: alignment.aligned ? null : RUNTIME_PROFILE_MISMATCH_CODE,
+    profile: alignment.profile,
+    message: alignment.aligned
+      ? alignment.overrides.length
+        ? `Profil runtime '${alignment.profile}' sesuai dengan batas aman dan memakai ${alignment.overrides.length} opt-in eksplisit.`
+        : `Profil runtime '${alignment.profile}' sesuai dengan kontrak.`
+      : `Profil runtime '${alignment.profile}' tidak sesuai dengan kontrak; pekerjaan baru diblokir.`,
+    action: alignment.aligned
+      ? "Tidak ada tindakan."
+      : `Sesuaikan flag konfigurasi dengan kontrak profil '${alignment.profile}', lalu periksa Operations readiness.`,
+    mismatches: alignment.mismatches,
+    runtimeConfig,
+    alignment,
   };
 }

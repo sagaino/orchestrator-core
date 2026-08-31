@@ -108,6 +108,13 @@ File `.env` di direktori root adalah **milik operator lokal (operator-owned)** d
 2. **`LOCAL_PILOT` (Opt-in Supervised Pilot)**:
    Salin dari `.env.pilot.example`. Mengaktifkan objective intake, DAG scheduler, dan cross-project diagnostics dengan mode `PLAN_REVIEW_THEN_AUTOPILOT`.
 
+`LOCAL_SAFE` adalah kontrak yang harus cocok persis. `LOCAL_PILOT` memakai nilai
+di atas sebagai baseline, tetapi tetap menerima opt-in fitur yang sudah
+diimplementasikan selama masih dalam batas aman (maksimal tiga worker, dependensi
+skill valid, dan Telegram tetap nonaktif). Setiap opt-in tersebut ditampilkan di
+Operations sebagai override eksplisit; konfigurasi di luar batas akan memblokir
+pekerjaan baru.
+
 ### 📋 Matriks Flag Konfigurasi
 
 | Variabel | Canonical Name | Default (`LOCAL_SAFE`) | Pilot (`LOCAL_PILOT`) | Keterangan |

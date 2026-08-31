@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   runtimeConfigSnapshot,
   validateRuntimeProfileAlignment,
   RUNTIME_PROFILE_LOCAL_SAFE,
   RUNTIME_PROFILE_LOCAL_PILOT,
 } from "../src/runtime-config.mjs";
+import { commandRequiresRuntimeProfileAdmission, parseArguments } from "../src/orchestrator.mjs";
 
 console.log("Running environment-contract.test.mjs...");
 
@@ -66,5 +68,29 @@ for (const filePath of [safeExamplePath, pilotExamplePath]) {
   assert.ok(!content.includes("eyJ"), "No raw JWT tokens in examples");
   assert.ok(!content.includes("/Users/sagaino"), "No hardcoded personal paths in examples");
 }
+
+// 4. Canonical path aliases and explicit CLI values have deterministic precedence
+const canonicalVault = path.resolve("fixtures/canonical-vault");
+const legacyVault = path.resolve("fixtures/legacy-vault");
+const cliVault = path.resolve("fixtures/cli-vault");
+assert.equal(parseArguments([], { ORCHESTRATOR_VAULT_PATH: canonicalVault, ORCHESTRATOR_VAULT: legacyVault }).vault, canonicalVault);
+assert.equal(parseArguments([], { ORCHESTRATOR_VAULT: legacyVault }).vault, legacyVault);
+assert.equal(parseArguments(["--vault", cliVault], { ORCHESTRATOR_VAULT_PATH: canonicalVault, ORCHESTRATOR_VAULT: legacyVault }).vault, cliVault);
+assert.throws(() => parseArguments(["--port", "invalid"], {}), /Invalid port/);
+assert.throws(() => parseArguments(["--port", "65536"], {}), /Invalid port/);
+assert.equal(commandRequiresRuntimeProfileAdmission("execute"), true);
+assert.equal(commandRequiresRuntimeProfileAdmission("approve"), false, "Human review remains available while execution is blocked");
+assert.equal(commandRequiresRuntimeProfileAdmission("review"), false);
+
+// 5. The launcher rejects an invalid canonical port before any service launch
+const invalidLaunch = spawnSync("bash", [path.resolve("start.sh")], {
+  cwd: path.resolve("."),
+  encoding: "utf8",
+  timeout: 5_000,
+  env: { ...process.env, ORCHESTRATOR_API_PORT: "invalid" },
+});
+assert.equal(invalidLaunch.status, 1);
+assert.match(`${invalidLaunch.stdout}\n${invalidLaunch.stderr}`, /ORCHESTRATOR_API_PORT tidak valid/);
+assert.ok(!invalidLaunch.stdout.includes("Menjalankan Backend Daemon"), "Invalid port must fail before process launch");
 
 console.log("environment-contract.test.mjs: All tests passed!");

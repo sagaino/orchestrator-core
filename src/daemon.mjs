@@ -18,6 +18,7 @@ import { operationsReadiness } from "./operations-governance.mjs";
 import { automaticNodeRecoveryTick, orchestrationSchedulerEnabled, orchestrationSchedulerTick } from "./orchestration-scheduler.mjs";
 import { autopilotAfterPlanApprovalEnabled, automaticReviewFinalizationEnabled } from "./approval-policy.mjs";
 import { automaticPostRunTick } from "./objective-post-run.mjs";
+import { runtimeProfileAdmission } from "./runtime-config.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -603,14 +604,24 @@ export async function automaticReviewFinalizationTick({
 }
 
 export async function processNextQueuedJob(options) {
-  const readiness = operationsReadiness({ runsRoot: options.runsRoot });
-  if (process.env.ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD === "1" && !readiness.admission.allowed) {
+  const env = options.env ?? process.env;
+  const profileAdmission = runtimeProfileAdmission(env);
+  if (!profileAdmission.allowed) {
+    const admission = {
+      allowed: false,
+      blockers: [{ id: "runtime-profile", code: profileAdmission.code, message: profileAdmission.message, action: profileAdmission.action }],
+    };
+    options.onEvent?.({ event: "ADMISSION_BLOCKED", blockers: admission.blockers });
+    return { blocked: true, admission, profileAdmission };
+  }
+  const readiness = operationsReadiness({ runsRoot: options.runsRoot, env });
+  if (env.ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD === "1" && !readiness.admission.allowed) {
     options.onEvent?.({ event: "ADMISSION_BLOCKED", blockers: readiness.admission.blockers });
     return { blocked: true, readiness };
   }
   const job = claimNextJob(options.runsRoot, {
     blockedProjectIds: options.blockedProjectIds ?? [],
-    allowSameProjectParallel: sameProjectParallelEnabled(process.env),
+    allowSameProjectParallel: sameProjectParallelEnabled(env),
   });
   if (!job) return null;
   return processClaimedJob({ ...options, job });
@@ -620,11 +631,12 @@ export function createParallelJobPool({
   vaultRoot,
   runsRoot,
   services,
-  maxWorkers = configuredParallelWorkers(),
+  env = process.env,
+  maxWorkers = configuredParallelWorkers(env),
   workflow = startTaskRun,
   onEvent = () => {},
   notifier = notifyTaskOutcome,
-  readinessCheck = () => operationsReadiness({ runsRoot }),
+  readinessCheck = () => operationsReadiness({ runsRoot, env }),
 }) {
   if (!Number.isInteger(maxWorkers) || maxWorkers < 1 || maxWorkers > MAX_PARALLEL_WORKERS) {
     throw new Error(`maxWorkers harus integer antara 1 dan ${MAX_PARALLEL_WORKERS}.`);
@@ -640,13 +652,22 @@ export function createParallelJobPool({
 
   const fill = () => {
     if (!acceptingJobs) return snapshot();
+    const profileAdmission = runtimeProfileAdmission(env);
+    if (!profileAdmission.allowed) {
+      const admission = {
+        allowed: false,
+        blockers: [{ id: "runtime-profile", code: profileAdmission.code, message: profileAdmission.message, action: profileAdmission.action }],
+      };
+      onEvent({ event: "ADMISSION_BLOCKED", blockers: admission.blockers });
+      return { ...snapshot(), admission };
+    }
     const readiness = readinessCheck();
-    if (process.env.ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD === "1" && !readiness.admission.allowed) {
+    if (env.ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD === "1" && !readiness.admission.allowed) {
       onEvent({ event: "ADMISSION_BLOCKED", blockers: readiness.admission.blockers });
       return { ...snapshot(), admission: readiness.admission };
     }
     while (activeJobs.size < maxWorkers) {
-      const job = claimNextJob(runsRoot, { allowSameProjectParallel: sameProjectParallelEnabled(process.env) });
+      const job = claimNextJob(runsRoot, { allowSameProjectParallel: sameProjectParallelEnabled(env) });
       if (!job) break;
       const promise = processClaimedJob({
         vaultRoot,

@@ -23,6 +23,14 @@ try {
   const blocked = operationsReadiness({ runsRoot, now: new Date("2026-08-22T00:00:00.000Z") });
   assert.equal(blocked.status, "BLOCKED");
   assert.equal(blocked.admission.blockers[0].id, "backup");
+  const profileBlocked = operationsReadiness({
+    runsRoot,
+    now: new Date("2026-08-22T00:00:00.000Z"),
+    env: { ORCHESTRATOR_PROFILE: "LOCAL_SAFE", ORCHESTRATOR_OBJECTIVES_ENABLED: "1" },
+  });
+  const profileBlocker = profileBlocked.admission.blockers.find((item) => item.id === "runtime-profile");
+  assert.equal(profileBlocker.code, "RUNTIME_PROFILE_MISMATCH");
+  assert.match(profileBlocker.action, /LOCAL_SAFE/);
 
   recordVerifiedBackup({
     runsRoot,

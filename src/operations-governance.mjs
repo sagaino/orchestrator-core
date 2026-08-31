@@ -6,7 +6,7 @@ import { listJobs, JOB_STATES } from "./job-queue.mjs";
 import { listRuns } from "./run-manager.mjs";
 import { verifyAuditChain } from "./audit-chain.mjs";
 import { summarizeOperationsArtifacts } from "./operations-artifacts.mjs";
-import { runtimeConfigSnapshot, validateRuntimeProfileAlignment } from "./runtime-config.mjs";
+import { RUNTIME_PROFILE_MISMATCH_CODE, runtimeConfigSnapshot, validateRuntimeProfileAlignment } from "./runtime-config.mjs";
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
@@ -311,11 +311,11 @@ function safeDiskFreeBytes(root) {
   } catch { return null; }
 }
 
-function check({ id, status, severity, message, action, runbook, metrics = null }) {
-  return { id, status, severity, message, action, runbook, ...(metrics ? { metrics } : {}) };
+function check({ id, code = null, status, severity, message, action, runbook, metrics = null }) {
+  return { id, ...(code ? { code } : {}), status, severity, message, action, runbook, ...(metrics ? { metrics } : {}) };
 }
 
-export function operationsReadiness({ runsRoot, now = new Date(), config = operationsConfig(), daemon = null } = {}) {
+export function operationsReadiness({ runsRoot, now = new Date(), config = operationsConfig(), daemon = null, env = process.env } = {}) {
   const checkedAt = now.toISOString();
   const checks = [];
   const freeBytes = safeDiskFreeBytes(runsRoot);
@@ -386,23 +386,27 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
   const daemonState = daemon ?? daemonStatus({ runsRoot });
   checks.push(check({ id: "daemon", status: daemonState.running || !daemonState.heartbeatAt ? "PASS" : "WARN", severity: daemonState.running || !daemonState.heartbeatAt ? "INFO" : "WARNING", message: daemonState.running || !daemonState.heartbeatAt ? "Status daemon dapat diinspeksi." : "Daemon heartbeat tidak sehat.", action: daemonState.running || !daemonState.heartbeatAt ? "Tidak ada tindakan." : "Restart daemon setelah memeriksa log.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { running: Boolean(daemonState.running), heartbeatAt: daemonState.heartbeatAt ?? null } }));
 
-  const runtimeConfig = runtimeConfigSnapshot();
+  const runtimeConfig = runtimeConfigSnapshot(env);
   const profileAlignment = validateRuntimeProfileAlignment(runtimeConfig);
   checks.push(check({
     id: "runtime-profile",
+    code: profileAlignment.aligned ? null : RUNTIME_PROFILE_MISMATCH_CODE,
     status: profileAlignment.aligned ? "PASS" : "FAIL",
     severity: profileAlignment.aligned ? "INFO" : "CRITICAL",
     message: profileAlignment.aligned
-      ? `Profil runtime '${profileAlignment.profile}' sesuai dengan kontrak.`
+      ? profileAlignment.overrides.length
+        ? `Profil runtime '${profileAlignment.profile}' sesuai dengan batas aman dan memakai ${profileAlignment.overrides.length} opt-in eksplisit.`
+        : `Profil runtime '${profileAlignment.profile}' sesuai dengan kontrak.`
       : `Profil runtime '${profileAlignment.profile}' memiliki ketidaksesuaian flag konfigurasi.`,
     action: profileAlignment.aligned
       ? "Tidak ada tindakan."
       : `Sesuaikan flag konfigurasi di .env agar sesuai dengan kontrak profil '${profileAlignment.profile}'.`,
-    runbook: "docs/AI_OS_V2_GOVERNANCE_CONFIG_ALIGNMENT_PLAN.md#runtime-profiles",
+    runbook: "docs/AI_OS_V2_GOVERNANCE_CONFIG_ALIGNMENT_PLAN.md#4-target-runtime-profiles",
     metrics: {
       profile: profileAlignment.profile,
       aligned: profileAlignment.aligned,
       ...(profileAlignment.mismatches.length ? { mismatches: profileAlignment.mismatches } : {}),
+      ...(profileAlignment.overrides.length ? { overrides: profileAlignment.overrides } : {}),
     },
   }));
 
@@ -440,11 +444,11 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
   });
   const activeJobs = jobs.filter((job) => [JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state));
   const parallel = daemonState?.parallel ?? {};
-  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, backupSchedule: { configured: Boolean(backupSchedule), launchctlActivated: backupSchedule?.launchctlActivated === true, intervalHours: backupSchedule?.intervalHours ?? null }, recoveryDrill: drill, runtime, artifacts, artifactCoverage, runtimeConfig, runtimeProfileAlignment: profileAlignment, queue: { queued: queued.length, running: activeJobs.filter((job) => job.state === JOB_STATES.RUNNING).length, review: activeJobs.filter((job) => job.state === JOB_STATES.REVIEW).length, oldestAgeMs: queueAgeMs, maxWorkers: parallel.maxWorkers ?? null, activeWorkers: parallel.activeWorkers ?? activeJobs.length, availableWorkerSlots: parallel.availableWorkerSlots ?? null, eligibleQueuedJobCount: parallel.eligibleQueuedJobCount ?? null, blockedQueuedJobCount: parallel.blockedQueuedJobCount ?? null }, failures: { deadlineFailures, providerFailures } } };
+  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, code, message, action }) => ({ id, ...(code ? { code } : {}), message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, backupSchedule: { configured: Boolean(backupSchedule), launchctlActivated: backupSchedule?.launchctlActivated === true, intervalHours: backupSchedule?.intervalHours ?? null }, recoveryDrill: drill, runtime, artifacts, artifactCoverage, runtimeConfig, runtimeProfileAlignment: profileAlignment, queue: { queued: queued.length, running: activeJobs.filter((job) => job.state === JOB_STATES.RUNNING).length, review: activeJobs.filter((job) => job.state === JOB_STATES.REVIEW).length, oldestAgeMs: queueAgeMs, maxWorkers: parallel.maxWorkers ?? null, activeWorkers: parallel.activeWorkers ?? activeJobs.length, availableWorkerSlots: parallel.availableWorkerSlots ?? null, eligibleQueuedJobCount: parallel.eligibleQueuedJobCount ?? null, blockedQueuedJobCount: parallel.blockedQueuedJobCount ?? null }, failures: { deadlineFailures, providerFailures } } };
 }
 
-export function assertOperationalReadiness({ runsRoot, now, config } = {}) {
-  const readiness = operationsReadiness({ runsRoot, now, config });
+export function assertOperationalReadiness({ runsRoot, now, config, env = process.env } = {}) {
+  const readiness = operationsReadiness({ runsRoot, now, config, env });
   if (!readiness.admission.allowed) {
     const error = new Error("Eksekusi diblokir oleh Operations Center.");
     error.code = "OPERATIONS_NOT_READY";

@@ -30,8 +30,10 @@ import {
   validateProject,
   walkMarkdown,
 } from "./core.mjs";
+import { runtimeProfileAdmission } from "./runtime-config.mjs";
 
 const ORCHESTRATOR_CLI = fileURLToPath(import.meta.url);
+const PROFILE_ADMISSION_COMMANDS = new Set(["request-task", "start-task", "prepare", "claim", "execute"]);
 
 export {
   DEFAULT_VAULT,
@@ -62,10 +64,10 @@ export {
   walkMarkdown,
 };
 
-function parseArguments(args) {
+export function parseArguments(args, env = process.env) {
   const options = {
-    vault: process.env.ORCHESTRATOR_VAULT_PATH ?? process.env.ORCHESTRATOR_VAULT ?? DEFAULT_VAULT,
-    runs: process.env.ORCHESTRATOR_RUNS ?? path.join(ORCHESTRATOR_ROOT, "runs"),
+    vault: env.ORCHESTRATOR_VAULT_PATH ?? env.ORCHESTRATOR_VAULT ?? DEFAULT_VAULT,
+    runs: env.ORCHESTRATOR_RUNS ?? path.join(ORCHESTRATOR_ROOT, "runs"),
     approvedBy: "user",
     decision: null,
     destination: null,
@@ -203,6 +205,10 @@ function parseArguments(args) {
     }
   }
   return options;
+}
+
+export function commandRequiresRuntimeProfileAdmission(command) {
+  return PROFILE_ADMISSION_COMMANDS.has(command);
 }
 
 function printHelp() {
@@ -351,6 +357,17 @@ export async function main(argv = process.argv.slice(2)) {
 
   try {
     const options = parseArguments(rest);
+    if (commandRequiresRuntimeProfileAdmission(command)) {
+      const admission = runtimeProfileAdmission(process.env);
+      if (!admission.allowed) {
+        fail(admission.message, {
+          code: admission.code,
+          profile: admission.profile,
+          mismatches: admission.mismatches,
+          action: admission.action,
+        });
+      }
+    }
     let result;
     if (command === "rotate-api-token") {
       if (!options.confirm) fail("Rotasi API token membutuhkan --confirm dan restart service.");
