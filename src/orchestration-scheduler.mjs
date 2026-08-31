@@ -727,6 +727,7 @@ function activeQueueJob(job) {
 }
 
 function orchestrationHasActiveWork(orchestration) {
+  if (TERMINAL_ORCHESTRATION_STATES.has(orchestration?.state)) return false;
   return Object.values(orchestration?.nodes ?? {}).some((node) => ACTIVE_NODE_STATES.has(node?.state));
 }
 
