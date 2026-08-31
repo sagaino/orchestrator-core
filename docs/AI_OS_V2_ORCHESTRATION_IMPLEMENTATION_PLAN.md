@@ -1,8 +1,12 @@
 # Personal AI OS v2 — Objective, Multi-Agent, and Cross-Project Orchestration Plan
 
-Status: **PROPOSED — NOT YET IMPLEMENTED**  
+Status: **CORE IMPLEMENTED — CONTROLLED LOCAL ROLLOUT; OPTIONAL TELEGRAM DEFERRED**  
+Implementation status: **IMPLEMENTED** (Core phases 1-7, 10 complete; optional Telegram deferred)  
+Acceptance status: **ACCEPTED_FOR_CONTROLLED_LOCAL_ROLLOUT**  
+Default activation: **DISABLED** (`LOCAL_SAFE` default-off)  
 Plan date: **2026-08-22 (Asia/Jakarta)**  
-Owner and final approver: **Human operator**  
+Accepted date: **2026-08-31 (Asia/Jakarta)**  
+Owner and final approver: **Human operator (`local:sagaino`)**  
 Starting point: **Personal AI OS v1.0.4, local-first, single-user, supervised**  
 Target: **one user objective can become an approved, dependency-aware, multi-task execution across one or more registered projects**
 

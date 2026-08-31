@@ -152,7 +152,7 @@ export async function runFinalV1Certification({ reportRoot = null, repoRoot = RE
   const sourceCommit = repoCommit(repoRoot);
   const registeredBackup = readBackupStatus(resolvedReportRoot);
   const backupRoot = path.resolve(process.env.ORCHESTRATOR_BACKUP_ROOT ?? (registeredBackup?.backupPath ? path.dirname(registeredBackup.backupPath) : path.join(path.dirname(resolvedReportRoot), "external-backups")));
-  const manifest = createReleaseManifest({ sourceRoot: repoRoot, dashboardRoot: resolvedDashboardRoot, vaultRoot: path.resolve(process.env.ORCHESTRATOR_VAULT ?? DEFAULT_VAULT), runsRoot: resolvedReportRoot, backupRoot, releaseVersion, sourceCommit, now });
+  const manifest = createReleaseManifest({ sourceRoot: repoRoot, dashboardRoot: resolvedDashboardRoot, vaultRoot: path.resolve(process.env.ORCHESTRATOR_VAULT_PATH ?? process.env.ORCHESTRATOR_VAULT ?? DEFAULT_VAULT), runsRoot: resolvedReportRoot, backupRoot, releaseVersion, sourceCommit, now });
   const manifestPath = path.join(resolvedReportRoot, "runtime", "release-manifest", `v${releaseVersion}.json`);
   const manifestPersisted = writePrivateJson(manifestPath, manifest);
   const manifestVerification = verifyReleaseManifestFile({ manifestPath });

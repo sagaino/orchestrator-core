@@ -1,6 +1,9 @@
 # Personal AI OS v2 — Threat Model
 
-Status: **PENDING HUMAN ACCEPTANCE**  
+Status: **ACCEPTED FOR CONTROLLED LOCAL ROLLOUT**  
+Implementation status: **IMPLEMENTED** (Core phases 1-7; optional Telegram deferred)  
+Acceptance status: **ACCEPTED_FOR_CONTROLLED_LOCAL_ROLLOUT**  
+Default activation: **DISABLED** (`LOCAL_SAFE` default-off)  
 Source plan: [AI OS v2 Orchestration Implementation Plan](./AI_OS_V2_ORCHESTRATION_IMPLEMENTATION_PLAN.md)
 
 ## 1. Security objective
@@ -68,17 +71,16 @@ and delivery.
     decision; it does not self-heal by widening authority.
 
 ## 6. Acceptance and review cadence
-
+ 
 The threat model is reviewed at each phase gate and whenever a new connector,
 filesystem boundary, model capability, or integration mode is introduced.
-V2-001 may begin only after the human operator accepts this document and the
-scope contract.
+Controlled local rollout has been authorized by the human operator:
 
 ```yaml
-accepted: false
-accepted_by: null
-accepted_at: null
+accepted: true
+accepted_by: "local:sagaino"
+accepted_at: "2026-08-31T04:42:25.000Z"
 exceptions: []
-next_review: "Before V2-052, V2-090, or V2-100"
+next_review: "Before optional Telegram (V2-090), new connectors, public network exposure, or multi-user expansion."
 ```
 

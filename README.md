@@ -92,54 +92,56 @@ Backend dan dashboard hanya bind ke `127.0.0.1`. Credential API disimpan di `run
 
 ---
 
-## ⚙️ Variabel Lingkungan Opsional (`.env`)
+## ⚙️ Variabel Lingkungan & Profil Runtime (`.env`)
 
-`./start.sh` otomatis membaca `.env` project-local jika file tersebut tersedia. Buat dari `.env.example` bila diperlukan. Nilai environment variable yang sudah diekspor di terminal tetap memiliki prioritas lebih tinggi daripada `.env`.
+File `.env` di direktori root adalah **milik operator lokal (operator-owned)** dan diabaikan oleh Git (`.gitignore`). Nilai environment variable yang diekspor di shell terminal tetap memiliki prioritas tertinggi.
+
+### 🛡️ Status Tata Kelola: Implemented vs Accepted vs Enabled
+- **Implemented**: Kemampuan kode sumber AI OS v2 sudah tersedia dan teruji di repositori.
+- **Accepted**: Disetujui secara formal oleh operator manusia (`local:sagaino`) untuk *controlled local rollout*.
+- **Enabled / Active**: Diaktifkan secara sadar melalui flag di file `.env` lokal operator.
+
+### 📦 Profil Runtime
+
+1. **`LOCAL_SAFE` (Default Fresh Installation)**:
+   Salin dari `.env.example`. Seluruh fitur penjadwalan objective v2 dan otomatisasi dinonaktifkan (`0`), mode persetujuan manual (`MANUAL`).
+2. **`LOCAL_PILOT` (Opt-in Supervised Pilot)**:
+   Salin dari `.env.pilot.example`. Mengaktifkan objective intake, DAG scheduler, dan cross-project diagnostics dengan mode `PLAN_REVIEW_THEN_AUTOPILOT`.
+
+### 📋 Matriks Flag Konfigurasi
+
+| Variabel | Canonical Name | Default (`LOCAL_SAFE`) | Pilot (`LOCAL_PILOT`) | Keterangan |
+|---|---|---|---|---|
+| Profil Runtime | `ORCHESTRATOR_PROFILE` | `LOCAL_SAFE` | `LOCAL_PILOT` | Nama kontrak profil |
+| Mode Persetujuan | `ORCHESTRATOR_APPROVAL_MODE` | `MANUAL` | `PLAN_REVIEW_THEN_AUTOPILOT` | Kebijakan review plan |
+| Objective Intake | `ORCHESTRATOR_OBJECTIVES_ENABLED` | `0` | `1` | Penerimaan objective baru |
+| Objective Scheduler | `ORCHESTRATOR_OBJECTIVE_SCHEDULER` | `0` | `1` | DAG execution scheduler |
+| Parallel Objectives | `ORCHESTRATOR_PARALLEL_OBJECTIVES` | `0` | `0` | Eksekusi objective paralel |
+| Same-Project Parallel | `ORCHESTRATOR_SAME_PROJECT_PARALLEL` | `0` | `0` | Subtask paralel 1 repo |
+| Cross-Project Mode | `ORCHESTRATOR_CROSS_PROJECT` | `0` | `1` | Diagnostik multi-repo |
+| Skill System | `ORCHESTRATOR_SKILLS_ENABLED` | `0` | `0` | Formal skill registry |
+| Skill Auto Routing | `ORCHESTRATOR_SKILL_AUTO_ROUTING` | `0` | `0` | Router otomatis skill |
+| Telegram Channel | `ORCHESTRATOR_TELEGRAM_ENABLED` | `0` | `0` | Saluran Telegram (deferred) |
+| Max Parallel Jobs | `ORCHESTRATOR_MAX_PARALLEL_JOBS` | `2` | `3` | Kapasitas worker pool |
+
+### 🔧 Konfigurasi Path & Port Kanonikal
 
 ```env
-# Path kustom ke Obsidian Vault (Default: ~/Documents/Obsidian Vault)
+# Path kustom ke Obsidian Vault (Fallback kompatibilitas: ORCHESTRATOR_VAULT)
 ORCHESTRATOR_VAULT_PATH="/path/to/your/Obsidian Vault"
+
+# Path kustom ke folder Runs Runtime
+ORCHESTRATOR_RUNS="/path/to/personal-ai-orchestrator/runs"
+
+# Port Backend API (Default: 3721)
+ORCHESTRATOR_API_PORT=3721
+
+# Port Dashboard UI Launcher (Default: 5173)
+ORCHESTRATOR_DASHBOARD_PORT=5173
 
 # Path kustom ke folder Dashboard UI (Default: auto-detect)
 ORCHESTRATOR_DASHBOARD_PATH="/path/to/orchestrator-dashboard"
-
-# Port Backend API (Default: 3721)
-PORT=3721
-
-# Default Model Antigravity (Default: gemini-3.7-flash-high)
-ORCHESTRATOR_AGY_MODEL=gemini-3.7-flash-high
-
-# Operations Center (nilai default sudah aman untuk host lokal)
-ORCHESTRATOR_MIN_FREE_DISK_MB=1024
-ORCHESTRATOR_MAX_SSE_CLIENTS=20
-ORCHESTRATOR_MAX_BACKUP_AGE_HOURS=24
-
-# Profil runtime yang akan terlihat di Operations (deskriptif, tidak menggantikan flag)
-ORCHESTRATOR_PROFILE=LOCAL_SAFE
-
-# Mode pilot: operator menyetujui ringkasan plan sekali, lalu orchestrator
-# mengurus materialisasi, recovery, dan delivery certification otomatis.
-ORCHESTRATOR_APPROVAL_MODE=PLAN_REVIEW_THEN_AUTOPILOT
-ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS=2
-
-# AI OS v2 objective intake tetap nonaktif sampai human gate
-ORCHESTRATOR_OBJECTIVES_ENABLED=0
 ```
-
-Untuk pilot lokal, gunakan profil eksplisit `LOCAL_PILOT` dan atur kapasitas
-worker sesuai kebutuhan. Review konfigurasi efektif di **Operations → Runtime
-profile** sebelum menerima pekerjaan baru; halaman tersebut juga menampilkan
-worker aktif, slot tersedia, dan job yang masih antre.
-
-Pada `ORCHESTRATOR_APPROVAL_MODE=PLAN_REVIEW_THEN_AUTOPILOT`, intake objective
-akan menghasilkan plan dan menampilkan ringkasan task untuk satu kali approval
-operator. Setelah approval, orchestrator menangani materialisasi, retry aman,
-recovery, preview, dan delivery certification. Operator hanya meninjau evidence
-dan melakukan **Final Acceptance**; blocker yang tidak aman untuk diselesaikan
-otomatis tetap ditampilkan sebagai exception.
-
-`FINAL_ACCEPT_ONLY` tetap tersedia untuk lingkungan yang ingin melewati approval
-plan dan hanya menyisakan Final Acceptance sebagai human gate.
 
 ## 🛡️ Operations Center
 
