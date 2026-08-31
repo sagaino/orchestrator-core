@@ -9,6 +9,7 @@ docs/*
 !docs/AI_OS_V2_SCOPE.md
 !docs/AI_OS_V2_THREAT_MODEL.md
 !docs/AI_OS_V2_GOVERNANCE_CONFIG_ALIGNMENT_PLAN.md
+!docs/AI_OS_V2_GOVERNANCE_CONFIG_ALIGNMENT_CERTIFICATE.md
 
 # Environment Variables
 .env

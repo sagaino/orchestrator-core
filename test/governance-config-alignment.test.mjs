@@ -68,9 +68,23 @@ assert.ok(!planDoc.includes("✅ V2-090"));
 assert.ok(!planDoc.includes("✅ V2-091"));
 assert.ok(!planDoc.includes("✅ V2-092"));
 
-// 5. Acceptance fields are human-supplied and valid
-assert.ok(scopeDoc.includes("accepted_by: \"local:sagaino\""));
-assert.ok(threatDoc.includes("accepted_by: \"local:sagaino\""));
+// 5. Acceptance fields are complete and consistent without hard-coding an identity
+function acceptanceFields(document) {
+  const accepted = document.match(/^accepted:\s*(true|false)$/m)?.[1] ?? null;
+  const acceptedBy = document.match(/^accepted_by:\s*"([^"]*)"$/m)?.[1] ?? null;
+  const acceptedAt = document.match(/^accepted_at:\s*"([^"]*)"$/m)?.[1] ?? null;
+  return { accepted, acceptedBy, acceptedAt };
+}
+const scopeAcceptance = acceptanceFields(scopeDoc);
+const threatAcceptance = acceptanceFields(threatDoc);
+assert.deepEqual(scopeAcceptance, threatAcceptance, "Scope and threat-model acceptance must agree");
+if (scopeAcceptance.accepted === "true") {
+  assert.ok(scopeAcceptance.acceptedBy?.trim(), "Accepted governance requires operator identity");
+  assert.ok(Number.isFinite(Date.parse(scopeAcceptance.acceptedAt)), "Accepted governance requires an ISO-8601 timestamp");
+} else {
+  assert.equal(scopeAcceptance.acceptedBy, null, "Pending governance must not contain an acceptance identity");
+  assert.equal(scopeAcceptance.acceptedAt, null, "Pending governance must not contain an acceptance timestamp");
+}
 
 // 6. Canonical environment aliases work
 assert.ok(readmeDoc.includes("ORCHESTRATOR_VAULT_PATH"));
@@ -89,9 +103,14 @@ assert.ok(fs.existsSync(path.resolve("docs/AI_OS_V2_SCOPE.md")));
 assert.ok(fs.existsSync(path.resolve("docs/AI_OS_V2_THREAT_MODEL.md")));
 assert.ok(fs.existsSync(path.resolve("docs/AI_OS_V2_ORCHESTRATION_IMPLEMENTATION_PLAN.md")));
 assert.ok(fs.existsSync(path.resolve("docs/AI_OS_V2_GOVERNANCE_CONFIG_ALIGNMENT_PLAN.md")));
+assert.ok(fs.existsSync(path.resolve("docs/AI_OS_V2_GOVERNANCE_CONFIG_ALIGNMENT_CERTIFICATE.md")));
+assert.ok(planDoc.includes("optional Telegram deferred"));
+assert.ok(fs.readFileSync(path.resolve("src/operations-governance.mjs"), "utf8").includes("#4-target-runtime-profiles"));
 
 // 9. .env is ignored by Git
 const checkIgnore = execFileSync("git", ["check-ignore", ".env"], { encoding: "utf8" }).trim();
 assert.equal(checkIgnore, ".env");
+const trackedEnvironmentFiles = execFileSync("git", ["ls-files", ".env", ".env.*"], { encoding: "utf8" }).trim().split(/\r?\n/).filter(Boolean);
+assert.deepEqual(trackedEnvironmentFiles.sort(), [".env.example", ".env.pilot.example"]);
 
 console.log("governance-config-alignment.test.mjs: All certification checks passed!");

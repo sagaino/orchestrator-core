@@ -55,6 +55,7 @@ import { acceptDeliveryCertification, buildDeliveryCertificationEvidence, create
 import { getProjectRelationships, replaceProjectRelationships } from "./project-relations.mjs";
 import { planObjective } from "./objective-planning.mjs";
 import { approvalMode, autopilotAfterPlanApprovalEnabled, automaticDeliveryCertificationEnabled, finalAcceptOnlyEnabled, planReviewThenAutopilotEnabled } from "./approval-policy.mjs";
+import { runtimeProfileAdmission } from "./runtime-config.mjs";
 
 const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
@@ -107,6 +108,18 @@ function enrichRunOrchestrationMetadata(run, vaultRoot) {
 }
 
 export { selectAggregatePreviewCandidates };
+
+function rejectRuntimeProfileMismatch(res, env) {
+  const admission = runtimeProfileAdmission(env);
+  if (admission.allowed) return false;
+  sendError(res, 503, admission.message, {
+    code: admission.code,
+    profile: admission.profile,
+    mismatches: admission.mismatches,
+    action: admission.action,
+  });
+  return true;
+}
 
 function skillUsage({ runsRoot, skills }) {
   const usage = Object.fromEntries(skills.map((skill) => [`${skill.skillId}@${skill.version}`, {
@@ -236,7 +249,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   });
 
   router.get("/api/operations/readiness", async (req, res) => {
-    const readiness = operationsReadiness({ runsRoot });
+    const readiness = operationsReadiness({ runsRoot, env });
     sendJson(res, 200, { success: readiness.admission.allowed, data: readiness });
   });
 
@@ -354,6 +367,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   // --- v2.0 Objective Intake (planning/read-only only) ---
   router.post("/api/objectives", async (req, res) => {
     try {
+      if (rejectRuntimeProfileMismatch(res, env)) return;
       const enabled = services?.objectivesEnabled ?? objectivesEnabled;
       if (!enabled()) return sendError(res, 409, "Objective orchestration belum diaktifkan.", { code: "FEATURE_DISABLED", feature: "OBJECTIVES" });
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk objective intake.", { code: "IDEMPOTENCY_REQUIRED" });
@@ -440,6 +454,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   router.post("/api/objectives/:id/generate-plan", async (req, res, { params }) => {
     try {
+      if (rejectRuntimeProfileMismatch(res, env)) return;
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk objective planning.", { code: "IDEMPOTENCY_REQUIRED" });
       const body = await parseJsonBody(req);
       const planner = services?.planObjective ?? planObjective;
@@ -723,6 +738,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   router.post("/api/objectives/:id/integration", async (req, res, { params }) => {
     try {
+      if (rejectRuntimeProfileMismatch(res, env)) return;
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk memulai integration.", { code: "IDEMPOTENCY_REQUIRED" });
       const body = await parseJsonBody(req);
       const integrator = services?.startIntegration ?? startIntegration;
@@ -974,6 +990,9 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   router.post("/api/objectives/:id/approve-plan", async (req, res, { params }) => {
     try {
+      // Manual approval is a review action and remains available during a
+      // mismatch. Autopilot approval can materialize work, so it is admission.
+      if (autopilotAfterPlanApprovalEnabled(env) && rejectRuntimeProfileMismatch(res, env)) return;
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk approval plan.", { code: "IDEMPOTENCY_REQUIRED" });
       const body = await parseJsonBody(req);
       const approver = services?.approvePlan ?? approvePlan;
@@ -1152,6 +1171,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   router.post("/api/objectives/:id/materialize", async (req, res, { params }) => {
     try {
+      if (rejectRuntimeProfileMismatch(res, env)) return;
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk materialization task.", { code: "IDEMPOTENCY_REQUIRED" });
       const body = await parseJsonBody(req);
       const materializer = services?.materializeApprovedPlan ?? materializeApprovedPlan;
@@ -1218,6 +1238,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   router.post("/api/objectives/:id/approve-genesis", async (req, res, { params }) => {
     try {
+      if (rejectRuntimeProfileMismatch(res, env)) return;
       if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk approval Fresh Project.", { code: "IDEMPOTENCY_REQUIRED" });
       const body = await parseJsonBody(req);
       const approver = services?.approveFreshProjectGenesis ?? approveFreshProjectGenesis;
@@ -1552,6 +1573,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
   // --- 3. Tasks & Intake ---
   router.post("/api/tasks/request", async (req, res) => {
+    if (rejectRuntimeProfileMismatch(res, env)) return;
     const body = await parseJsonBody(req);
     const { project: projectId, request, requestedBy = "user", autoStart = false, attachedAssets = [] } = body;
     if (!projectId || !request) {
@@ -1623,6 +1645,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   });
 
   router.post("/api/tasks/:projectId/:taskInput/queue", async (req, res, { params }) => {
+    if (rejectRuntimeProfileMismatch(res, env)) return;
     const body = await parseJsonBody(req);
     const approvedBy = String(body?.approvedBy ?? "user").trim() || "user";
     const context = buildContext(vaultRoot, params.projectId, params.taskInput);
@@ -1880,8 +1903,9 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
   });
 
   router.post("/api/runs/:id/start", async (req, res, { params }) => {
-    const readiness = operationsReadiness({ runsRoot });
-    if (process.env.ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD === "1" && !readiness.admission.allowed) {
+    if (rejectRuntimeProfileMismatch(res, env)) return;
+    const readiness = operationsReadiness({ runsRoot, env });
+    if (env.ORCHESTRATOR_ENFORCE_OPERATIONS_GUARD === "1" && !readiness.admission.allowed) {
       return sendError(res, 503, "Eksekusi diblokir oleh Operations Center.", readiness);
     }
     const body = await parseJsonBody(req);

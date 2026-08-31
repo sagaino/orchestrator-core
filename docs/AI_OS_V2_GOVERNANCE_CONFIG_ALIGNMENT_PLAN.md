@@ -1,7 +1,7 @@
 # AI OS v2 — Governance and Configuration Alignment Plan
 
-Status: **CORE IMPLEMENTED — PACKETS GCA-000 THROUGH GCA-007 COMPLETE (PASSED CERTIFICATION)**  
-Implementation status: **IMPLEMENTED & CERTIFIED** (Packets GCA-000..007 complete; live rollout observation verified)  
+Status: **CORE IMPLEMENTED — MACHINE RECERTIFIED; HUMAN REVIEW PENDING**
+Implementation status: **IMPLEMENTED; ALL REQUIRED MACHINE GATES PASSED**
 Acceptance status: **ACCEPTED_FOR_CONTROLLED_LOCAL_ROLLOUT** (Operator: local:sagaino)  
 Default activation: **DISABLED** (Fail-safe baseline)  
 Plan date: **2026-08-31 (Asia/Jakarta)**  
@@ -147,6 +147,25 @@ Expected effective behavior:
 - disabling a flag blocks new admission but does not destroy recovery or review
   state.
 
+The values above are the zero-surprise pilot baseline. Runtime validation treats
+`LOCAL_PILOT` as a bounded envelope so existing, explicit opt-ins do not become
+unusable merely because profile admission is enforced:
+
+- `MANUAL`, `PLAN_REVIEW_THEN_AUTOPILOT`, and `FINAL_ACCEPT_ONLY` are recognized
+  approval modes; all derived automation fields must remain consistent with the
+  selected mode;
+- parallel-objective, same-project-parallel, skills, and skill auto-routing may
+  be enabled explicitly; skill auto-routing requires the skill system;
+- capacity may be reduced but may not exceed three parallel jobs, and automatic
+  recovery remains bounded to zero through three attempts;
+- automatic review finalization remains disabled so task review and final
+  objective acceptance stay human-controlled;
+- optional Telegram remains a blocker because it is deferred and not part of
+  the accepted core;
+- every accepted deviation from the baseline is exposed as an explicit override
+  in Operations evidence. `LOCAL_SAFE` remains an exact, default-off lock with
+  no such overrides.
+
 If the operator does not want cross-project mode in the standard pilot, set it
 to `0` before implementation and update the profile contract and tests together.
 The implementing model must not make this product decision independently.
@@ -206,7 +225,9 @@ are complete.
 ## 7. Implementation Sequence
 
 Execute exactly one packet at a time. Do not combine the human acceptance gate
-with mechanical configuration### ✅ GCA-000 — Capture baseline evidence
+with mechanical configuration work.
+
+### ✅ GCA-000 — Capture baseline evidence
  
 Type: **READ-ONLY**  
 Model: economy-capable model  
@@ -299,6 +320,11 @@ Implementation requirements:
      ]
    }
    ```
+
+   The exact values in sections 4.1 and 4.2 are the canonical baselines. The
+   validator must additionally preserve the bounded `LOCAL_PILOT` opt-ins listed
+   in section 4.2, report them as overrides, and reject dependency violations,
+   out-of-range capacity, or deferred capabilities.
  
 4. `LOCAL_SAFE` with any v2 admission/automation capability enabled must be a
    blocker for new admission.
