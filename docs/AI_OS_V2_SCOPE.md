@@ -1,6 +1,9 @@
 # Personal AI OS v2 — Approved Scope Contract
-
-Status: **PENDING HUMAN ACCEPTANCE**  
+ 
+Status: **ACCEPTED FOR CONTROLLED LOCAL ROLLOUT**  
+Implementation status: **IMPLEMENTED** (Core phases 1-7; optional Telegram deferred)  
+Acceptance status: **ACCEPTED_FOR_CONTROLLED_LOCAL_ROLLOUT**  
+Default activation: **DISABLED** (`LOCAL_SAFE` default-off)  
 Source plan: [AI OS v2 Orchestration Implementation Plan](./AI_OS_V2_ORCHESTRATION_IMPLEMENTATION_PLAN.md)
 
 ## 1. Objective
@@ -125,14 +128,13 @@ human review. No later flag implicitly enables its prerequisites.
 
 ## 10. Human acceptance
 
-This document is not an approval by a model. The human operator must review
-this scope together with the threat model before V2-001 runtime implementation
-begins.
+This document is not an approval by a model. The human operator has reviewed
+this scope together with the threat model and authorized controlled local rollout:
 
 ```yaml
-accepted: false
-accepted_by: null
-accepted_at: null
-notes: null
+accepted: true
+accepted_by: "local:sagaino"
+accepted_at: "2026-08-31T04:42:25.000Z"
+notes: "Accepted for controlled local rollout of core capabilities (Phases 1-7); optional Telegram deferred."
 ```
 

@@ -64,7 +64,7 @@ export {
 
 function parseArguments(args) {
   const options = {
-    vault: process.env.ORCHESTRATOR_VAULT ?? DEFAULT_VAULT,
+    vault: process.env.ORCHESTRATOR_VAULT_PATH ?? process.env.ORCHESTRATOR_VAULT ?? DEFAULT_VAULT,
     runs: process.env.ORCHESTRATOR_RUNS ?? path.join(ORCHESTRATOR_ROOT, "runs"),
     approvedBy: "user",
     decision: null,

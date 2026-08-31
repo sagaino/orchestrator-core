@@ -92,8 +92,9 @@ resolve_dashboard_path() {
 
 # Smart Vault Search (Mencari orchestrator-vault atau Obsidian Vault)
 resolve_vault_path() {
-  if [ -n "$ORCHESTRATOR_VAULT_PATH" ] && [ -d "$ORCHESTRATOR_VAULT_PATH" ]; then
-    echo "$ORCHESTRATOR_VAULT_PATH"
+  local explicit_vault="${ORCHESTRATOR_VAULT_PATH:-$ORCHESTRATOR_VAULT}"
+  if [ -n "$explicit_vault" ] && [ -d "$explicit_vault" ]; then
+    echo "$explicit_vault"
     return
   fi
   local candidates=(
@@ -114,10 +115,21 @@ resolve_vault_path() {
   echo "$HOME/Documents/orchestrator-vault"
 }
 
+validate_port() {
+  local port="$1"
+  local name="$2"
+  if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    echo -e "  \033[31m[✗]\033[0m Port $name tidak valid: '$port' (harus integer 1-65535)" >&2
+    exit 1
+  fi
+}
+
 DASHBOARD_DIR="$(resolve_dashboard_path)"
 VAULT_PATH="$(resolve_vault_path)"
-BACKEND_PORT=3721
-FRONTEND_PORT=5173
+BACKEND_PORT="${ORCHESTRATOR_API_PORT:-3721}"
+FRONTEND_PORT="${ORCHESTRATOR_DASHBOARD_PORT:-5173}"
+validate_port "$BACKEND_PORT" "ORCHESTRATOR_API_PORT"
+validate_port "$FRONTEND_PORT" "ORCHESTRATOR_DASHBOARD_PORT"
 PID_FILE="$BACKEND_DIR/runs/.orchestrator.pids"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.sagaino.personal-ai-orchestrator.plist"
 

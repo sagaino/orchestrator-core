@@ -6,7 +6,7 @@ import { listJobs, JOB_STATES } from "./job-queue.mjs";
 import { listRuns } from "./run-manager.mjs";
 import { verifyAuditChain } from "./audit-chain.mjs";
 import { summarizeOperationsArtifacts } from "./operations-artifacts.mjs";
-import { runtimeConfigSnapshot } from "./runtime-config.mjs";
+import { runtimeConfigSnapshot, validateRuntimeProfileAlignment } from "./runtime-config.mjs";
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
@@ -28,6 +28,7 @@ const ALERT_RUNBOOKS = Object.freeze({
   OPS_DEADLINE_FAILURES: { ownerRole: "task-operator", steps: ["Tinjau run yang timeout.", "Periksa context/output limit.", "Jalankan retry hanya setelah evidence lengkap."] },
   OPS_PROVIDER_FAILURES: { ownerRole: "provider-operator", steps: ["Periksa provider/model error.", "Validasi rate limit dan routing.", "Catat evidence provider sebelum retry."] },
   OPS_DAEMON: { ownerRole: "runtime-operator", steps: ["Periksa heartbeat dan log daemon.", "Restart daemon melalui runbook.", "Verifikasi health sebelum resume."] },
+  OPS_RUNTIME_PROFILE: { ownerRole: "operations", steps: ["Periksa profil runtime dan kesesuaian flag di .env.", "Pastikan profil LOCAL_SAFE tidak mengaktifkan flag v2 tanpa izin.", "Sesuaikan flag atau aktifkan profil LOCAL_PILOT secara sadar."] },
 });
 
 function configuredInteger(name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
@@ -385,6 +386,26 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
   const daemonState = daemon ?? daemonStatus({ runsRoot });
   checks.push(check({ id: "daemon", status: daemonState.running || !daemonState.heartbeatAt ? "PASS" : "WARN", severity: daemonState.running || !daemonState.heartbeatAt ? "INFO" : "WARNING", message: daemonState.running || !daemonState.heartbeatAt ? "Status daemon dapat diinspeksi." : "Daemon heartbeat tidak sehat.", action: daemonState.running || !daemonState.heartbeatAt ? "Tidak ada tindakan." : "Restart daemon setelah memeriksa log.", runbook: "docs/PHASE_4_PRODUCTION_HARDENING.md#operations-center", metrics: { running: Boolean(daemonState.running), heartbeatAt: daemonState.heartbeatAt ?? null } }));
 
+  const runtimeConfig = runtimeConfigSnapshot();
+  const profileAlignment = validateRuntimeProfileAlignment(runtimeConfig);
+  checks.push(check({
+    id: "runtime-profile",
+    status: profileAlignment.aligned ? "PASS" : "FAIL",
+    severity: profileAlignment.aligned ? "INFO" : "CRITICAL",
+    message: profileAlignment.aligned
+      ? `Profil runtime '${profileAlignment.profile}' sesuai dengan kontrak.`
+      : `Profil runtime '${profileAlignment.profile}' memiliki ketidaksesuaian flag konfigurasi.`,
+    action: profileAlignment.aligned
+      ? "Tidak ada tindakan."
+      : `Sesuaikan flag konfigurasi di .env agar sesuai dengan kontrak profil '${profileAlignment.profile}'.`,
+    runbook: "docs/AI_OS_V2_GOVERNANCE_CONFIG_ALIGNMENT_PLAN.md#runtime-profiles",
+    metrics: {
+      profile: profileAlignment.profile,
+      aligned: profileAlignment.aligned,
+      ...(profileAlignment.mismatches.length ? { mismatches: profileAlignment.mismatches } : {}),
+    },
+  }));
+
   const blockers = checks.filter((item) => item.status === "FAIL");
   const warnings = checks.filter((item) => item.status === "WARN");
   const history = readAlertHistory(runsRoot);
@@ -419,7 +440,7 @@ export function operationsReadiness({ runsRoot, now = new Date(), config = opera
   });
   const activeJobs = jobs.filter((job) => [JOB_STATES.RUNNING, JOB_STATES.REVIEW].includes(job.state));
   const parallel = daemonState?.parallel ?? {};
-  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, backupSchedule: { configured: Boolean(backupSchedule), launchctlActivated: backupSchedule?.launchctlActivated === true, intervalHours: backupSchedule?.intervalHours ?? null }, recoveryDrill: drill, runtime, artifacts, artifactCoverage, runtimeConfig: runtimeConfigSnapshot(), queue: { queued: queued.length, running: activeJobs.filter((job) => job.state === JOB_STATES.RUNNING).length, review: activeJobs.filter((job) => job.state === JOB_STATES.REVIEW).length, oldestAgeMs: queueAgeMs, maxWorkers: parallel.maxWorkers ?? null, activeWorkers: parallel.activeWorkers ?? activeJobs.length, availableWorkerSlots: parallel.availableWorkerSlots ?? null, eligibleQueuedJobCount: parallel.eligibleQueuedJobCount ?? null, blockedQueuedJobCount: parallel.blockedQueuedJobCount ?? null }, failures: { deadlineFailures, providerFailures } } };
+  return { schemaVersion: 1, checkedAt, status: blockers.length ? "BLOCKED" : warnings.length ? "DEGRADED" : "READY", admission: { allowed: blockers.length === 0, blockers: blockers.map(({ id, message, action }) => ({ id, message, action })) }, checks, alerts, signals: { disk: { freeBytes }, backup, backupTarget: backup?.independentTarget ?? null, backupSchedule: { configured: Boolean(backupSchedule), launchctlActivated: backupSchedule?.launchctlActivated === true, intervalHours: backupSchedule?.intervalHours ?? null }, recoveryDrill: drill, runtime, artifacts, artifactCoverage, runtimeConfig, runtimeProfileAlignment: profileAlignment, queue: { queued: queued.length, running: activeJobs.filter((job) => job.state === JOB_STATES.RUNNING).length, review: activeJobs.filter((job) => job.state === JOB_STATES.REVIEW).length, oldestAgeMs: queueAgeMs, maxWorkers: parallel.maxWorkers ?? null, activeWorkers: parallel.activeWorkers ?? activeJobs.length, availableWorkerSlots: parallel.availableWorkerSlots ?? null, eligibleQueuedJobCount: parallel.eligibleQueuedJobCount ?? null, blockedQueuedJobCount: parallel.blockedQueuedJobCount ?? null }, failures: { deadlineFailures, providerFailures } } };
 }
 
 export function assertOperationalReadiness({ runsRoot, now, config } = {}) {

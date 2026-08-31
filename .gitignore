@@ -8,8 +8,10 @@ docs/*
 !docs/AI_OS_V2_ORCHESTRATION_IMPLEMENTATION_PLAN.md
 !docs/AI_OS_V2_SCOPE.md
 !docs/AI_OS_V2_THREAT_MODEL.md
+!docs/AI_OS_V2_GOVERNANCE_CONFIG_ALIGNMENT_PLAN.md
 
 # Environment Variables
 .env
 .env.*
 !.env.example
+!.env.pilot.example
