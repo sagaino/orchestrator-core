@@ -115,18 +115,67 @@ const resultUnavailable = compareVerificationFindings({
 });
 assert.equal(resultUnavailable.status, "BASELINE_UNAVAILABLE");
 
-// 7. ESLint text output parser
-const textSample = [
-  "src/components/Header.tsx",
-  "  5:10  error  'user' is defined but never used  @typescript-eslint/no-unused-vars",
-  "  10:2  warning  Unexpected any  @typescript-eslint/no-explicit-any",
-].join("\n");
+// 8. Parser Contract & Fail-Closed Negative Tests
+import { parseFindingsForAdapter } from "../src/verification-baseline.mjs";
 
-const parsed = parseEslintTextOutput(textSample);
-assert.equal(parsed.length, 2);
-assert.equal(parsed[0].file, "src/components/Header.tsx");
-assert.equal(parsed[0].ruleId, "@typescript-eslint/no-unused-vars");
-assert.equal(parsed[0].severity, "ERROR");
-assert.equal(parsed[1].severity, "WARNING");
+// Malformed JSON with exit code 1 -> UNPARSEABLE and comparator UNCOMPARABLE
+const malformedParsed = parseFindingsForAdapter({ adapter: "eslint", output: "SyntaxError: Unexpected token", exitCode: 1 });
+assert.equal(malformedParsed.status, "UNPARSEABLE");
+const compMalformed = compareVerificationFindings({
+  script: "lint",
+  mode: "NO_NEW_FINDINGS",
+  baseline: { commit: "base-1", exitCode: 1, findings: base35 },
+  candidate: { exitCode: 1, findings: malformedParsed.findings, parseResult: malformedParsed },
+});
+assert.equal(compMalformed.status, "UNCOMPARABLE");
+
+// Truncated JSON -> UNPARSEABLE and comparator UNCOMPARABLE
+const truncatedParsed = parseFindingsForAdapter({ adapter: "eslint", output: '[{"filePath":"src/app.ts"', exitCode: 1 });
+assert.equal(truncatedParsed.status, "UNPARSEABLE");
+const compTruncated = compareVerificationFindings({
+  script: "lint",
+  mode: "NO_NEW_FINDINGS",
+  baseline: { commit: "base-1", exitCode: 1, findings: base35 },
+  candidate: { exitCode: 1, findings: truncatedParsed.findings, parseResult: truncatedParsed },
+});
+assert.equal(compTruncated.status, "UNCOMPARABLE");
+
+// Unsupported adapter -> ADAPTER_UNAVAILABLE
+const unsupportedParsed = parseFindingsForAdapter({ adapter: "unknown-tool", output: "output", exitCode: 1 });
+assert.equal(unsupportedParsed.status, "UNSUPPORTED");
+const compUnsupported = compareVerificationFindings({
+  script: "lint",
+  mode: "NO_NEW_FINDINGS",
+  adapter: "unknown-tool",
+  baseline: { commit: "base-1", exitCode: 1, findings: base35 },
+  candidate: { exitCode: 1, findings: [] },
+});
+assert.equal(compUnsupported.status, "ADAPTER_UNAVAILABLE");
+
+// Empty output with non-zero exit -> UNPARSEABLE and UNCOMPARABLE
+const emptyNonZero = parseFindingsForAdapter({ adapter: "eslint", output: "", exitCode: 1 });
+assert.equal(emptyNonZero.status, "UNPARSEABLE");
+const compEmptyNonZero = compareVerificationFindings({
+  script: "lint",
+  mode: "NO_NEW_FINDINGS",
+  baseline: { commit: "base-1", exitCode: 1, findings: base35 },
+  candidate: { exitCode: 1, findings: emptyNonZero.findings, parseResult: emptyNonZero },
+});
+assert.equal(compEmptyNonZero.status, "UNCOMPARABLE");
+
+// Valid [] with approved formatter -> PARSED with zero findings
+const validEmpty = parseFindingsForAdapter({ adapter: "eslint", output: "[]", exitCode: 0 });
+assert.equal(validEmpty.status, "PARSED");
+assert.equal(validEmpty.findings.length, 0);
+
+// Baseline parse failure -> BASELINE_UNAVAILABLE
+const compBaselineParseFail = compareVerificationFindings({
+  script: "lint",
+  mode: "NO_NEW_FINDINGS",
+  baseline: { commit: "base-1", exitCode: 1, status: "UNPARSEABLE", findings: [] },
+  candidate: { exitCode: 0, findings: [] },
+});
+assert.equal(compBaselineParseFail.status, "BASELINE_UNAVAILABLE");
 
 console.log("verification-baseline.test.mjs: All verification baseline tests passed!");
+

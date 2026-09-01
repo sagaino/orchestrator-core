@@ -122,22 +122,20 @@ function assertPlanShape({ objective, plan, projects, runsRoot }) {
       details: { code: "INVALID_PLAN_SKILLS", errors: skillValidation.errors },
     });
   }
-  if (plan.verificationIntent) {
-    const coverage = validateVerificationCoverage({
-      intent: plan.verificationIntent,
-      planNodes: plan.nodes,
-      integrationVerification: [
-        ...(Array.isArray(plan.integration?.projectVerification) ? plan.integration.projectVerification : []),
-        ...(Array.isArray(plan.integration?.crossProjectVerification) ? plan.integration.crossProjectVerification : []),
-      ],
+  const coverage = validateVerificationCoverage({
+    intent: plan.verificationIntent,
+    planNodes: plan.nodes,
+    integrationVerification: [
+      ...(Array.isArray(plan.integration?.projectVerification) ? plan.integration.projectVerification : []),
+      ...(Array.isArray(plan.integration?.crossProjectVerification) ? plan.integration.crossProjectVerification : []),
+    ],
+  });
+  if (!coverage.valid) {
+    fail(`Materialization ditolak: ${coverage.error}`, {
+      statusCode: 422,
+      code: coverage.code || "PLAN_VERIFICATION_COVERAGE_MISSING",
+      details: { code: coverage.code || "PLAN_VERIFICATION_COVERAGE_MISSING", missingCoverage: coverage.missingCoverage },
     });
-    if (!coverage.valid) {
-      fail(`Materialization ditolak: ${coverage.error}`, {
-        statusCode: 422,
-        code: "PLAN_VERIFICATION_COVERAGE_MISSING",
-        details: { code: "PLAN_VERIFICATION_COVERAGE_MISSING", missingCoverage: coverage.missingCoverage },
-      });
-    }
   }
 }
 

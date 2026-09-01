@@ -1,9 +1,9 @@
-# AI OS v2 — Production Hardening Machine Certificate
+# AI OS v2 — Production Hardening Machine Certificate (HISTORICAL — INVALIDATED)
 
 - **Certificate Date**: 2026-09-01 (Asia/Jakarta)
-- **Machine Certification**: `PASSED`
-- **Human Acceptance**: `PENDING` (Awaiting operator review and explicit confirmation)
-- **Rollout Recommendation**: `PRODUCTION_CANDIDATE`
+- **Machine Certification**: `INVALIDATED — SUPERSEDED BY AI OS V2 HARDENING RECERTIFICATION REMEDIATION PLAN`
+- **Current Status**: `RETAINED FOR HISTORICAL AUDIT ONLY — CERTIFICATION BLOCKED PENDING REMEDIATION`
+- **Human Acceptance**: `PENDING`
 - **Backend Baseline Commit**: `3c5a583d500f3d6511a1f679634efcbf1a67b96e`
 - **Dashboard Baseline Commit**: `721043392b9518f2dedab966e0de2acf9dc8c59a`
 - **Safety Precondition**: `starter-app` untouched (100% verified against temporary isolation roots).

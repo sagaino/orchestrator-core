@@ -61,6 +61,13 @@ createObjective({ runsRoot, record: { schemaVersion: 1, revision: 0, objectiveId
 createPlan({ runsRoot, record: {
   schemaVersion: 1, revision: 1, planId, objectiveId, state: "PENDING_APPROVAL", summary: "API skill assignment fixture.", architectureDecisions: [], assumptions: [], clarificationNeeded: false, clarificationQuestion: null, projects: ["skill-api-project"],
   nodes: [{ nodeId: "N01", title: "Implement API", purpose: "Implement the API fixture.", projectId: "skill-api-project", role: "BACKEND", type: "IMPLEMENTATION", dependsOn: [], acceptanceCriteria: ["API passes."], allowedPaths: ["src/api.js"], verification: ["test"], risk: "LOW", complexity: "LOW", requiresChanges: true, canRunInParallel: false, writeConflictGroup: "api", contextFrom: [], skills: [] }],
+  verificationIntent: {
+    contractVersion: 1,
+    required: [{ projectId: "skill-api-project", capability: "UNIT", source: "EXPLICIT" }],
+    resolved: [{ projectId: "skill-api-project", capability: "UNIT", script: "test" }],
+    missing: [],
+    status: "RESOLVED",
+  },
   integration: { required: false, projectVerification: [], crossProjectVerification: [], previewRequired: false }, risk: "LOW", complexity: "LOW", approvedBy: null, approvedAt: null, createdAt: timestamp, updatedAt: timestamp,
 }, validationOptions: { knownProjectIds: ["skill-api-project"], budget } });
 

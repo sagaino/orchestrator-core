@@ -392,6 +392,7 @@ export function buildContext(vaultRoot, projectId, taskInput) {
       graphReport: exists(graphReportPath) ? graphReportPath : null,
       graphSummary,
       packageScripts: getPackageScripts(project.repository),
+      verificationPolicies: projectPage?.metadata?.verification_policies || projectPage?.metadata?.verificationPolicies || project.verificationPolicies || {},
     },
     task: {
       path: task.path,

@@ -100,6 +100,7 @@ function buildProjectContexts(vaultRoot, objective) {
       projectMetadata: document?.metadata || {},
       registryMetadata: project,
       repositoryPath: project.repository,
+      vaultRoot,
     });
     if (!blueprint.valid) {
       fail(`Project blueprint gagal ditentukan untuk project ${projectId}: ${blueprint.error}`, {

@@ -13,33 +13,124 @@ export function normalizeComparableFilePath(filePath, repositoryRoot) {
   return clean.replace(/^\.\//, "");
 }
 
-export function parseEslintJsonOutput(stdout, repositoryRoot = "") {
-  if (!stdout || typeof stdout !== "string") return [];
-  try {
-    const raw = JSON.parse(stdout.trim());
-    if (!Array.isArray(raw)) return [];
-    const findings = [];
-    for (const fileReport of raw) {
-      const filePath = normalizeComparableFilePath(fileReport.filePath, repositoryRoot);
-      const messages = Array.isArray(fileReport.messages) ? fileReport.messages : [];
-      for (const msg of messages) {
-        findings.push({
-          file: filePath,
-          ruleId: msg.ruleId || "syntax-error",
-          severity: msg.severity === 2 ? "ERROR" : "WARNING",
-          line: typeof msg.line === "number" ? msg.line : null,
-          column: typeof msg.column === "number" ? msg.column : null,
-          message: String(msg.message || "").trim(),
-        });
-      }
-    }
-    return findings;
-  } catch {
-    return parseEslintTextOutput(stdout, repositoryRoot);
-  }
+export function computeRawOutputFingerprint(output = "") {
+  return crypto.createHash("sha256").update(String(output ?? "")).digest("hex");
 }
 
-export function parseEslintTextOutput(text, repositoryRoot = "") {
+export function computeFindingsFingerprint(findings = []) {
+  const sorted = [...findings].sort((a, b) => {
+    const fileComp = String(a.file).localeCompare(String(b.file));
+    if (fileComp !== 0) return fileComp;
+    const ruleComp = String(a.ruleId).localeCompare(String(b.ruleId));
+    if (ruleComp !== 0) return ruleComp;
+    const lineComp = (a.line ?? 0) - (b.line ?? 0);
+    if (lineComp !== 0) return lineComp;
+    return String(a.message).localeCompare(String(b.message));
+  });
+
+  const serialized = JSON.stringify(sorted);
+  return crypto.createHash("sha256").update(serialized).digest("hex");
+}
+
+export function parseEslintOutput({
+  output = "",
+  repositoryRoot = "",
+  exitCode = 0,
+  expectedFormat = "ESLINT_JSON",
+} = {}) {
+  const rawFingerprint = computeRawOutputFingerprint(output);
+  const text = typeof output === "string" ? output.trim() : "";
+
+  if (!text) {
+    if (exitCode === 0) {
+      return {
+        adapter: "eslint",
+        status: "PARSED",
+        format: "NONE",
+        findings: [],
+        rawFingerprint,
+        reason: null,
+      };
+    }
+    return {
+      adapter: "eslint",
+      status: "UNPARSEABLE",
+      format: "NONE",
+      findings: [],
+      rawFingerprint,
+      reason: "Empty output with non-zero exit code",
+    };
+  }
+
+  // 1. Attempt JSON parse
+  try {
+    const raw = JSON.parse(text);
+    if (Array.isArray(raw)) {
+      const findings = [];
+      for (const fileReport of raw) {
+        const filePath = normalizeComparableFilePath(fileReport.filePath, repositoryRoot);
+        const messages = Array.isArray(fileReport.messages) ? fileReport.messages : [];
+        for (const msg of messages) {
+          findings.push({
+            file: filePath,
+            ruleId: msg.ruleId || "syntax-error",
+            severity: msg.severity === 2 ? "ERROR" : "WARNING",
+            line: typeof msg.line === "number" ? msg.line : null,
+            column: typeof msg.column === "number" ? msg.column : null,
+            message: String(msg.message || "").trim(),
+          });
+        }
+      }
+      return {
+        adapter: "eslint",
+        status: "PARSED",
+        format: "ESLINT_JSON",
+        findings,
+        rawFingerprint,
+        reason: null,
+      };
+    }
+  } catch {
+    // JSON parse failed. Check if stylish format is recognized.
+  }
+
+  // 2. Check stylish text output
+  const stylishFindings = parseEslintStylishText(text, repositoryRoot);
+  if (stylishFindings.length > 0) {
+    return {
+      adapter: "eslint",
+      status: "PARSED",
+      format: "ESLINT_STYLISH",
+      findings: stylishFindings,
+      rawFingerprint,
+      reason: null,
+    };
+  }
+
+  // If exitCode === 0 and output contains no error keywords
+  if (exitCode === 0 && !text.toLowerCase().includes("error") && !text.toLowerCase().includes("syntaxerror")) {
+    return {
+      adapter: "eslint",
+      status: "PARSED",
+      format: "NONE",
+      findings: [],
+      rawFingerprint,
+      reason: null,
+    };
+  }
+
+  // Otherwise, output is malformed / unexpected prose / stack trace
+  return {
+    adapter: "eslint",
+    status: "UNPARSEABLE",
+    format: "NONE",
+    findings: [],
+    rawFingerprint,
+    reason: "Malformed or unparseable ESLint output",
+  };
+}
+
+export function parseEslintStylishText(text, repositoryRoot = "") {
   if (!text || typeof text !== "string") return [];
   const lines = text.split("\n");
   const findings = [];
@@ -49,13 +140,11 @@ export function parseEslintTextOutput(text, repositoryRoot = "") {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    // File header: e.g. /path/to/file.tsx or src/components/Button.tsx
     if (/^[/\w.-]+\.[a-zA-Z0-9]+$/.test(trimmed) || (trimmed.startsWith("/") && trimmed.includes("."))) {
       currentFile = normalizeComparableFilePath(trimmed, repositoryRoot);
       continue;
     }
 
-    // Message line: e.g. "  12:5  error  'foo' is defined but never used  @typescript-eslint/no-unused-vars"
     const match = trimmed.match(/^(\d+):(\d+)\s+(error|warning)\s+(.*?)\s+([@\w\d_/-]+)$/i);
     if (match) {
       const [, lineNum, colNum, severity, message, ruleId] = match;
@@ -73,17 +162,11 @@ export function parseEslintTextOutput(text, repositoryRoot = "") {
   return findings;
 }
 
-export function computeFindingsFingerprint(findings = []) {
-  const sorted = [...findings].sort((a, b) => {
-    const fileComp = String(a.file).localeCompare(String(b.file));
-    if (fileComp !== 0) return fileComp;
-    const ruleComp = String(a.ruleId).localeCompare(String(b.ruleId));
-    if (ruleComp !== 0) return ruleComp;
-    const lineComp = (a.line ?? 0) - (b.line ?? 0);
-    if (lineComp !== 0) return lineComp;
-    return String(a.message).localeCompare(String(b.message));
-  });
+export function parseEslintJsonOutput(stdout, repositoryRoot = "") {
+  const result = parseEslintOutput({ output: stdout, repositoryRoot });
+  return result.findings;
+}
 
-  const serialized = JSON.stringify(sorted);
-  return crypto.createHash("sha256").update(serialized).digest("hex");
+export function parseEslintTextOutput(text, repositoryRoot = "") {
+  return parseEslintStylishText(text, repositoryRoot);
 }
