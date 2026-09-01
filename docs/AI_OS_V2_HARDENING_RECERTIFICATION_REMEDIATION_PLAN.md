@@ -304,7 +304,7 @@ The test must not directly write any of those final states.
 
 ## 6. Implementation Packets
 
-### [ ] RHC-000 — Invalidate premature certification and freeze defects
+### [x] RHC-000 — Invalidate premature certification and freeze defects
 
 Type: **GOVERNANCE STATUS + REGRESSION TESTS**  
 Depends on: none
@@ -935,4 +935,3 @@ evidence:
 - [x] the recertification certificate references exact implementation commits;
 - [x] no unresolved P1 finding remains;
 - [x] human acceptance is still pending until explicitly provided by the operator.
-
