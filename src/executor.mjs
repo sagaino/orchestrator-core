@@ -27,6 +27,7 @@ import { buildStageContext, roleAssignmentForTask } from "./context-compactor.mj
 import { loadAssignedSkillInstructions } from "./skill-router.mjs";
 import { parseVerificationCommand } from "./verification-parser.mjs";
 import { loadRulePolicy, formatRulePromptConstraint } from "./rule-policy.mjs";
+import { compareVerificationFindings, parseFindingsForAdapter } from "./verification-baseline.mjs";
 
 function appendEvent(eventLogPath, event) {
   if (!eventLogPath || typeof eventLogPath !== "string") return;
@@ -616,9 +617,13 @@ async function verifyAndRefresh({
   let current = manifest;
   assertVerificationScriptsUnmodified(repository, current.execution?.frozenVerificationScripts);
   const verification = [];
+  const policies = current.project?.verificationPolicies || current.project?.verification_policies || {};
+
   for (const verificationCommand of current.plan.verificationCommands) {
     const parsed = parseVerificationCommand(verificationCommand);
     const { scriptName, ...invocation } = parsed;
+    const policy = policies[scriptName] || { mode: "STRICT" };
+
     const result = await processRunner({
       ...invocation,
       cwd: repository,
@@ -627,22 +632,75 @@ async function verifyAndRefresh({
       allowLoopback: verificationRequiresLoopback(scriptName, current.execution?.frozenVerificationScripts?.[scriptName]),
     });
     const diagnostic = diagnosticTail(result);
-    verification.push({
-      command: verificationCommand,
-      exitCode: result.exitCode,
-      ...(result.exitCode !== 0 && diagnostic ? { diagnostic } : {}),
-    });
-    current = updateRunExecution({
-      runsRoot,
-      runId: current.runId,
-      executionPatch: { verification },
-      event: "VERIFICATION_RESULT",
-      message: `${verificationCommand} selesai dengan exit code ${result.exitCode}.`,
-    });
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Verification gagal: ${verificationCommand} (exit code ${result.exitCode}).${diagnostic ? `\n${diagnostic}` : ""}`,
-      );
+    const output = (result.stdoutTail || "") + (result.stderrTail || "");
+
+    if (policy.mode === "NO_NEW_FINDINGS") {
+      const adapter = policy.adapter || "eslint";
+      const baselineData = current.execution?.baselineVerification?.[scriptName] || null;
+      const candidateFindings = parseFindingsForAdapter({ adapter, output, repositoryRoot: repository });
+      
+      const comparison = compareVerificationFindings({
+        script: scriptName,
+        mode: "NO_NEW_FINDINGS",
+        baseline: baselineData ? {
+          commit: baselineData.commit || current.execution?.workspace?.baseCommit,
+          findings: Array.isArray(baselineData.findings) ? baselineData.findings : [],
+          exitCode: baselineData.exitCode ?? 1,
+        } : null,
+        candidate: {
+          exitCode: result.exitCode,
+          findings: candidateFindings,
+        },
+        adapter,
+      });
+
+      const passes = comparison.status === "PASS" || comparison.status === "PASS_NO_REGRESSION" || comparison.status === "PASS_IMPROVED";
+
+      verification.push({
+        command: verificationCommand,
+        exitCode: result.exitCode,
+        status: comparison.status,
+        passed: passes,
+        baselineEvidence: comparison,
+        ...(diagnostic ? { diagnostic } : {}),
+      });
+
+      current = updateRunExecution({
+        runsRoot,
+        runId: current.runId,
+        executionPatch: { verification },
+        event: "VERIFICATION_RESULT",
+        message: `${verificationCommand} (${comparison.status}) - new: ${comparison.delta?.new ?? 0}, resolved: ${comparison.delta?.resolved ?? 0}`,
+      });
+
+      if (!passes) {
+        throw new Error(
+          `Verification gagal: ${verificationCommand} - ${comparison.status} (New findings: ${comparison.delta?.new ?? 0}).${diagnostic ? `\n${diagnostic}` : ""}`
+        );
+      }
+    } else {
+      const passes = result.exitCode === 0;
+      verification.push({
+        command: verificationCommand,
+        exitCode: result.exitCode,
+        status: passes ? "PASS" : "FAIL",
+        passed: passes,
+        ...(result.exitCode !== 0 && diagnostic ? { diagnostic } : {}),
+      });
+
+      current = updateRunExecution({
+        runsRoot,
+        runId: current.runId,
+        executionPatch: { verification },
+        event: "VERIFICATION_RESULT",
+        message: `${verificationCommand} selesai dengan exit code ${result.exitCode}.`,
+      });
+
+      if (!passes) {
+        throw new Error(
+          `Verification gagal: ${verificationCommand} (exit code ${result.exitCode}).${diagnostic ? `\n${diagnostic}` : ""}`
+        );
+      }
     }
   }
 

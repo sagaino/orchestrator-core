@@ -63,6 +63,7 @@
     "test:verification-baseline": "node test/verification-baseline.test.mjs",
     "test:ai-os-lifecycle-e2e": "node test/ai-os-objective-lifecycle-e2e.test.mjs",
     "test:planning-quality": "node test/planning-quality-regressions.test.mjs && node test/verification-intent.test.mjs && node test/project-blueprint.test.mjs && node test/verification-baseline.test.mjs && node test/ai-os-objective-lifecycle-e2e.test.mjs",
+    "test:production-hardening": "npm run test:planning-quality && node test/project-decomposer.test.mjs && node test/delivery-certification.test.mjs",
     "test:visual-evidence": "node test/visual-evidence.test.mjs && node test/visual-evidence-api.test.mjs",
     "test:visual-qa": "node test/visual-qa.test.mjs",
     "test:visual-comparison": "node test/visual-comparison.test.mjs",

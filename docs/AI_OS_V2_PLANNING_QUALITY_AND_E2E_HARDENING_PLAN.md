@@ -1,6 +1,6 @@
 # AI OS v2 — Planning Quality and E2E Hardening Plan
 
-Status: **IMPLEMENTED & CERTIFIED — PACKETS PQE-000 THROUGH PQE-070 COMPLETE**  
+Status: **SUPERSEDED — REPLACED BY AI OS V2 PRODUCTION HARDENING COMPLETION PLAN (AI_OS_V2_PRODUCTION_HARDENING_COMPLETION_PLAN.md)**  
 Plan date: **2026-08-31 (Asia/Jakarta)**  
 Owner and final approver: **Human operator**  
 Primary repositories: **personal-ai-orchestrator** and **orchestrator-dashboard**  

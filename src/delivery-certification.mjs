@@ -90,6 +90,25 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
   const integrationComplete = !integrationRequired || objectiveEvidence.verification.integration.status === "PASS";
   const previewComplete = !previewRequired || Boolean(preview && preview.status === "READY");
   const cleanupComplete = (!previewRequired || preview?.cleanup?.status === "CLEANED") && runCleanups.every((item) => item.cleaned);
+  const hasIntent = Boolean(objectiveEvidence.plan?.verificationIntent);
+  const intentMissing = hasIntent ? (objectiveEvidence.plan.verificationIntent.missing ?? []) : [];
+  const intentResolved = hasIntent ? (objectiveEvidence.plan.verificationIntent.resolved ?? []) : [];
+  const verificationIntentPassing = hasIntent && intentMissing.length === 0;
+  const baselineChecksPassing = runs.every((run) => {
+    const rawVerification = run?.execution?.verification;
+    const runVerification = Array.isArray(rawVerification)
+      ? rawVerification
+      : Array.isArray(rawVerification?.results)
+      ? rawVerification.results
+      : [];
+    return runVerification.every((v) => {
+      if (v.status && ["FAIL_REGRESSION", "BASELINE_UNAVAILABLE", "UNCOMPARABLE", "ADAPTER_UNAVAILABLE", "TOOLCHAIN_DRIFT", "FAIL"].includes(v.status)) {
+        return false;
+      }
+      return v.passed !== false && (v.exitCode === 0 || ["PASS_NO_REGRESSION", "PASS_IMPROVED", "PASS"].includes(v.status));
+    });
+  });
+
   const checks = [
     result("PLAN_COMPLETE", objectiveEvidence.plan?.state === "APPROVED", "Approved objective plan is present.", { planId: objectiveEvidence.plan?.planId ?? null, state: objectiveEvidence.plan?.state ?? null }),
     result("EXECUTION_COMPLETE", objectiveEvidence.orchestration?.state === "DONE" && objectiveEvidence.nodes.length > 0 && objectiveEvidence.nodes.every((node) => node.state === "DONE"), "All objective nodes and orchestration are done.", { orchestrationState: objectiveEvidence.orchestration?.state ?? null, nodeStates: objectiveEvidence.nodes.map((node) => ({ nodeId: node.nodeId, state: node.state })) }),
@@ -99,7 +118,24 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
     result("HUMAN_ACCEPTANCE_COMPLETE", automatic || objectiveEvidence.finalAcceptance.state === "ACCEPTED", automatic ? "Final acceptance is handled by the single final user gate." : "Objective final acceptance is recorded by a human gate.", { required: !automatic, state: objectiveEvidence.finalAcceptance.state, acceptedBy: objectiveEvidence.finalAcceptance.acceptedBy ?? null, acceptedAt: objectiveEvidence.finalAcceptance.acceptedAt ?? null }),
     result("CLEANUP_COMPLETE", cleanupComplete, previewRequired ? "Aggregate preview and isolated run workspaces are cleaned." : "Isolated run workspaces are cleaned; aggregate preview was not required.", { previewRequired, previewCleanup: previewRequired ? (preview?.cleanup?.status ?? "MISSING") : "NOT_REQUIRED", runCleanups }),
     result("KNOWLEDGE_CAPTURE_COMPLETE", knowledge.length > 0 && knowledge.every((item) => item.approved && item.synced), "Knowledge approval/capture is present for every source run.", { knowledge }),
-    result("VERIFICATION_INTENT_COMPLETE", (objectiveEvidence.plan?.verificationIntent?.missing?.length ?? 0) === 0, (objectiveEvidence.plan?.verificationIntent?.missing?.length ?? 0) === 0 ? "Verification intent is satisfied." : "Verification intent contains unresolved checks.", { intent: objectiveEvidence.plan?.verificationIntent ?? null }),
+    result(
+      "VERIFICATION_INTENT_COMPLETE",
+      hasIntent ? (verificationIntentPassing && baselineChecksPassing) : false,
+      !hasIntent
+        ? "Verification intent is missing from approved plan."
+        : !verificationIntentPassing
+        ? `Verification intent contains unresolved checks: ${intentMissing.map((m) => m.capability).join(", ")}`
+        : !baselineChecksPassing
+        ? "Verification contains failing or regression findings."
+        : "Verification intent and baseline checks are completely satisfied.",
+      {
+        hasIntent,
+        missing: intentMissing,
+        resolved: intentResolved,
+        intent: objectiveEvidence.plan?.verificationIntent ?? null,
+        baselineChecksPassing,
+      }
+    ),
   ];
   const blockers = checks.filter((check) => check.status !== "PASS").map((check) => check.id);
   const machineReady = blockers.length === 0;

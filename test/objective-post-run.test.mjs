@@ -84,6 +84,12 @@ try {
     clarificationQuestion: null,
     projects: ["shop"],
     nodes: [node],
+    verificationIntent: {
+      status: "RESOLVED",
+      requested: [{ capability: "UNIT", script: "test", source: "PROJECT_DEFAULT" }],
+      resolved: [{ capability: "UNIT", script: "test", source: "PROJECT_DEFAULT" }],
+      missing: [],
+    },
     integration: { required: true, projectVerification: ["test"], crossProjectVerification: [], previewRequired: false },
     risk: "LOW",
     complexity: "LOW",

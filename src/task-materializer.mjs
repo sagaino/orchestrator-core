@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { listProjects, readMarkdown } from "./core.mjs";
+import { listProjects, readMarkdown, projectPagePath } from "./core.mjs";
 import { getDecision, listDecisions } from "./decision-store.mjs";
 import { getObjective, updateObjective } from "./objective-store.mjs";
 import { getPlan } from "./plan-store.mjs";
@@ -12,6 +12,8 @@ import { injectFault } from "./fault-injection.mjs";
 import { withDurableLease } from "./durable-runtime.mjs";
 import { validatePlanRecord } from "./orchestration-schema.mjs";
 import { validatePlanSkillAssignments } from "./skill-assignment.mjs";
+import { validateVerificationCoverage } from "./verification-intent.mjs";
+import { resolveProjectBlueprint } from "./project-blueprint.mjs";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -120,13 +122,30 @@ function assertPlanShape({ objective, plan, projects, runsRoot }) {
       details: { code: "INVALID_PLAN_SKILLS", errors: skillValidation.errors },
     });
   }
+  if (plan.verificationIntent) {
+    const coverage = validateVerificationCoverage({
+      intent: plan.verificationIntent,
+      planNodes: plan.nodes,
+      integrationVerification: [
+        ...(Array.isArray(plan.integration?.projectVerification) ? plan.integration.projectVerification : []),
+        ...(Array.isArray(plan.integration?.crossProjectVerification) ? plan.integration.crossProjectVerification : []),
+      ],
+    });
+    if (!coverage.valid) {
+      fail(`Materialization ditolak: ${coverage.error}`, {
+        statusCode: 422,
+        code: "PLAN_VERIFICATION_COVERAGE_MISSING",
+        details: { code: "PLAN_VERIFICATION_COVERAGE_MISSING", missingCoverage: coverage.missingCoverage },
+      });
+    }
+  }
 }
 
 function projectMap(projects) {
   return new Map(projects.map((project) => [project.id, project]));
 }
 
-function assertProjectsAvailable(objective, plan, projects) {
+function assertProjectsAvailable(objective, plan, projects, vaultRoot = null) {
   const byId = projectMap(projects);
   const required = new Set([...(objective.projectIds ?? []), ...(plan.projects ?? []), ...(plan.nodes ?? []).map((node) => node.projectId)]);
   const missing = [...required].filter((projectId) => !byId.has(projectId));
@@ -145,6 +164,33 @@ function assertProjectsAvailable(objective, plan, projects) {
       details: { code: "PROJECT_REPOSITORY_UNAVAILABLE", projects: unavailable },
     });
   }
+
+  if (plan.blueprints && vaultRoot) {
+    for (const [projectId, frozenBp] of Object.entries(plan.blueprints)) {
+      const project = byId.get(projectId);
+      if (project) {
+        const doc = readMarkdown(projectPagePath(vaultRoot, project.projectPage), vaultRoot);
+        const currentBp = resolveProjectBlueprint({
+          projectMetadata: doc?.metadata || {},
+          registryMetadata: project,
+          repositoryPath: project.repository,
+          vaultRoot,
+        });
+        if (
+          currentBp.id !== frozenBp.id ||
+          currentBp.policyVersion !== frozenBp.policyVersion ||
+          (frozenBp.policyFingerprint && currentBp.policyFingerprint && currentBp.policyFingerprint !== frozenBp.policyFingerprint)
+        ) {
+          fail(`Blueprint drift terdeteksi untuk project ${projectId}. Expected ${frozenBp.id} (v${frozenBp.policyVersion}), current ${currentBp.id} (v${currentBp.policyVersion}). Re-planning diperlukan.`, {
+            statusCode: 409,
+            code: "PROJECT_BLUEPRINT_DRIFT",
+            details: { code: "PROJECT_BLUEPRINT_DRIFT", projectId, frozen: frozenBp, current: currentBp },
+          });
+        }
+      }
+    }
+  }
+
   return byId;
 }
 
@@ -390,7 +436,7 @@ export function materializeApprovedPlan({
     const existing = getOrchestration(runsRoot, lockId, { plan });
     const idempotent = alreadyMaterialized({ existing, objective, plan, fingerprint });
     if (idempotent) return idempotent;
-    assertProjectsAvailable(objective, plan, projects);
+    assertProjectsAvailable(objective, plan, projects, vaultRoot);
     const allocation = nextIdentityByProject({ vaultRoot, plan, readDocument });
     const rendered = renderTasks({ objective, plan, orchestrationId: lockId, allocation, readDocument });
     const transaction = writeTaskTransaction({ vaultRoot, rendered });

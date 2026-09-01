@@ -8,6 +8,7 @@ import { withDurableLease } from "./durable-runtime.mjs";
 import { assignmentMetadata, defaultSkillRegistryPath, validateAssignedSkill, validatePlanSkillAssignments } from "./skill-assignment.mjs";
 import { readSkillRegistry } from "./skill-registry.mjs";
 import { skillsEnabled as skillsFeatureEnabled } from "./rollout-flags.mjs";
+import { validateVerificationCoverage } from "./verification-intent.mjs";
 
 const PLAN_STATE_PENDING = "PENDING_APPROVAL";
 const PLAN_STATE_APPROVED = "APPROVED";
@@ -418,6 +419,23 @@ export function approvePlan({ runsRoot, objectiveId, planId = null, expectedFing
     if (expectedFingerprint && expectedFingerprint !== fingerprint) fail("Plan fingerprint tidak cocok dengan revision aktif.", { statusCode: 409, code: "PLAN_FINGERPRINT_MISMATCH", details: { code: "PLAN_FINGERPRINT_MISMATCH", expected: fingerprint, received: expectedFingerprint } });
     const skillValidation = validatePlanSkillAssignments({ runsRoot, plan: active, checkCompatibility: false });
     if (!skillValidation.valid) fail("Plan skill assignment tidak lagi valid.", { statusCode: 422, code: "INVALID_PLAN_SKILLS", details: { code: "INVALID_PLAN_SKILLS", errors: skillValidation.errors } });
+    if (active.verificationIntent) {
+      const coverage = validateVerificationCoverage({
+        intent: active.verificationIntent,
+        planNodes: active.nodes,
+        integrationVerification: [
+          ...(Array.isArray(active.integration?.projectVerification) ? active.integration.projectVerification : []),
+          ...(Array.isArray(active.integration?.crossProjectVerification) ? active.integration.crossProjectVerification : []),
+        ],
+      });
+      if (!coverage.valid) {
+        fail(`Approval ditolak: ${coverage.error}`, {
+          statusCode: 422,
+          code: "PLAN_VERIFICATION_COVERAGE_MISSING",
+          details: { code: "PLAN_VERIFICATION_COVERAGE_MISSING", missingCoverage: coverage.missingCoverage },
+        });
+      }
+    }
     if (active.state === PLAN_STATE_SUPERSEDED || active.state === PLAN_STATE_CANCELLED) fail("Plan revision sudah tidak berlaku.", { statusCode: 409, code: "STALE_PLAN_REVISION", details: { code: "STALE_PLAN_REVISION", planId: active.planId } });
     const existing = getDecision(runsRoot, `decision-plan-approval-${active.planId}`);
     if (active.state === PLAN_STATE_APPROVED && existing?.state === "RESOLVED") return { objective: current, plan: active, decision: existing, alreadyApproved: true, planFingerprint: fingerprint };
