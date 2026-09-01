@@ -28,27 +28,30 @@ export function normalizeCapability(value) {
   return "CUSTOM_APPROVED";
 }
 
+export function scriptSupportsCapability(capability, script) {
+  const normalized = String(script ?? "").trim();
+  if (!normalized) return false;
+  if (capability === "TYPECHECK") return /^(?:typecheck|type-check|check-types|tsc)(?::[\w.-]+)?$/i.test(normalized);
+  if (capability === "LINT") return /^(?:lint|eslint|lint:all|golangci-lint)(?::[\w.-]+)?$/i.test(normalized);
+  if (capability === "BUILD") return /^(?:build|build:prod|bundle)(?::[\w.-]+)?$/i.test(normalized);
+  if (capability === "E2E") return /^(?:test:e2e|e2e|e2e:test|playwright|cypress)(?:[:.-][\w.-]+)?$/i.test(normalized);
+  if (capability === "INTEGRATION") return /^(?:test:integration|integration|test:int)(?::[\w.-]+)?$/i.test(normalized);
+  if (capability === "UNIT") return /^(?:test:unit|unit|test)(?::[\w.-]+)?$/i.test(normalized);
+  return capability === "CUSTOM_APPROVED";
+}
+
 function findScriptForCapability(capability, availableScripts = []) {
   const scripts = availableScripts.map((s) => String(s).trim());
-  if (capability === "TYPECHECK") {
-    return scripts.find((s) => /^(?:typecheck|type-check|check-types|tsc)$/i.test(s)) || null;
-  }
-  if (capability === "LINT") {
-    return scripts.find((s) => /^(?:lint|eslint|lint:all|golangci-lint)$/i.test(s)) || null;
-  }
-  if (capability === "BUILD") {
-    return scripts.find((s) => /^(?:build|build:prod|bundle)$/i.test(s)) || null;
-  }
-  if (capability === "E2E") {
-    return scripts.find((s) => /^(?:test:e2e|e2e|e2e:test|playwright|cypress)$/i.test(s)) || null;
-  }
-  if (capability === "INTEGRATION") {
-    return scripts.find((s) => /^(?:test:integration|integration|test:int)$/i.test(s)) || null;
-  }
-  if (capability === "UNIT") {
-    return scripts.find((s) => /^(?:test:unit|unit|test)$/i.test(s)) || null;
-  }
-  return null;
+  return scripts.find((candidate) => scriptSupportsCapability(capability, candidate)) || null;
+}
+
+function findRunnerForCapability(projectId, capability, runners = []) {
+  return runners.find((runner) => {
+    if (!runner || typeof runner !== "object") return false;
+    const runnerProjectId = String(runner.projectId ?? projectId);
+    const capabilities = Array.isArray(runner.capabilities) ? runner.capabilities.map(normalizeCapability) : [];
+    return runnerProjectId === projectId && capabilities.includes(capability) && String(runner.id ?? runner.runner ?? "").trim();
+  }) ?? null;
 }
 
 export function extractVerificationIntent({ request = "", structuredIntent = null, projectContexts = [] } = {}) {
@@ -105,7 +108,7 @@ export function extractVerificationIntent({ request = "", structuredIntent = nul
   }
 
   return resolveVerificationIntent({
-    intent: { contractVersion: 1, required, resolved: [], missing: [], status: "RESOLVED" },
+    intent: { contractVersion: 2, required, resolved: [], waived: [], missing: [], status: "RESOLVED" },
     projectContexts,
   });
 }
@@ -135,12 +138,23 @@ export function resolveVerificationIntent({ intent, projectContexts = [], regist
     const project = projectMap.get(item.projectId);
     const available = project?.scripts ?? [];
     const matchedScript = findScriptForCapability(item.capability, available);
+    const matchedRunner = findRunnerForCapability(item.projectId, item.capability, [
+      ...(Array.isArray(project?.registeredRunners) ? project.registeredRunners : []),
+      ...(Array.isArray(project?.verificationRunners) ? project.verificationRunners : []),
+      ...registeredRunners,
+    ]);
 
     if (matchedScript) {
       resolved.push({
         projectId: item.projectId,
         capability: item.capability,
         script: matchedScript,
+      });
+    } else if (matchedRunner) {
+      resolved.push({
+        projectId: item.projectId,
+        capability: item.capability,
+        runner: String(matchedRunner.id ?? matchedRunner.runner),
       });
     } else {
       missing.push({
@@ -155,9 +169,10 @@ export function resolveVerificationIntent({ intent, projectContexts = [], regist
   const status = missing.length > 0 ? "NEEDS_CLARIFICATION" : "RESOLVED";
 
   return {
-    contractVersion: 1,
+    contractVersion: 2,
     required: baseRequired,
     resolved,
+    waived: Array.isArray(intent?.waived) ? intent.waived : [],
     missing,
     status,
   };
@@ -193,11 +208,46 @@ export function validateVerificationCoverage({ intent, planNodes = [], integrati
   }
 
   const resolvedList = Array.isArray(intent.resolved) ? intent.resolved : [];
+  const waivedList = Array.isArray(intent.waived) ? intent.waived : [];
+  if (intent.contractVersion === 2) {
+    const requiredList = Array.isArray(intent.required) ? intent.required : [];
+    const invalidResolution = resolvedList.find((item) => item.script && !scriptSupportsCapability(item.capability, item.script));
+    if (invalidResolution) {
+      return {
+        valid: false,
+        code: "VERIFICATION_CAPABILITY_MISMATCH",
+        missingCoverage: [invalidResolution],
+        error: `Script ${invalidResolution.script} tidak cocok dengan capability ${invalidResolution.capability}.`,
+      };
+    }
+    const invalidWaiver = waivedList.find((item) => !String(item.reason ?? "").trim() || !String(item.waivedBy ?? "").trim() || !Number.isFinite(Date.parse(item.waivedAt)));
+    if (invalidWaiver) {
+      return {
+        valid: false,
+        code: "VERIFICATION_WAIVER_INVALID",
+        missingCoverage: [invalidWaiver],
+        error: "Waiver verifikasi wajib memiliki reason, waivedBy, dan waivedAt yang valid.",
+      };
+    }
+    const incorrectlyAccounted = requiredList.filter((required) => {
+      const matches = (item) => item.projectId === required.projectId && item.capability === required.capability;
+      return resolvedList.filter(matches).length + waivedList.filter(matches).length !== 1;
+    });
+    if (incorrectlyAccounted.length > 0) {
+      return {
+        valid: false,
+        code: "VERIFICATION_REQUIREMENT_UNACCOUNTED",
+        missingCoverage: incorrectlyAccounted,
+        error: `Requirement verifikasi wajib memiliki tepat satu resolution atau waiver: ${incorrectlyAccounted.map((item) => `${item.projectId}:${item.capability}`).join(", ")}`,
+      };
+    }
+  }
   if (resolvedList.length === 0) {
     return { valid: true, missingCoverage: [] };
   }
 
   const executedScriptsByProject = new Map();
+  const globalIntegrationTargets = new Set();
 
   const addExecuted = (projectId, script) => {
     if (!projectId || !script) return;
@@ -221,20 +271,24 @@ export function validateVerificationCoverage({ intent, planNodes = [], integrati
   for (const item of integrationVerification) {
     const text = String(item ?? "").trim();
     if (text.includes(":")) {
-      const [pid, script] = text.split(":");
-      addExecuted(pid, script);
-    }
+      const separator = text.indexOf(":");
+      const pid = text.slice(0, separator);
+      const script = text.slice(separator + 1);
+      if (planNodes.some((node) => String(node?.projectId ?? "") === pid)) addExecuted(pid, script);
+      else globalIntegrationTargets.add(text);
+    } else if (text) globalIntegrationTargets.add(text);
   }
 
   const missingCoverage = [];
 
   for (const req of resolvedList) {
     const executed = executedScriptsByProject.get(req.projectId);
-    if (!executed || !executed.has(req.script)) {
+    const target = req.script ?? req.runner;
+    if (!target || (!executed?.has(target) && !globalIntegrationTargets.has(target) && !globalIntegrationTargets.has(`${req.projectId}:${target}`))) {
       missingCoverage.push({
         projectId: req.projectId,
         capability: req.capability,
-        script: req.script,
+        script: target,
       });
     }
   }
@@ -289,11 +343,31 @@ export function resolveVerificationDecision({
   const resolved = Array.isArray(intent.resolved) ? [...intent.resolved] : [];
   const waived = Array.isArray(intent.waived) ? [...intent.waived] : [];
   let missing = Array.isArray(intent.missing) ? [...intent.missing] : [];
+  const targetRequirement = missing.find((item) => item.projectId === targetProjectId && item.capability === targetCapability)
+    ?? required.find((item) => item.projectId === targetProjectId && item.capability === targetCapability);
+  if (action !== "CANCEL" && !targetRequirement) {
+    throw new Error(`Requirement verifikasi tidak ditemukan: ${targetProjectId}:${targetCapability}`);
+  }
+  const project = projectContexts.find((item) => String(item?.projectId ?? item?.id ?? "") === targetProjectId) ?? null;
+  const registeredScripts = project ? new Set([
+    ...(Array.isArray(project.verification) ? project.verification : []),
+    ...(Array.isArray(project.verificationScripts) ? project.verificationScripts : []),
+    ...(Array.isArray(project.availableScripts) ? project.availableScripts : []),
+  ].map(String)) : null;
 
   if (action === "SELECT_SCRIPT") {
     const script = String(decision.selectedTarget ?? decision.script ?? "").trim();
     if (!script) {
       throw new Error("selectedTarget (script) wajib diisi untuk action SELECT_SCRIPT.");
+    }
+    if (!project) {
+      throw new Error(`Registry project tidak tersedia untuk memvalidasi script ${targetProjectId}.`);
+    }
+    if (!registeredScripts.has(script)) {
+      throw new Error(`Script verifikasi tidak terdaftar untuk project ${targetProjectId}: ${script}`);
+    }
+    if (!scriptSupportsCapability(targetCapability, script)) {
+      throw new Error(`Script ${script} tidak cocok dengan capability ${targetCapability}.`);
     }
     missing = missing.filter((m) => !(m.projectId === targetProjectId && m.capability === targetCapability));
     if (!resolved.some((r) => r.projectId === targetProjectId && r.capability === targetCapability && r.script === script)) {
@@ -310,6 +384,16 @@ export function resolveVerificationDecision({
     const runner = String(decision.selectedTarget ?? decision.runner ?? "").trim();
     if (!runner) {
       throw new Error("selectedTarget (runner) wajib diisi untuk action SELECT_RUNNER.");
+    }
+    if (!project) {
+      throw new Error(`Registry project tidak tersedia untuk memvalidasi runner ${targetProjectId}.`);
+    }
+    const registeredRunners = new Set([
+      ...(Array.isArray(project?.registeredRunners) ? project.registeredRunners : []),
+      ...(Array.isArray(project?.verificationRunners) ? project.verificationRunners : []),
+    ].map((item) => String(item?.id ?? item)));
+    if (!registeredRunners.has(runner)) {
+      throw new Error(`Runner verifikasi tidak terdaftar untuk project ${targetProjectId}: ${runner}`);
     }
     missing = missing.filter((m) => !(m.projectId === targetProjectId && m.capability === targetCapability));
     if (!resolved.some((r) => r.projectId === targetProjectId && r.capability === targetCapability)) {
@@ -361,4 +445,3 @@ export function resolveVerificationDecision({
     status,
   };
 }
-

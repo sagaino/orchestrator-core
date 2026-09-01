@@ -46,14 +46,16 @@ fs.writeFileSync(path.join(runsRoot, `${runId}.json`), JSON.stringify({
 try {
   createObjective({ runsRoot, record: { schemaVersion: 1, revision: 0, objectiveId, mode: "EXISTING_PROJECT", state: "DONE", request: "Certify delivery fixture.", requestedBy: "delivery-reviewer", projectIds: ["delivery-project"], freshProject: null, activePlanId: planId, activeOrchestrationId: orchestrationId, budget, createdAt: timestamp, updatedAt: timestamp } });
   createPlan({ runsRoot, record: {
-    schemaVersion: 1, revision: 1, planId, objectiveId, state: "APPROVED", summary: "Delivery certification fixture.", architectureDecisions: [], assumptions: [], clarificationNeeded: false, clarificationQuestion: null, projects: ["delivery-project"],
+    schemaVersion: 2, revision: 1, planId, objectiveId, state: "APPROVED", summary: "Delivery certification fixture.", architectureDecisions: [], assumptions: [], clarificationNeeded: false, clarificationQuestion: null, projects: ["delivery-project"],
     verificationIntent: {
+      contractVersion: 2,
       status: "RESOLVED",
-      requested: [{ capability: "UNIT", script: "npm test", source: "PROJECT_DEFAULT" }],
-      resolved: [{ capability: "UNIT", script: "npm test", source: "PROJECT_DEFAULT" }],
+      required: [{ projectId: "delivery-project", capability: "UNIT", requestedAs: "test", source: "PROJECT_DEFAULT" }],
+      resolved: [{ projectId: "delivery-project", capability: "UNIT", script: "test", source: "PROJECT_DEFAULT" }],
+      waived: [],
       missing: [],
     },
-    nodes: [{ nodeId: "N01", title: "Deliver fixture", purpose: "Complete delivery fixture.", projectId: "delivery-project", role: "BACKEND", type: "IMPLEMENTATION", dependsOn: [], acceptanceCriteria: ["Delivery is complete."], allowedPaths: ["src/App.tsx"], verification: ["npm test"], risk: "LOW", complexity: "LOW", requiresChanges: true, canRunInParallel: false, writeConflictGroup: null, contextFrom: [], skills: [] }],
+    nodes: [{ nodeId: "N01", title: "Deliver fixture", purpose: "Complete delivery fixture.", projectId: "delivery-project", role: "BACKEND", type: "IMPLEMENTATION", dependsOn: [], acceptanceCriteria: ["Delivery is complete."], allowedPaths: ["src/App.tsx"], verification: ["test"], risk: "LOW", complexity: "LOW", requiresChanges: true, canRunInParallel: false, writeConflictGroup: null, contextFrom: [], skills: [] }],
     integration: { required: false, projectVerification: [], crossProjectVerification: [], previewRequired: true }, risk: "LOW", complexity: "LOW", approvedBy: "delivery-reviewer", approvedAt: timestamp, createdAt: timestamp, updatedAt: timestamp, planFingerprint,
   }, validationOptions: { knownProjectIds: ["delivery-project"], budget } });
   createOrchestration({ runsRoot, record: { schemaVersion: 1, revision: 0, orchestrationId, objectiveId, planId, state: "DONE", planFingerprint, nodes: { N01: { state: "DONE", taskId: "DELIVERY-001", jobId: null, runId, attempt: 1, blockedBy: [], lastError: null } }, integration: { state: "NOT_READY", projectBaselines: {}, artifacts: [], verification: [], rollback: null }, usage: { totalTokens: 10, agentInvocations: 1, retries: 0 }, createdAt: timestamp, updatedAt: timestamp, materialization: { state: "MATERIALIZED", materializedAt: timestamp, tasks: [] } }, validationOptions: { plan: { nodes: [{ nodeId: "N01" }] } } });
@@ -71,6 +73,16 @@ try {
   assert.equal(verifyDeliveryCertification({ bundlePath: certificate.bundlePath }).valid, true);
   fs.appendFileSync(certificate.bundlePath, "tamper\n");
   assert.equal(verifyDeliveryCertification({ bundlePath: certificate.bundlePath }).valid, false);
+
+  const runPath = path.join(runsRoot, `${runId}.json`);
+  const runWithoutRequiredEvidence = JSON.parse(fs.readFileSync(runPath, "utf8"));
+  runWithoutRequiredEvidence.execution.verification = [{ command: "npm run build", status: "PASS", exitCode: 0 }];
+  fs.writeFileSync(runPath, JSON.stringify(runWithoutRequiredEvidence, null, 2));
+  const missingRequiredEvidence = createDeliveryCertification({ runsRoot, objectiveId, now: new Date("2026-08-23T01:15:00.000Z") });
+  assert.equal(missingRequiredEvidence.blockers.includes("VERIFICATION_INTENT_COMPLETE"), true);
+  assert.equal(missingRequiredEvidence.checks.find((check) => check.id === "VERIFICATION_INTENT_COMPLETE").evidence.executionEvidence[0].passed, false);
+  runWithoutRequiredEvidence.execution.verification = [{ command: "npm test", status: "PASS", exitCode: 0 }];
+  fs.writeFileSync(runPath, JSON.stringify(runWithoutRequiredEvidence, null, 2));
 
   // Backend-only implementation nodes use automated/API evidence and must
   // not be blocked merely because they have no screenshot capture.

@@ -118,7 +118,7 @@ const invalidEvidence = { ...diagnosis("FRONTEND", ["frontend"]), evidence: [{ .
 assert.ok(validateCrossProjectDiagnostic(invalidEvidence, objective).some((message) => message.includes("reproduction")));
 
 const contractPlan = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   planId: "plan-obj-linked-incident-r1",
   objectiveId: objective.objectiveId,
   revision: 1,

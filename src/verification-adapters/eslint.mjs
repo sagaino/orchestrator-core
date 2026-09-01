@@ -42,23 +42,13 @@ export function parseEslintOutput({
   const text = typeof output === "string" ? output.trim() : "";
 
   if (!text) {
-    if (exitCode === 0) {
-      return {
-        adapter: "eslint",
-        status: "PARSED",
-        format: "NONE",
-        findings: [],
-        rawFingerprint,
-        reason: null,
-      };
-    }
     return {
       adapter: "eslint",
       status: "UNPARSEABLE",
       format: "NONE",
       findings: [],
       rawFingerprint,
-      reason: "Empty output with non-zero exit code",
+      reason: `Empty output is not valid ${expectedFormat} evidence`,
     };
   }
 
@@ -95,7 +85,7 @@ export function parseEslintOutput({
   }
 
   // 2. Check stylish text output
-  const stylishFindings = parseEslintStylishText(text, repositoryRoot);
+  const stylishFindings = expectedFormat === "ESLINT_STYLISH" ? parseEslintStylishText(text, repositoryRoot) : [];
   if (stylishFindings.length > 0) {
     return {
       adapter: "eslint",
@@ -107,26 +97,16 @@ export function parseEslintOutput({
     };
   }
 
-  // If exitCode === 0 and output contains no error keywords
-  if (exitCode === 0 && !text.toLowerCase().includes("error") && !text.toLowerCase().includes("syntaxerror")) {
-    return {
-      adapter: "eslint",
-      status: "PARSED",
-      format: "NONE",
-      findings: [],
-      rawFingerprint,
-      reason: null,
-    };
-  }
-
-  // Otherwise, output is malformed / unexpected prose / stack trace
+  // Any non-empty output that is neither valid ESLint JSON nor recognized
+  // stylish output is unsafe to compare. A successful exit code is not proof
+  // that an adapter produced the expected evidence contract.
   return {
     adapter: "eslint",
     status: "UNPARSEABLE",
     format: "NONE",
     findings: [],
     rawFingerprint,
-    reason: "Malformed or unparseable ESLint output",
+    reason: `Malformed or unparseable ESLint output (expected ${expectedFormat})`,
   };
 }
 

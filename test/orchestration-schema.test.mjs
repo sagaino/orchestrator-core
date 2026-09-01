@@ -132,6 +132,22 @@ const baseDecision = {
 
 assert.equal(validateObjectiveRecord(baseObjective).valid, true);
 assert.equal(validatePlanRecord(basePlan, planOptions).valid, true);
+const governedPlanV2 = {
+  ...basePlan,
+  schemaVersion: 2,
+  verificationIntent: {
+    contractVersion: 2,
+    required: [{ projectId: "shop", capability: "UNIT", requestedAs: "test", source: "PLAN" }],
+    resolved: [{ projectId: "shop", capability: "UNIT", requestedAs: "test", source: "PLAN", script: "test" }],
+    waived: [],
+    missing: [],
+    status: "RESOLVED",
+  },
+};
+assert.equal(validatePlanRecord(governedPlanV2, planOptions).valid, true, "new plans persist and validate as contract v2");
+assert.equal(validatePlanRecord({ ...governedPlanV2, verificationIntent: undefined }, planOptions).valid, false, "contract v2 fails closed without governance intent");
+assert.equal(validatePlanRecord({ ...governedPlanV2, verificationIntent: { ...governedPlanV2.verificationIntent, contractVersion: 1 } }, planOptions).valid, false, "contract v2 rejects legacy verification intent");
+assert.equal(validatePlanRecord(basePlan, planOptions).valid, true, "historical contract v1 remains readable");
 const widerThanBudgetPlan = {
   ...basePlan,
   nodes: [
@@ -150,10 +166,11 @@ const widerThanBudgetPlan = {
 assert.equal(validatePlanRecord(widerThanBudgetPlan, planOptions).valid, true, "parallel width may exceed the worker ceiling and be queued by the scheduler");
 assert.equal(validateOrchestrationRecord(baseOrchestration, { plan: basePlan }).valid, true);
 assert.equal(validateDecisionRecord(baseDecision).valid, true);
+assert.equal(validateDecisionRecord({ ...baseDecision, type: "VERIFICATION_DECISION" }).valid, true);
 
 const invalidCases = [
   ["objective future schema", () => validateObjectiveRecord({ ...baseObjective, schemaVersion: 2 })],
-  ["plan future schema", () => validatePlanRecord({ ...basePlan, schemaVersion: 2 }, planOptions)],
+  ["plan future schema", () => validatePlanRecord({ ...basePlan, schemaVersion: 3 }, planOptions)],
   ["orchestration future schema", () => validateOrchestrationRecord({ ...baseOrchestration, schemaVersion: 2 })],
   ["decision future schema", () => validateDecisionRecord({ ...baseDecision, schemaVersion: 2 })],
   ["cycle", () => validatePlanRecord({ ...basePlan, nodes: [{ ...diagnosticNode, dependsOn: ["N02"] }, implementationNode] }, planOptions)],

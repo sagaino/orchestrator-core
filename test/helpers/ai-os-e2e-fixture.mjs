@@ -27,7 +27,7 @@ export async function createAiOsE2eHarness({ port = 0, env = {} } = {}) {
     version: "1.0.0",
     scripts: {
       typecheck: "node --version",
-      lint: "node -e \"console.log('lint ok')\"",
+      lint: "node -e \"console.log('[]')\"",
       build: "node --version",
     },
     devDependencies: {

@@ -72,7 +72,7 @@ try {
     skills: [],
   };
   const plan = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     planId,
     objectiveId,
     revision: 1,
@@ -85,9 +85,11 @@ try {
     projects: ["shop"],
     nodes: [node],
     verificationIntent: {
+      contractVersion: 2,
       status: "RESOLVED",
-      requested: [{ capability: "UNIT", script: "test", source: "PROJECT_DEFAULT" }],
-      resolved: [{ capability: "UNIT", script: "test", source: "PROJECT_DEFAULT" }],
+      required: [{ projectId: "shop", capability: "UNIT", requestedAs: "test", source: "PROJECT_DEFAULT" }],
+      resolved: [{ projectId: "shop", capability: "UNIT", script: "test", source: "PROJECT_DEFAULT" }],
+      waived: [],
       missing: [],
     },
     integration: { required: true, projectVerification: ["test"], crossProjectVerification: [], previewRequired: false },

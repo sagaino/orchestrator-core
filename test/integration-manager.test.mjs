@@ -33,7 +33,7 @@ function createFixture(objectiveId, { verificationExitCode = 0, n02State = "DONE
     `| integration-project | [[02-Projects/integration-project/project.md]] | ${repository} | agy | false | ${repository}/graph.json |`,
   ].join("\n"));
   const plan = {
-    schemaVersion: 1, revision: 1, planId: `plan-${objectiveId}-r1`, objectiveId, state: "APPROVED",
+    schemaVersion: 2, revision: 1, planId: `plan-${objectiveId}-r1`, objectiveId, state: "APPROVED",
     summary: "Sequential integration fixture.", architectureDecisions: [], assumptions: [], clarificationNeeded: false, clarificationQuestion: null,
     projects: ["integration-project"], integration: { required: true, projectVerification: ["test"], crossProjectVerification: [], previewRequired: false }, risk: "LOW", complexity: "LOW",
     nodes: [
@@ -42,6 +42,12 @@ function createFixture(objectiveId, { verificationExitCode = 0, n02State = "DONE
       { nodeId: "N03", title: "Run integration", purpose: "Run the aggregate integration verification.", projectId: "integration-project", role: "INTEGRATION", type: "INTEGRATION", dependsOn: ["N02"], acceptanceCriteria: ["Integration verification is recorded."], allowedPaths: [], verification: ["test"], risk: "LOW", complexity: "LOW", requiresChanges: false, canRunInParallel: false, writeConflictGroup: null, contextFrom: ["N02"], skills: [] },
     ],
     approvedBy: "human:integration", approvedAt: timestamp, createdAt: timestamp, updatedAt: timestamp,
+    verificationIntent: {
+      contractVersion: 2,
+      required: [{ projectId: "integration-project", capability: "UNIT", requestedAs: "test", source: "PLAN" }],
+      resolved: [{ projectId: "integration-project", capability: "UNIT", requestedAs: "test", source: "PLAN", script: "test" }],
+      waived: [], missing: [], status: "RESOLVED",
+    },
   };
   if (repairCycle !== null) plan.repair = { cycle: repairCycle, maxCycles: maxRepairCycles };
   plan.planFingerprint = planFingerprint(plan);

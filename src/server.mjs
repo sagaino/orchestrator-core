@@ -2,7 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { DEFAULT_VAULT, listProjects, buildContext, buildPlan, readMarkdown, loadRegistry } from "./core.mjs";
+import { DEFAULT_VAULT, listProjects, buildContext, buildPlan, readMarkdown, loadRegistry, getPackageScripts } from "./core.mjs";
 import { validateTaskReadiness } from "./task-readiness.mjs";
 import { requestTask } from "./task-intake.mjs";
 import { startTaskRun, recoverTaskRun, requestChangesTaskRun, rejectTaskRun, retryTaskRun } from "./task-workflow.mjs";
@@ -40,9 +40,9 @@ import { createObjectiveIntake, getObjectiveIntake, listObjectiveIntake, objecti
 import { approveFreshProjectGenesis, auditGenesisApproval } from "./fresh-project-genesis.mjs";
 import { getObjective, updateObjective } from "./objective-store.mjs";
 import { buildObjectiveGraph } from "./objective-graph.mjs";
-import { listDecisions, listDecisionInbox } from "./decision-store.mjs";
+import { createDecision, listDecisions, listDecisionInbox } from "./decision-store.mjs";
 import { listPlans, updatePlan, getPlan } from "./plan-store.mjs";
-import { approvePlan, assignPlanSkills, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
+import { approvePlan, assignPlanSkills, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planFingerprint, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
 import { defaultSkillRegistryPath, listInstalledSkills, updateSkillEnabled } from "./skill-registry.mjs";
 import { projectSignalsForProjects } from "./skill-assignment.mjs";
 import { materializeApprovedPlan } from "./task-materializer.mjs";
@@ -62,6 +62,19 @@ const IDEMPOTENT_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const RUNTIME_VERSION = (() => {
   try { return JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version; } catch { return "unknown"; }
 })();
+
+function verificationDecisionProjectContexts(vaultRoot, objective) {
+  const projects = listProjects(vaultRoot).projects;
+  return (objective.projectIds ?? []).map((projectId) => {
+    const project = projects.find((candidate) => candidate.id === projectId);
+    const scripts = project?.repository ? Object.keys(getPackageScripts(project.repository)) : [];
+    return {
+      projectId,
+      verificationScripts: scripts,
+      registeredRunners: project?.verificationRunners ?? project?.registeredRunners ?? [],
+    };
+  });
+}
 
 function validateRouteIdentifiers(params) {
   for (const name of ["id", "projectId", "evidenceId", "skillId"]) {
@@ -1006,6 +1019,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
 
       const updatedIntent = resolveVerificationDecision({
         intent: existingIntent,
+        projectContexts: verificationDecisionProjectContexts(vaultRoot, objective),
         decision: {
           action: body?.action,
           projectId: body?.projectId,
@@ -1022,10 +1036,11 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
           runsRoot,
           planId: activePlan.planId,
           expectedRevision: activePlan.revision,
-          update: (record) => ({
-            ...record,
-            verificationIntent: updatedIntent,
-            nodes: record.nodes.map((node) => {
+          update: (record) => {
+            const next = {
+              ...record,
+              verificationIntent: updatedIntent,
+              nodes: record.nodes.map((node) => {
               if (node.projectId === body?.projectId && body?.action === "SELECT_SCRIPT") {
                 const currentVer = Array.isArray(node.verification) ? node.verification : [];
                 if (!currentVer.includes(body.selectedTarget)) {
@@ -1033,8 +1048,10 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
                 }
               }
               return node;
-            }),
-          }),
+              }),
+            };
+            return { ...next, planFingerprint: planFingerprint(next) };
+          },
         });
       } else {
         updateObjective({
@@ -1047,6 +1064,38 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
           }),
         });
       }
+
+      const recordedAt = new Date();
+      const verificationDecision = createDecision({
+        runsRoot,
+        record: {
+          schemaVersion: 1,
+          revision: 0,
+          decisionId: `decision-verification-${objective.objectiveId}-${randomUUID()}`,
+          objectiveId: objective.objectiveId,
+          nodeId: null,
+          runId: null,
+          type: "VERIFICATION_DECISION",
+          state: body?.action === "CANCEL" ? "CANCELLED" : "RESOLVED",
+          evidence: {
+            planId: updatedPlan?.planId ?? null,
+            projectId: body?.projectId ?? null,
+            capability: body?.capability ?? null,
+            selectedTarget: body?.selectedTarget ?? body?.script ?? body?.runner ?? null,
+            reason: body?.reason ?? null,
+            resultingStatus: updatedIntent.status,
+          },
+          requestedAction: "Resolve an explicit verification requirement",
+          allowedChoices: ["SELECT_SCRIPT", "SELECT_RUNNER", "WAIVE", "CANCEL"],
+          creator: "SYSTEM",
+          createdAt: recordedAt.toISOString(),
+          resolution: body?.action === "CANCEL" ? null : {
+            action: body?.action,
+            resolvedBy: req.operatorIdentity ?? "local:operator",
+            resolvedAt: recordedAt.toISOString(),
+          },
+        },
+      });
 
       appendAuditEntry(runsRoot, {
         event: "VERIFICATION_DECISION_RECORDED",
@@ -1064,7 +1113,7 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
         verificationIntent: updatedIntent,
       });
 
-      sendJson(res, 200, { success: true, data: { plan: updatedPlan, verificationIntent: updatedIntent } });
+      sendJson(res, 200, { success: true, data: { plan: updatedPlan, verificationIntent: updatedIntent, decision: verificationDecision } });
     } catch (error) {
       sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }

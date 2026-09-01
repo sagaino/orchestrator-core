@@ -20,7 +20,7 @@ const objective = {
 };
 
 const plan = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   planId: "plan-obj-shop-r1",
   objectiveId: "obj-shop",
   revision: 1,
@@ -113,7 +113,7 @@ assert.ok((calls[0].args[1].match(/CONTEXT-MARKER/g) || []).length < 500, "proje
 
 const clarification = await decomposeProject({
   objective,
-  processRunner: async () => ({ exitCode: 0, stdoutTail: JSON.stringify({ schemaVersion: 1, clarificationNeeded: true, clarificationQuestion: "Project mana yang menjadi source of truth?" }) }),
+  processRunner: async () => ({ exitCode: 0, stdoutTail: JSON.stringify({ schemaVersion: 2, clarificationNeeded: true, clarificationQuestion: "Project mana yang menjadi source of truth?" }) }),
 });
 assert.equal(clarification.status, "NEEDS_CLARIFICATION");
 assert.equal(clarification.objectiveState, "NEEDS_CLARIFICATION");

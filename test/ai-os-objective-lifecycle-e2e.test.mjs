@@ -1,19 +1,101 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { createAiOsE2eHarness } from "./helpers/ai-os-e2e-fixture.mjs";
 import { planObjective } from "../src/objective-planning.mjs";
 import { getObjective } from "../src/objective-store.mjs";
-import { getPlan } from "../src/plan-store.mjs";
 import { schedulerTick } from "../src/orchestration-scheduler.mjs";
 import { listJobs, claimNextJob, updateJob, JOB_STATES } from "../src/job-queue.mjs";
-import { updateOrchestration, getOrchestration } from "../src/orchestration-store.mjs";
 import { verifyAuditChain } from "../src/audit-chain.mjs";
-import { buildDeliveryCertificationEvidence, createDeliveryCertification } from "../src/delivery-certification.mjs";
+import { buildDeliveryCertificationEvidence } from "../src/delivery-certification.mjs";
+import { executeRun } from "../src/executor.mjs";
+import { startTaskRun } from "../src/task-workflow.mjs";
+import { processClaimedJob } from "../src/daemon.mjs";
+import { acceptRun, retrospectRun } from "../src/knowledge-workflow.mjs";
+import { getRun } from "../src/run-manager.mjs";
+import { readMarkdown, buildContext, buildPlan } from "../src/core.mjs";
+import { validateTaskReadiness } from "../src/task-readiness.mjs";
 
 console.log("Running ai-os-objective-lifecycle-e2e.test.mjs...");
 
 const harness = await createAiOsE2eHarness();
+const taskServices = { readMarkdown, buildContext, buildPlan, validateTaskReadiness };
+
+async function localProcessRunner(invocation) {
+  try {
+    const stdout = execFileSync(invocation.command, invocation.args ?? [], {
+      cwd: invocation.cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { exitCode: 0, stdoutTail: stdout ?? "", stderrTail: "", finalResult: null };
+  } catch (error) {
+    return {
+      exitCode: Number.isInteger(error.status) ? error.status : 1,
+      stdoutTail: String(error.stdout ?? ""),
+      stderrTail: String(error.stderr ?? error.message ?? ""),
+      finalResult: null,
+    };
+  }
+}
+
+function deterministicExecutor({ relativePath, regression = false }) {
+  return (options) => executeRun({
+    ...options,
+    maxAutomaticRecoveryAttempts: 0,
+    workspaceProcessRunner: localProcessRunner,
+    dependencyReconciler: async () => ({ skipped: true, reason: "Fixture dependencies are frozen." }),
+    agentInvocationBuilder: () => ({ command: "fixture-agent", args: [] }),
+    processRunner: async (invocation) => {
+      if (String(invocation.stage).includes("agent")) {
+        const target = path.join(invocation.cwd, relativePath);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, "export const fixtureChange = true;\n");
+        return { exitCode: 0, stdoutTail: "", stderrTail: "", finalResult: { status: "ok" } };
+      }
+      if (String(invocation.stage).startsWith("baseline-verification:lint")) {
+        return { exitCode: 0, stdoutTail: "[]", stderrTail: "", finalResult: null };
+      }
+      if (String(invocation.stage).startsWith("verification:") && String(invocation.stage).includes("lint")) {
+        const findings = regression ? [{
+          filePath: path.join(invocation.cwd, relativePath),
+          messages: [{ ruleId: "fixture/no-regression", severity: 2, line: 1, column: 1, message: "Fixture regression" }],
+        }] : [];
+        return { exitCode: regression ? 1 : 0, stdoutTail: JSON.stringify(findings), stderrTail: "", finalResult: null };
+      }
+      return { exitCode: 0, stdoutTail: "", stderrTail: "", finalResult: null };
+    },
+  });
+}
+
+async function runClaimedProductionJob(job, executor) {
+  return processClaimedJob({
+    vaultRoot: harness.vaultRoot,
+    runsRoot: harness.runsRoot,
+    job,
+    services: taskServices,
+    notifier: async () => ({ created: false, notification: null }),
+    workflow: (options) => startTaskRun({
+      ...options,
+      executor,
+      retrospective: (retrospectiveOptions) => retrospectRun({
+        ...retrospectiveOptions,
+        proposalGenerator: async () => ({
+          classification: "PROJECT_ONLY",
+          confidence: 1,
+          title: "Deterministic E2E fixture",
+          type: "snippet",
+          targetPath: null,
+          summary: "Production lifecycle E2E fixture.",
+          rationale: "Test-only project-local change.",
+          considerations: [],
+          relatedKnowledge: [],
+        }),
+      }),
+    }),
+  });
+}
 
 try {
   // === Scenario 1: Happy Path through Complete Lifecycle ===
@@ -42,7 +124,7 @@ try {
       return {
         status: "PLAN_REVIEW",
         plan: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           planId: `plan-${objective.objectiveId}-r1`,
           objectiveId: objective.objectiveId,
           revision: 1,
@@ -130,68 +212,29 @@ try {
   const claim = claimNextJob(harness.runsRoot);
   assert.ok(claim);
 
-  // Write simulated run manifest
-  const runId = `run-${objectiveId}-N1`;
-  fs.writeFileSync(path.join(harness.runsRoot, `${runId}.json`), JSON.stringify({
-    schemaVersion: 1,
-    runId,
-    taskId: queuedJob.taskId,
-    projectId: "frontend-app",
-    task: { id: queuedJob.taskId, title: "Implement status badge", path: `02-Projects/frontend-app/tasks/${queuedJob.taskId}.md` },
-    plan: {
-      id: "P1",
-      verificationCommands: ["typecheck", "lint", "build"],
-      allowedPaths: ["src/components/StatusBadge.tsx"],
-      requiresChanges: true,
-    },
-    project: {
-      id: "frontend-app",
-      repository: harness.frontendRepo,
-      verificationPolicies: {
-        lint: { mode: "NO_NEW_FINDINGS", adapter: "eslint" },
-      },
-    },
-    execution: {
-      workspace: {
-        path: path.join(harness.runsRoot, "workspaces", "frontend-app", runId),
-        baseCommit: "abcdef123456",
-        state: "CLEANED",
-      },
-      verification: [
-        { command: "typecheck", exitCode: 0, status: "PASS", passed: true },
-        { command: "lint", exitCode: 0, status: "PASS_NO_REGRESSION", passed: true, delta: { new: 0, resolved: 0, unchanged: 0 } },
-        { command: "build", exitCode: 0, status: "PASS", passed: true },
-      ],
-    },
-    knowledge: {
-      approval: { approvedAt: new Date().toISOString(), approvedBy: "operator", destination: "WIKI" },
-      sync: { syncedAt: new Date().toISOString(), sourcePath: "01-Knowledge/patterns/status-badge.md" },
-    },
-    state: "DONE",
-  }, null, 2));
+  const productionResult = await runClaimedProductionJob(
+    claim,
+    deterministicExecutor({ relativePath: "src/components/StatusBadge.tsx" }),
+  );
+  assert.equal(productionResult.error, undefined);
+  const runId = productionResult.manifest.runId;
+  const reviewRun = getRun(harness.runsRoot, runId);
+  assert.equal(reviewRun.state, "RETROSPECTIVE");
+  assert.equal(reviewRun.execution.baselineVerification.lint.parseResult.status, "PARSED");
+  assert.equal(reviewRun.execution.verification.find((item) => item.command.includes("lint")).status, "PASS_NO_REGRESSION");
 
-  // Mark job as DONE
-  updateJob(harness.runsRoot, queuedJob.jobId, (j) => ({
-    ...j,
-    state: JOB_STATES.DONE,
-    runId,
-  }));
-
-  // Update orchestration nodes
-  const orchestration = getOrchestration(harness.runsRoot, matRes.data.data.orchestration.orchestrationId, { plan: planResult.plan });
-  updateOrchestration({
+  const completedRun = await acceptRun({
+    vaultRoot: harness.vaultRoot,
     runsRoot: harness.runsRoot,
-    orchestrationId: orchestration.orchestrationId,
-    expectedRevision: orchestration.revision,
-    validationOptions: { plan: planResult.plan },
-    update: (record) => ({
-      ...record,
-      state: "DONE",
-      nodes: Object.fromEntries(
-        Object.entries(record.nodes || {}).map(([id, n]) => [id, { ...n, state: "DONE", runId }])
-      ),
-    }),
+    runId,
+    approvedBy: "system:e2e-autopilot",
+    decision: "PROJECT_ONLY",
+    autoCommit: true,
   });
+  assert.equal(completedRun.state, "DONE");
+  assert.equal(completedRun.execution.workspace.state, "CLEANED");
+  updateJob(harness.runsRoot, queuedJob.jobId, { state: JOB_STATES.DONE, runId, runState: "DONE" });
+  schedulerTick({ vaultRoot: harness.vaultRoot, runsRoot: harness.runsRoot, enabled: true });
 
   // Delivery certification check
   const deliveryCert = buildDeliveryCertificationEvidence({
@@ -411,58 +454,23 @@ try {
     headers: { "idempotency-key": "mat-reg-1" },
     body: { planFingerprint: regPlanRes.plan.planFingerprint },
   });
+  assert.equal(regMatRes.status, 201);
 
-  // Create simulated run with FAIL_REGRESSION
-  const regRunId = `run-${regObjId}-N1`;
-  fs.writeFileSync(path.join(harness.runsRoot, `${regRunId}.json`), JSON.stringify({
-    schemaVersion: 1,
-    runId: regRunId,
-    taskId: "TASK-002",
-    projectId: "frontend-app",
-    task: { id: "TASK-002", title: "Regression node", path: "02-Projects/frontend-app/tasks/TASK-002.md" },
-    plan: {
-      id: "P1",
-      verificationCommands: ["typecheck", "lint", "build"],
-      allowedPaths: ["src/components/Regression.tsx"],
-      requiresChanges: true,
-    },
-    project: {
-      id: "frontend-app",
-      repository: harness.frontendRepo,
-      verificationPolicies: {
-        lint: { mode: "NO_NEW_FINDINGS", adapter: "eslint" },
-      },
-    },
-    execution: {
-      workspace: {
-        path: path.join(harness.runsRoot, "workspaces", "frontend-app", regRunId),
-        baseCommit: "abcdef123456",
-        state: "CLEANED",
-      },
-      verification: [
-        { command: "typecheck", exitCode: 0, status: "PASS", passed: true },
-        { command: "lint", exitCode: 1, status: "FAIL_REGRESSION", passed: false, delta: { new: 1, resolved: 0, unchanged: 0 } },
-        { command: "build", exitCode: 0, status: "PASS", passed: true },
-      ],
-    },
-    state: "DONE",
-  }, null, 2));
-
-  // Update orchestration nodes
-  const regOrchestration = getOrchestration(harness.runsRoot, regMatRes.data.data.orchestration.orchestrationId, { plan: regPlanRes.plan });
-  updateOrchestration({
-    runsRoot: harness.runsRoot,
-    orchestrationId: regOrchestration.orchestrationId,
-    expectedRevision: regOrchestration.revision,
-    validationOptions: { plan: regPlanRes.plan },
-    update: (record) => ({
-      ...record,
-      state: "DONE",
-      nodes: Object.fromEntries(
-        Object.entries(record.nodes || {}).map(([id, n]) => [id, { ...n, state: "DONE", runId: regRunId }])
-      ),
-    }),
-  });
+  const regTick = schedulerTick({ vaultRoot: harness.vaultRoot, runsRoot: harness.runsRoot, enabled: true });
+  assert.equal(regTick.queued.length, 1);
+  const regClaim = claimNextJob(harness.runsRoot);
+  assert.ok(regClaim);
+  const regExecution = await runClaimedProductionJob(
+    regClaim,
+    deterministicExecutor({ relativePath: "src/components/Regression.tsx", regression: true }),
+  );
+  assert.match(regExecution.error.message, /FAIL_REGRESSION/);
+  const failedJob = listJobs(harness.runsRoot).find((job) => job.jobId === regClaim.jobId);
+  const regRunId = failedJob.runId;
+  const failedRun = getRun(harness.runsRoot, regRunId);
+  assert.equal(failedRun.state, "FAILED");
+  assert.equal(failedRun.execution.verification.find((item) => item.command.includes("lint")).status, "FAIL_REGRESSION");
+  schedulerTick({ vaultRoot: harness.vaultRoot, runsRoot: harness.runsRoot, enabled: true });
 
   // Assert delivery certification reports BLOCKED due to VERIFICATION_INTENT_COMPLETE
   const regCert = buildDeliveryCertificationEvidence({
@@ -533,6 +541,13 @@ try {
 
   assert.equal(decPlanRes.verificationIntent.status, "NEEDS_CLARIFICATION");
 
+  const packagePath = path.join(harness.frontendRepo, "package.json");
+  const packageDocument = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+  packageDocument.scripts["test:e2e"] = "node --version";
+  fs.writeFileSync(packagePath, JSON.stringify(packageDocument, null, 2));
+  await localProcessRunner({ command: "git", args: ["add", "package.json"], cwd: harness.frontendRepo });
+  await localProcessRunner({ command: "git", args: ["commit", "-m", "test: register governed e2e runner"], cwd: harness.frontendRepo });
+
   // Submit structured decision to resolve via SELECT_SCRIPT
   const decRes = await harness.requestJson(`/api/objectives/${decObjId}/verification-decision`, {
     method: "POST",
@@ -541,15 +556,51 @@ try {
       action: "SELECT_SCRIPT",
       projectId: "frontend-app",
       capability: "E2E",
-      selectedTarget: "typecheck",
+      selectedTarget: "test:e2e",
     },
   });
 
   assert.equal(decRes.status, 200);
   assert.equal(decRes.data.data.verificationIntent.status, "RESOLVED");
+  assert.equal(decRes.data.data.decision.type, "VERIFICATION_DECISION");
+
+  const decidedPlan = await planObjective({
+    vaultRoot: harness.vaultRoot,
+    runsRoot: harness.runsRoot,
+    objectiveId: decObjId,
+    clarification: "Gunakan script test:e2e yang telah disetujui.",
+    decomposer: async ({ objective }) => ({
+      status: "PLAN_REVIEW",
+      plan: {
+        schemaVersion: 2,
+        planId: `plan-${objective.objectiveId}-r1`, objectiveId: objective.objectiveId, revision: 1,
+        state: "PENDING_APPROVAL", summary: "Run the governed E2E verification",
+        architectureDecisions: [], assumptions: [], clarificationNeeded: false, clarificationQuestion: null,
+        projects: ["frontend-app"],
+        nodes: [{
+          nodeId: "N1", title: "Verify E2E", purpose: "Run the selected E2E check", projectId: "frontend-app",
+          role: "TESTING", type: "VERIFICATION", dependsOn: [], acceptanceCriteria: ["E2E evidence is recorded"],
+          allowedPaths: [], verification: ["test:e2e"], risk: "LOW", complexity: "LOW", requiresChanges: false,
+          canRunInParallel: false, writeConflictGroup: null, contextFrom: [], skills: [],
+        }],
+        integration: { required: false, projectVerification: [], crossProjectVerification: [], previewRequired: false },
+        risk: "LOW", complexity: "LOW", approvedBy: null, approvedAt: null, createdAt: new Date().toISOString(),
+      },
+    }),
+  });
+  assert.equal(decidedPlan.plan.schemaVersion, 2);
+  const decidedApproval = await harness.requestJson(`/api/objectives/${decObjId}/approve-plan`, {
+    method: "POST", headers: { "idempotency-key": "decision-approve-e2e-1" },
+    body: { planFingerprint: decidedPlan.plan.planFingerprint },
+  });
+  assert.equal(decidedApproval.status, 201);
+  const decidedMaterialization = await harness.requestJson(`/api/objectives/${decObjId}/materialize`, {
+    method: "POST", headers: { "idempotency-key": "decision-materialize-e2e-1" },
+    body: { planFingerprint: decidedPlan.plan.planFingerprint },
+  });
+  assert.equal(decidedMaterialization.status, 201);
 
   console.log("ai-os-objective-lifecycle-e2e.test.mjs: All lifecycle E2E scenarios passed!");
 } finally {
   await harness.cleanup();
 }
-

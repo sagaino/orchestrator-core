@@ -26,7 +26,7 @@ const intent = extractVerificationIntent({
   projectContexts,
 });
 
-assert.equal(intent.contractVersion, 1);
+assert.equal(intent.contractVersion, 2);
 assert.equal(intent.status, "RESOLVED");
 assert.equal(intent.required.length, 3);
 assert.equal(intent.resolved.length, 3);
@@ -77,6 +77,34 @@ assert.equal(invalidCoverage.valid, false);
 assert.equal(invalidCoverage.code, "PLAN_VERIFICATION_COVERAGE_MISSING");
 assert.equal(invalidCoverage.missingCoverage.length, 1);
 assert.equal(invalidCoverage.missingCoverage[0].capability, "LINT");
+
+const duplicateResolutionCoverage = validateVerificationCoverage({
+  intent: {
+    contractVersion: 2,
+    required: [{ projectId: "frontend-app", capability: "BUILD" }],
+    resolved: [{ projectId: "frontend-app", capability: "BUILD", script: "build" }],
+    waived: [{ projectId: "frontend-app", capability: "BUILD", reason: "duplicate", waivedBy: "operator", waivedAt: "2026-09-01T00:00:00.000Z" }],
+    missing: [],
+    status: "RESOLVED_WITH_WAIVERS",
+  },
+  planNodes,
+});
+assert.equal(duplicateResolutionCoverage.valid, false);
+assert.equal(duplicateResolutionCoverage.code, "VERIFICATION_REQUIREMENT_UNACCOUNTED");
+
+const runnerCoverage = validateVerificationCoverage({
+  intent: {
+    contractVersion: 2,
+    required: [{ projectId: "frontend-app", capability: "E2E" }],
+    resolved: [{ projectId: "frontend-app", capability: "E2E", runner: "browser-route-check" }],
+    waived: [],
+    missing: [],
+    status: "RESOLVED",
+  },
+  planNodes,
+  integrationVerification: ["frontend-app:browser-route-check"],
+});
+assert.equal(runnerCoverage.valid, true);
 // 6. Fail-closed tests for missing or unresolved intent
 const missingIntentCoverage = validateVerificationCoverage({
   intent: null,
@@ -116,6 +144,7 @@ assert.equal(unresolvedIntent.status, "NEEDS_CLARIFICATION");
 // Test SELECT_SCRIPT action
 const scriptResolved = resolveVerificationDecision({
   intent: unresolvedIntent,
+  projectContexts: [{ projectId: "frontend-app", availableScripts: ["test:e2e-custom"] }],
   decision: {
     action: "SELECT_SCRIPT",
     projectId: "frontend-app",
@@ -129,6 +158,30 @@ assert.equal(scriptResolved.contractVersion, 2);
 assert.equal(scriptResolved.resolved.length, 1);
 assert.equal(scriptResolved.resolved[0].script, "test:e2e-custom");
 assert.equal(scriptResolved.missing.length, 0);
+
+assert.throws(() => resolveVerificationDecision({
+  intent: unresolvedIntent,
+  projectContexts: [{ projectId: "frontend-app", availableScripts: ["typecheck", "test:e2e"] }],
+  decision: {
+    action: "SELECT_SCRIPT",
+    projectId: "frontend-app",
+    capability: "E2E",
+    selectedTarget: "typecheck",
+    resolvedBy: "local:test-operator",
+  },
+}), /tidak cocok dengan capability E2E/);
+
+assert.throws(() => resolveVerificationDecision({
+  intent: unresolvedIntent,
+  projectContexts: [{ projectId: "frontend-app", availableScripts: ["typecheck"] }],
+  decision: {
+    action: "SELECT_SCRIPT",
+    projectId: "frontend-app",
+    capability: "E2E",
+    selectedTarget: "test:e2e",
+    resolvedBy: "local:test-operator",
+  },
+}), /tidak terdaftar/);
 
 // Test WAIVE action
 const waivedResult = resolveVerificationDecision({
@@ -158,5 +211,13 @@ assert.throws(() => {
     },
   });
 }, /Operator identity/);
+
+const runnerResolved = resolveVerificationIntent({
+  intent: { contractVersion: 2, required: [{ projectId: "frontend-app", capability: "E2E" }], resolved: [], waived: [], missing: [] },
+  projectContexts: [{ projectId: "frontend-app", verificationScripts: [] }],
+  registeredRunners: [{ id: "browser-route-check", projectId: "frontend-app", capabilities: ["E2E"] }],
+});
+assert.equal(runnerResolved.status, "RESOLVED");
+assert.equal(runnerResolved.resolved[0].runner, "browser-route-check");
 
 console.log("verification-intent.test.mjs: All verification intent and decision tests passed!");

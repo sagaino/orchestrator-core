@@ -55,7 +55,7 @@ export function decompositionPlanSchema() {
       "projects", "nodes", "integration", "risk", "complexity", "approvedBy", "approvedAt", "createdAt",
     ],
     properties: {
-      schemaVersion: { const: 1 },
+      schemaVersion: { const: 2 },
       planId: { type: "string", minLength: 1 },
       objectiveId: { type: "string", minLength: 1 },
       revision: { const: PROJECT_DECOMPOSITION_REVISION },
@@ -130,7 +130,7 @@ export function decompositionOutputSchema() {
         additionalProperties: false,
         required: ["schemaVersion", "clarificationNeeded", "clarificationQuestion"],
         properties: {
-          schemaVersion: { const: 1 },
+          schemaVersion: { const: 2 },
           clarificationNeeded: { const: true },
           clarificationQuestion: { type: "string", minLength: 1 },
           toolAction: { type: "string" },
@@ -317,7 +317,7 @@ function validateParsedPlan(plan, objective, budget, projectContexts = []) {
     ]), `plan.nodes[${index}]`));
   }
   errors.push(...unexpectedKeys(plan.integration, new Set(["required", "projectVerification", "crossProjectVerification", "previewRequired"]), "plan.integration"));
-  if (plan.schemaVersion !== 1) errors.push("plan.schemaVersion harus 1");
+  if (plan.schemaVersion !== 2) errors.push("plan.schemaVersion harus 2");
   if (plan.planId !== `plan-${expectedObjectiveId}-r${PROJECT_DECOMPOSITION_REVISION}`) errors.push("plan.planId tidak sesuai dengan objective revision 1");
   if (plan.objectiveId !== expectedObjectiveId) errors.push("plan.objectiveId tidak sesuai dengan objective");
   if (plan.revision !== PROJECT_DECOMPOSITION_REVISION) errors.push("plan.revision harus 1");
@@ -334,6 +334,7 @@ function validateParsedPlan(plan, objective, budget, projectContexts = []) {
   }
 
   const schemaValidation = validatePlanRecord({ ...plan, nodes: Array.isArray(plan.nodes) ? plan.nodes : [] }, {
+    requireGovernance: false,
     knownProjectIds: expectedProjects,
     projectVerificationScripts: Object.fromEntries(projectContexts.map((project) => [project.projectId ?? project.id, project.verificationScripts ?? project.verification ?? []])),
     maxSubtasks: budget.maxSubtasks,
@@ -385,7 +386,7 @@ function validateParsedPlan(plan, objective, budget, projectContexts = []) {
 function clarificationResult(raw, metadata) {
   const question = String(raw.clarificationQuestion ?? "").trim();
   const unsupportedFields = unexpectedKeys(raw, new Set(["schemaVersion", "clarificationNeeded", "clarificationQuestion"]), "clarification");
-  if (!raw.schemaVersion || raw.schemaVersion !== 1 || raw.clarificationNeeded !== true || !question || unsupportedFields.length) {
+  if (!raw.schemaVersion || raw.schemaVersion !== 2 || raw.clarificationNeeded !== true || !question || unsupportedFields.length) {
     throw errorWithCode("Clarification output tidak memenuhi strict JSON contract.", "INVALID_DECOMPOSITION_OUTPUT");
   }
   return {
