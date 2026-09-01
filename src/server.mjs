@@ -38,10 +38,10 @@ import { backupRecoveryStatus, previewBackupSchedule, previewBackupRotation, ver
 import { getReleaseOperations } from "./release-operations.mjs";
 import { createObjectiveIntake, getObjectiveIntake, listObjectiveIntake, objectivesEnabled, crossProjectEnabled } from "./objective-intake.mjs";
 import { approveFreshProjectGenesis, auditGenesisApproval } from "./fresh-project-genesis.mjs";
-import { getObjective } from "./objective-store.mjs";
+import { getObjective, updateObjective } from "./objective-store.mjs";
 import { buildObjectiveGraph } from "./objective-graph.mjs";
 import { listDecisions, listDecisionInbox } from "./decision-store.mjs";
-import { listPlans } from "./plan-store.mjs";
+import { listPlans, updatePlan, getPlan } from "./plan-store.mjs";
 import { approvePlan, assignPlanSkills, cancelObjective, clarifyPlan, createPlanRevision, getObjectiveLifecycle, planRevision, requestPlanChanges, requestScopeExpansion } from "./plan-lifecycle.mjs";
 import { defaultSkillRegistryPath, listInstalledSkills, updateSkillEnabled } from "./skill-registry.mjs";
 import { projectSignalsForProjects } from "./skill-assignment.mjs";
@@ -54,6 +54,7 @@ import { buildObjectiveVisualEvidence } from "./objective-visual-evidence.mjs";
 import { acceptDeliveryCertification, buildDeliveryCertificationEvidence, createDeliveryCertification, getDeliveryCertification, listDeliveryCertifications } from "./delivery-certification.mjs";
 import { getProjectRelationships, replaceProjectRelationships } from "./project-relations.mjs";
 import { planObjective } from "./objective-planning.mjs";
+import { resolveVerificationDecision } from "./verification-intent.mjs";
 import { approvalMode, autopilotAfterPlanApprovalEnabled, automaticDeliveryCertificationEnabled, finalAcceptOnlyEnabled, planReviewThenAutopilotEnabled } from "./approval-policy.mjs";
 import { runtimeProfileAdmission } from "./runtime-config.mjs";
 
@@ -983,6 +984,87 @@ export function createRouter({ vaultRoot, runsRoot, eventHub, services, sourceRo
       });
       eventHub.broadcast("PLAN_CLARIFIED", { objectiveId: result.objective.objectiveId, planId: result.plan.planId, revision: planRevision(result.plan), planFingerprint: result.plan.planFingerprint });
       sendJson(res, 201, { success: true, data: result });
+    } catch (error) {
+      sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
+    }
+  });
+
+  router.post("/api/objectives/:id/verification-decision", async (req, res, { params }) => {
+    try {
+      if (!req.headers["idempotency-key"]) return sendError(res, 400, "Idempotency-Key wajib untuk verification decision.", { code: "IDEMPOTENCY_REQUIRED" });
+      const body = await parseJsonBody(req);
+      const objective = getObjective(runsRoot, params.id);
+      if (!objective) return sendError(res, 404, "Objective tidak ditemukan.", { code: "OBJECTIVE_NOT_FOUND" });
+      
+      const activePlanId = objective.activePlanId;
+      const activePlan = activePlanId ? getPlan(runsRoot, activePlanId) : null;
+      const existingIntent = activePlan?.verificationIntent || objective.verificationIntent;
+
+      if (!existingIntent) {
+        return sendError(res, 400, "Objective tidak memiliki verification intent.", { code: "NO_VERIFICATION_INTENT" });
+      }
+
+      const updatedIntent = resolveVerificationDecision({
+        intent: existingIntent,
+        decision: {
+          action: body?.action,
+          projectId: body?.projectId,
+          capability: body?.capability,
+          selectedTarget: body?.selectedTarget ?? body?.script ?? body?.runner,
+          reason: body?.reason,
+          resolvedBy: req.operatorIdentity ?? "local:operator",
+        },
+      });
+
+      let updatedPlan = null;
+      if (activePlan) {
+        updatedPlan = updatePlan({
+          runsRoot,
+          planId: activePlan.planId,
+          expectedRevision: activePlan.revision,
+          update: (record) => ({
+            ...record,
+            verificationIntent: updatedIntent,
+            nodes: record.nodes.map((node) => {
+              if (node.projectId === body?.projectId && body?.action === "SELECT_SCRIPT") {
+                const currentVer = Array.isArray(node.verification) ? node.verification : [];
+                if (!currentVer.includes(body.selectedTarget)) {
+                  return { ...node, verification: [...currentVer, body.selectedTarget] };
+                }
+              }
+              return node;
+            }),
+          }),
+        });
+      } else {
+        updateObjective({
+          runsRoot,
+          objectiveId: objective.objectiveId,
+          expectedRevision: objective.revision,
+          update: (record) => ({
+            ...record,
+            verificationIntent: updatedIntent,
+          }),
+        });
+      }
+
+      appendAuditEntry(runsRoot, {
+        event: "VERIFICATION_DECISION_RECORDED",
+        actor: req.operatorIdentity ?? "local:operator",
+        objectiveId: objective.objectiveId,
+        planId: updatedPlan?.planId ?? null,
+        action: body?.action,
+        capability: body?.capability,
+        projectId: body?.projectId,
+      });
+
+      eventHub.broadcast("VERIFICATION_DECISION_RECORDED", {
+        objectiveId: objective.objectiveId,
+        planId: updatedPlan?.planId ?? null,
+        verificationIntent: updatedIntent,
+      });
+
+      sendJson(res, 200, { success: true, data: { plan: updatedPlan, verificationIntent: updatedIntent } });
     } catch (error) {
       sendError(res, error.statusCode || 400, error.message, error.details ?? (error.code ? { code: error.code } : null));
     }

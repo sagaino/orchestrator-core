@@ -4,6 +4,7 @@ import {
   resolveVerificationIntent,
   validateVerificationCoverage,
   normalizeCapability,
+  resolveVerificationDecision,
 } from "../src/verification-intent.mjs";
 
 console.log("Running verification-intent.test.mjs...");
@@ -76,6 +77,86 @@ assert.equal(invalidCoverage.valid, false);
 assert.equal(invalidCoverage.code, "PLAN_VERIFICATION_COVERAGE_MISSING");
 assert.equal(invalidCoverage.missingCoverage.length, 1);
 assert.equal(invalidCoverage.missingCoverage[0].capability, "LINT");
-assert.match(invalidCoverage.error, /lint/i);
+// 6. Fail-closed tests for missing or unresolved intent
+const missingIntentCoverage = validateVerificationCoverage({
+  intent: null,
+  planNodes,
+});
+assert.equal(missingIntentCoverage.valid, false);
+assert.equal(missingIntentCoverage.code, "VERIFICATION_INTENT_MISSING");
 
-console.log("verification-intent.test.mjs: All verification intent tests passed!");
+const unresolvedCoverage = validateVerificationCoverage({
+  intent: missingIntent,
+  planNodes,
+});
+assert.equal(unresolvedCoverage.valid, false);
+assert.equal(unresolvedCoverage.code, "VERIFICATION_INTENT_UNRESOLVED");
+
+// 7. Explicitly empty intent -> valid
+const emptyIntent = {
+  contractVersion: 1,
+  required: [],
+  resolved: [],
+  missing: [],
+  status: "RESOLVED",
+};
+const emptyCoverage = validateVerificationCoverage({
+  intent: emptyIntent,
+  planNodes: [],
+});
+assert.equal(emptyCoverage.valid, true);
+
+// 8. Structured Decisions tests
+const unresolvedIntent = extractVerificationIntent({
+  request: "Tolong jalankan e2e",
+  projectContexts: [{ projectId: "frontend-app", availableScripts: ["typecheck", "build"] }],
+});
+assert.equal(unresolvedIntent.status, "NEEDS_CLARIFICATION");
+
+// Test SELECT_SCRIPT action
+const scriptResolved = resolveVerificationDecision({
+  intent: unresolvedIntent,
+  decision: {
+    action: "SELECT_SCRIPT",
+    projectId: "frontend-app",
+    capability: "E2E",
+    selectedTarget: "test:e2e-custom",
+    resolvedBy: "local:test-operator",
+  },
+});
+assert.equal(scriptResolved.status, "RESOLVED");
+assert.equal(scriptResolved.contractVersion, 2);
+assert.equal(scriptResolved.resolved.length, 1);
+assert.equal(scriptResolved.resolved[0].script, "test:e2e-custom");
+assert.equal(scriptResolved.missing.length, 0);
+
+// Test WAIVE action
+const waivedResult = resolveVerificationDecision({
+  intent: unresolvedIntent,
+  decision: {
+    action: "WAIVE",
+    projectId: "frontend-app",
+    capability: "E2E",
+    reason: "E2E suite is temporarily maintained in external pipeline",
+    resolvedBy: "local:lead-architect",
+  },
+});
+assert.equal(waivedResult.status, "RESOLVED_WITH_WAIVERS");
+assert.equal(waivedResult.waived.length, 1);
+assert.equal(waivedResult.waived[0].reason, "E2E suite is temporarily maintained in external pipeline");
+assert.equal(waivedResult.waived[0].waivedBy, "local:lead-architect");
+
+// Test operator requirement
+assert.throws(() => {
+  resolveVerificationDecision({
+    intent: unresolvedIntent,
+    decision: {
+      action: "WAIVE",
+      projectId: "frontend-app",
+      capability: "E2E",
+      reason: "Waiving without operator",
+    },
+  });
+}, /Operator identity/);
+
+console.log("verification-intent.test.mjs: All verification intent and decision tests passed!");

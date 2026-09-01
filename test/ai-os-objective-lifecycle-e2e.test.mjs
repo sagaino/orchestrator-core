@@ -472,7 +472,84 @@ try {
   });
   assert.ok(regCert.blockers.includes("VERIFICATION_INTENT_COMPLETE"), "Should be blocked by VERIFICATION_INTENT_COMPLETE due to regression");
 
+  // === Scenario 6: Structured Verification Decision Resolution (SELECT_SCRIPT / WAIVE) ===
+  console.log("  Scenario 6: Structured verification decision resolution with governed plan v2...");
+  const decIntake = await harness.requestJson("/api/objectives", {
+    method: "POST",
+    headers: { "idempotency-key": "e2e-decision-intake-1" },
+    body: {
+      projectId: "frontend-app",
+      request: "Tolong jalankan e2e check khusus",
+    },
+  });
+  const decObjId = decIntake.data.data.objective.objectiveId;
+
+  const decPlanRes = await planObjective({
+    vaultRoot: harness.vaultRoot,
+    runsRoot: harness.runsRoot,
+    objectiveId: decObjId,
+    decomposer: async ({ objective }) => ({
+      status: "NEEDS_CLARIFICATION",
+      plan: {
+        schemaVersion: 2,
+        planId: `plan-${objective.objectiveId}-r1`,
+        objectiveId: objective.objectiveId,
+        revision: 1,
+        state: "PENDING_APPROVAL",
+        summary: "Plan with missing e2e verification requirement",
+        architectureDecisions: [],
+        assumptions: [],
+        clarificationNeeded: true,
+        clarificationQuestion: "Verification check e2e tidak ditemukan di package.json. Pilih script atau waive.",
+        projects: ["frontend-app"],
+        nodes: [{
+          nodeId: "N1",
+          title: "Custom node",
+          purpose: "Custom purpose",
+          projectId: "frontend-app",
+          role: "FRONTEND",
+          type: "IMPLEMENTATION",
+          dependsOn: [],
+          acceptanceCriteria: ["Works"],
+          allowedPaths: ["src/App.tsx"],
+          verification: ["typecheck"],
+          risk: "LOW",
+          complexity: "LOW",
+          requiresChanges: true,
+          canRunInParallel: false,
+          writeConflictGroup: null,
+          contextFrom: [],
+          skills: [],
+        }],
+        integration: { required: false, projectVerification: [], crossProjectVerification: [], previewRequired: false },
+        risk: "LOW",
+        complexity: "LOW",
+        approvedBy: null,
+        approvedAt: null,
+        createdAt: new Date().toISOString(),
+      },
+    }),
+  });
+
+  assert.equal(decPlanRes.verificationIntent.status, "NEEDS_CLARIFICATION");
+
+  // Submit structured decision to resolve via SELECT_SCRIPT
+  const decRes = await harness.requestJson(`/api/objectives/${decObjId}/verification-decision`, {
+    method: "POST",
+    headers: { "idempotency-key": "decision-e2e-1" },
+    body: {
+      action: "SELECT_SCRIPT",
+      projectId: "frontend-app",
+      capability: "E2E",
+      selectedTarget: "typecheck",
+    },
+  });
+
+  assert.equal(decRes.status, 200);
+  assert.equal(decRes.data.data.verificationIntent.status, "RESOLVED");
+
   console.log("ai-os-objective-lifecycle-e2e.test.mjs: All lifecycle E2E scenarios passed!");
 } finally {
   await harness.cleanup();
 }
+

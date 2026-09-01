@@ -131,6 +131,13 @@ function candidate(objectiveId) {
         skills: [],
       },
     ],
+    verificationIntent: {
+      contractVersion: 1,
+      required: [{ projectId: "frontend", capability: "UNIT", source: "EXPLICIT" }],
+      resolved: [{ projectId: "frontend", capability: "UNIT", script: "test" }],
+      missing: [],
+      status: "RESOLVED",
+    },
     integration: { required: true, projectVerification: ["test"], crossProjectVerification: ["test"], previewRequired: true },
     risk: "MEDIUM",
     complexity: "MEDIUM",

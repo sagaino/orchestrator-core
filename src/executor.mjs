@@ -28,6 +28,7 @@ import { loadAssignedSkillInstructions } from "./skill-router.mjs";
 import { parseVerificationCommand } from "./verification-parser.mjs";
 import { loadRulePolicy, formatRulePromptConstraint } from "./rule-policy.mjs";
 import { compareVerificationFindings, parseFindingsForAdapter } from "./verification-baseline.mjs";
+import { computeFindingsFingerprint } from "./verification-adapters/eslint.mjs";
 
 function appendEvent(eventLogPath, event) {
   if (!eventLogPath || typeof eventLogPath !== "string") return;
@@ -637,7 +638,12 @@ async function verifyAndRefresh({
     if (policy.mode === "NO_NEW_FINDINGS") {
       const adapter = policy.adapter || "eslint";
       const baselineData = current.execution?.baselineVerification?.[scriptName] || null;
-      const candidateFindings = parseFindingsForAdapter({ adapter, output, repositoryRoot: repository });
+      const candidateParse = parseFindingsForAdapter({
+        adapter,
+        output,
+        repositoryRoot: repository,
+        exitCode: result.exitCode,
+      });
       
       const comparison = compareVerificationFindings({
         script: scriptName,
@@ -645,11 +651,13 @@ async function verifyAndRefresh({
         baseline: baselineData ? {
           commit: baselineData.commit || current.execution?.workspace?.baseCommit,
           findings: Array.isArray(baselineData.findings) ? baselineData.findings : [],
+          parseResult: baselineData.parseResult || null,
           exitCode: baselineData.exitCode ?? 1,
         } : null,
         candidate: {
           exitCode: result.exitCode,
-          findings: candidateFindings,
+          findings: candidateParse.findings,
+          parseResult: candidateParse,
         },
         adapter,
       });
@@ -1227,6 +1235,64 @@ export async function executeRun({
     });
     repository = workspace.path;
     beforeSnapshot = snapshotFromObject(workspace.baseline);
+
+    // Baseline capture for NO_NEW_FINDINGS verification policies
+    const projectPolicies = manifest.project?.verificationPolicies || manifest.project?.verification_policies || {};
+    let baselineVerification = manifest.execution?.baselineVerification ? { ...manifest.execution.baselineVerification } : null;
+    
+    if (!baselineVerification) {
+      baselineVerification = {};
+      const scriptsToVerify = Array.isArray(manifest.task?.verification)
+        ? manifest.task.verification
+        : (Array.isArray(manifest.plan?.verificationCommands) ? manifest.plan.verificationCommands : []);
+
+      for (const rawCommand of scriptsToVerify) {
+        const scriptName = String(rawCommand).replace(/^npm\s+run\s+/, "").trim();
+        const policy = projectPolicies[scriptName];
+        if (policy?.mode === "NO_NEW_FINDINGS") {
+          const adapter = policy.adapter || "eslint";
+          const baselineCommand = (typeof rawCommand === "string" && rawCommand.startsWith("npm"))
+            ? rawCommand
+            : `npm run ${scriptName}`;
+          
+          const result = await processRunner({
+            command: baselineCommand,
+            cwd: repository,
+            stage: `baseline-verification:${scriptName}`,
+            eventLogPath,
+          });
+
+          const output = (result.stdoutTail || "") + (result.stderrTail || "");
+          const parseResult = parseFindingsForAdapter({
+            adapter,
+            output,
+            repositoryRoot: repository,
+            exitCode: result.exitCode,
+          });
+
+          baselineVerification[scriptName] = {
+            commit: workspace.baseCommit,
+            script: scriptName,
+            command: baselineCommand,
+            adapter,
+            exitCode: result.exitCode,
+            findings: parseResult.findings,
+            parseResult,
+            findingsFingerprint: computeFindingsFingerprint(parseResult.findings),
+            capturedAt: new Date().toISOString(),
+          };
+        }
+      }
+
+      manifest = updateRunExecution({
+        runsRoot,
+        runId,
+        executionPatch: { baselineVerification },
+        event: "BASELINE_VERIFICATION_CAPTURED",
+        message: `Baseline verification captured for scripts: ${Object.keys(baselineVerification).join(", ") || "none"}`,
+      });
+    }
+
     let graphifyQuery = { skipped: true, reason: "Graphify disabled for project." };
     if (manifest.project.graphify) {
       const question = buildGraphifyQuestion(manifest);

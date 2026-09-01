@@ -63,13 +63,14 @@ export function detectRepositoryBlueprint(repositoryPath) {
         (typeof pkg.scripts?.build === "string" && pkg.scripts.build.includes("vite"))
       );
       const hasReact = Boolean(allDeps.react || allDeps["react-dom"]);
-      const hasTs = Boolean(allDeps.typescript || (typeof pkg.scripts?.typecheck === "string"));
+      const hasTs = Boolean(allDeps.typescript || (typeof pkg.scripts?.typecheck === "string") || fs.existsSync(path.join(repositoryPath, "tsconfig.json")));
 
-      if (hasVite || (hasReact && hasTs)) {
+      // Strict high-confidence rule: require Vite AND React AND TypeScript
+      if (hasVite && hasReact && hasTs) {
         return "frontend-vite";
       }
 
-      // Express-only or generic Node package without Vite/React signals
+      // Express-only, React-only without Vite, or generic Node package without all three
       return null;
     } catch {
       return null;
@@ -91,11 +92,22 @@ export function resolveProjectBlueprint({
     const clean = String(explicit).trim();
     if (SUPPORTED_BLUEPRINTS.includes(clean)) {
       const policy = loadRulePolicy(vaultRoot, clean);
+      if (!policy) {
+        return {
+          id: clean,
+          source: "PROJECT_METADATA",
+          confidence: "EXPLICIT",
+          policyVersion: null,
+          policyFingerprint: null,
+          valid: false,
+          error: `PROJECT_POLICY_NOT_FOUND: Policy tidak ditemukan untuk blueprint: ${clean}`,
+        };
+      }
       return {
         id: clean,
         source: "PROJECT_METADATA",
         confidence: "EXPLICIT",
-        policyVersion: 1,
+        policyVersion: policy.version || 1,
         policyFingerprint: computeRulePolicyFingerprint(policy),
         valid: true,
         error: null,
@@ -105,7 +117,7 @@ export function resolveProjectBlueprint({
       id: clean,
       source: "PROJECT_METADATA",
       confidence: "EXPLICIT",
-      policyVersion: 1,
+      policyVersion: null,
       policyFingerprint: null,
       valid: false,
       error: `PROJECT_BLUEPRINT_UNSUPPORTED: Blueprint project tidak didukung: ${clean}`,
@@ -118,11 +130,22 @@ export function resolveProjectBlueprint({
     const clean = String(registry).trim();
     if (SUPPORTED_BLUEPRINTS.includes(clean)) {
       const policy = loadRulePolicy(vaultRoot, clean);
+      if (!policy) {
+        return {
+          id: clean,
+          source: "REGISTRY_METADATA",
+          confidence: "EXPLICIT",
+          policyVersion: null,
+          policyFingerprint: null,
+          valid: false,
+          error: `PROJECT_POLICY_NOT_FOUND: Policy tidak ditemukan untuk blueprint: ${clean}`,
+        };
+      }
       return {
         id: clean,
         source: "REGISTRY_METADATA",
         confidence: "EXPLICIT",
-        policyVersion: 1,
+        policyVersion: policy.version || 1,
         policyFingerprint: computeRulePolicyFingerprint(policy),
         valid: true,
         error: null,
@@ -132,7 +155,7 @@ export function resolveProjectBlueprint({
       id: clean,
       source: "REGISTRY_METADATA",
       confidence: "EXPLICIT",
-      policyVersion: 1,
+      policyVersion: null,
       policyFingerprint: null,
       valid: false,
       error: `PROJECT_BLUEPRINT_UNSUPPORTED: Blueprint di project registry tidak didukung: ${clean}`,
@@ -143,11 +166,22 @@ export function resolveProjectBlueprint({
   const detected = detectRepositoryBlueprint(repositoryPath);
   if (detected && SUPPORTED_BLUEPRINTS.includes(detected)) {
     const policy = loadRulePolicy(vaultRoot, detected);
+    if (!policy) {
+      return {
+        id: detected,
+        source: "DETECTED",
+        confidence: "HIGH",
+        policyVersion: null,
+        policyFingerprint: null,
+        valid: false,
+        error: `PROJECT_POLICY_NOT_FOUND: Policy tidak ditemukan untuk blueprint: ${detected}`,
+      };
+    }
     return {
       id: detected,
       source: "DETECTED",
       confidence: "HIGH",
-      policyVersion: 1,
+      policyVersion: policy.version || 1,
       policyFingerprint: computeRulePolicyFingerprint(policy),
       valid: true,
       error: null,
@@ -159,9 +193,9 @@ export function resolveProjectBlueprint({
     id: "UNRESOLVED",
     source: "UNRESOLVED",
     confidence: "NONE",
-    policyVersion: 1,
+    policyVersion: null,
     policyFingerprint: null,
     valid: false,
-    error: "PROJECT_BLUEPRINT_UNRESOLVED: Project blueprint belum dapat ditentukan secara deterministik.",
+    error: "PROJECT_BLUEPRINT_UNRESOLVED: Tidak dapat mendeteksi blueprint dengan keyakinan tinggi. Tentukan blueprint eksplisit di frontmatter project.md.",
   };
 }

@@ -1,6 +1,6 @@
 # AI OS v2 — Production Hardening Completion Plan
 
-Status: **IMPLEMENTED — MACHINE CERTIFIED (PENDING HUMAN ACCEPTANCE)**  
+Status: **SUPERSEDED — REPLACED BY AI OS V2 HARDENING RECERTIFICATION REMEDIATION PLAN**  
 Plan date: **2026-09-01 (Asia/Jakarta)**  
 Owner and final approver: **Human operator**  
 Primary repositories: **personal-ai-orchestrator** and **orchestrator-dashboard**  

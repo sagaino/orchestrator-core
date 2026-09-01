@@ -164,7 +164,36 @@ export function resolveVerificationIntent({ intent, projectContexts = [], regist
 }
 
 export function validateVerificationCoverage({ intent, planNodes = [], integrationVerification = [] } = {}) {
-  if (!intent || !Array.isArray(intent.resolved) || intent.resolved.length === 0) {
+  if (!intent) {
+    return {
+      valid: false,
+      code: "VERIFICATION_INTENT_MISSING",
+      missingCoverage: [],
+      error: "Verification intent wajib ada pada governed plan.",
+    };
+  }
+
+  if (intent.status === "NEEDS_CLARIFICATION" || (Array.isArray(intent.missing) && intent.missing.length > 0)) {
+    return {
+      valid: false,
+      code: "VERIFICATION_INTENT_UNRESOLVED",
+      missingCoverage: intent.missing || [],
+      error: `Verification intent belum teresolusi: ${(intent.missing || []).map((m) => m.capability || m.requestedAs).join(", ")}`,
+    };
+  }
+
+  const allowedStatuses = ["RESOLVED", "RESOLVED_WITH_WAIVERS"];
+  if (!allowedStatuses.includes(intent.status)) {
+    return {
+      valid: false,
+      code: "VERIFICATION_INTENT_INVALID_STATUS",
+      missingCoverage: [],
+      error: `Status verification intent tidak valid: ${intent.status}`,
+    };
+  }
+
+  const resolvedList = Array.isArray(intent.resolved) ? intent.resolved : [];
+  if (resolvedList.length === 0) {
     return { valid: true, missingCoverage: [] };
   }
 
@@ -199,7 +228,7 @@ export function validateVerificationCoverage({ intent, planNodes = [], integrati
 
   const missingCoverage = [];
 
-  for (const req of intent.resolved) {
+  for (const req of resolvedList) {
     const executed = executedScriptsByProject.get(req.projectId);
     if (!executed || !executed.has(req.script)) {
       missingCoverage.push({
@@ -227,3 +256,109 @@ export function validateVerificationCoverage({ intent, planNodes = [], integrati
     error: null,
   };
 }
+
+export const VERIFICATION_DECISION_ACTIONS = Object.freeze([
+  "SELECT_SCRIPT",
+  "SELECT_RUNNER",
+  "WAIVE",
+  "CANCEL",
+]);
+
+export function resolveVerificationDecision({
+  intent,
+  decision = {},
+  projectContexts = [],
+  now = new Date(),
+} = {}) {
+  if (!intent) {
+    throw new Error("Intent wajib diisi untuk menerapkan decision.");
+  }
+  const action = String(decision.action ?? "").trim().toUpperCase();
+  if (!VERIFICATION_DECISION_ACTIONS.includes(action)) {
+    throw new Error(`Action decision verifikasi tidak valid: ${decision.action}`);
+  }
+
+  const targetProjectId = String(decision.projectId ?? "").trim();
+  const targetCapability = normalizeCapability(decision.capability);
+  const operator = String(decision.resolvedBy ?? decision.operator ?? "").trim();
+  if (!operator) {
+    throw new Error("Operator identity (resolvedBy) wajib diisi untuk verifikasi decision.");
+  }
+
+  const required = Array.isArray(intent.required) ? [...intent.required] : [];
+  const resolved = Array.isArray(intent.resolved) ? [...intent.resolved] : [];
+  const waived = Array.isArray(intent.waived) ? [...intent.waived] : [];
+  let missing = Array.isArray(intent.missing) ? [...intent.missing] : [];
+
+  if (action === "SELECT_SCRIPT") {
+    const script = String(decision.selectedTarget ?? decision.script ?? "").trim();
+    if (!script) {
+      throw new Error("selectedTarget (script) wajib diisi untuk action SELECT_SCRIPT.");
+    }
+    missing = missing.filter((m) => !(m.projectId === targetProjectId && m.capability === targetCapability));
+    if (!resolved.some((r) => r.projectId === targetProjectId && r.capability === targetCapability && r.script === script)) {
+      resolved.push({
+        projectId: targetProjectId,
+        capability: targetCapability,
+        script,
+        source: "OPERATOR_DECISION",
+        resolvedBy: operator,
+        resolvedAt: now.toISOString(),
+      });
+    }
+  } else if (action === "SELECT_RUNNER") {
+    const runner = String(decision.selectedTarget ?? decision.runner ?? "").trim();
+    if (!runner) {
+      throw new Error("selectedTarget (runner) wajib diisi untuk action SELECT_RUNNER.");
+    }
+    missing = missing.filter((m) => !(m.projectId === targetProjectId && m.capability === targetCapability));
+    if (!resolved.some((r) => r.projectId === targetProjectId && r.capability === targetCapability)) {
+      resolved.push({
+        projectId: targetProjectId,
+        capability: targetCapability,
+        runner,
+        source: "REGISTERED_RUNNER",
+        resolvedBy: operator,
+        resolvedAt: now.toISOString(),
+      });
+    }
+  } else if (action === "WAIVE") {
+    const reason = String(decision.reason ?? "").trim();
+    if (!reason) {
+      throw new Error("Reason wajib diisi untuk waiving verification requirement.");
+    }
+    missing = missing.filter((m) => !(m.projectId === targetProjectId && m.capability === targetCapability));
+    waived.push({
+      projectId: targetProjectId,
+      capability: targetCapability,
+      reason,
+      waivedBy: operator,
+      waivedAt: now.toISOString(),
+    });
+  } else if (action === "CANCEL") {
+    return {
+      ...intent,
+      status: "CANCELLED",
+      cancelledBy: operator,
+      cancelledAt: now.toISOString(),
+      cancellationReason: decision.reason || "Cancelled by operator",
+    };
+  }
+
+  let status = "RESOLVED";
+  if (missing.length > 0) {
+    status = "NEEDS_CLARIFICATION";
+  } else if (waived.length > 0) {
+    status = "RESOLVED_WITH_WAIVERS";
+  }
+
+  return {
+    contractVersion: 2,
+    required,
+    resolved,
+    waived,
+    missing,
+    status,
+  };
+}
+

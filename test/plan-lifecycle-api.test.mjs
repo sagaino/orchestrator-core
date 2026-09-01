@@ -54,6 +54,13 @@ function candidate({ approvedBy = null } = {}) {
       contextFrom: [],
       skills: [],
     }],
+    verificationIntent: {
+      contractVersion: 1,
+      required: [{ projectId: "lifecycle-app", capability: "UNIT", source: "EXPLICIT" }],
+      resolved: [{ projectId: "lifecycle-app", capability: "UNIT", script: "test" }],
+      missing: [],
+      status: "RESOLVED",
+    },
     integration: { required: false, projectVerification: [], crossProjectVerification: [], previewRequired: false },
     risk: "LOW",
     complexity: "LOW",

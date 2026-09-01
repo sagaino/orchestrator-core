@@ -125,6 +125,7 @@ export function createReadyTaskEvent(vaultRoot, filePath, services) {
       repository: context.project.repository,
       agent: context.project.agent,
       graphify: context.project.graphify,
+      verificationPolicies: context.project.verificationPolicies || {},
     },
     graph: context.project.graphSummary,
     retrieval: {
