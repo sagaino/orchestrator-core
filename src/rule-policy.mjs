@@ -69,8 +69,9 @@ export const DEFAULT_FALLBACK_RULES = Object.freeze({
 /**
  * Load rule policy from Obsidian Vault (01-Knowledge/rules/<ruleId>.json) with embedded fallback.
  */
-export function loadRulePolicy(vaultRoot, ruleId = "backend-golang") {
-  const normalizedId = String(ruleId ?? "").trim() || "backend-golang";
+export function loadRulePolicy(vaultRoot, ruleId) {
+  if (!ruleId) return null;
+  const normalizedId = String(ruleId).trim();
   if (vaultRoot && typeof vaultRoot === "string") {
     const candidatePath = path.join(vaultRoot, "01-Knowledge", "rules", `${normalizedId}.json`);
     try {
@@ -86,7 +87,7 @@ export function loadRulePolicy(vaultRoot, ruleId = "backend-golang") {
     }
   }
 
-  return DEFAULT_FALLBACK_RULES[normalizedId] ?? DEFAULT_FALLBACK_RULES["backend-golang"];
+  return DEFAULT_FALLBACK_RULES[normalizedId] ?? null;
 }
 
 /**
