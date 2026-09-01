@@ -111,7 +111,35 @@ export function parseFrontmatter(text) {
       metadata[key] = items;
       index = nextIndex - 1;
     } else {
-      metadata[key] = "";
+      const nested = {};
+      let nestedIndex = index + 1;
+      while (nestedIndex < lines.length) {
+        const parent = lines[nestedIndex].match(/^\s{2}([^\s:#][^:]*):(?:\s*(.*))?$/);
+        if (!parent) break;
+        const parentKey = parent[1].trim();
+        const parentValue = parent[2] ?? "";
+        if (parentValue.trim()) {
+          nested[parentKey] = parseScalar(parentValue);
+          nestedIndex += 1;
+          continue;
+        }
+        const child = {};
+        let childIndex = nestedIndex + 1;
+        while (childIndex < lines.length) {
+          const field = lines[childIndex].match(/^\s{4}([^\s:#][^:]*):(?:\s*(.*))?$/);
+          if (!field) break;
+          child[field[1].trim()] = parseScalar(field[2] ?? "");
+          childIndex += 1;
+        }
+        nested[parentKey] = child;
+        nestedIndex = childIndex;
+      }
+      if (Object.keys(nested).length > 0) {
+        metadata[key] = nested;
+        index = nestedIndex - 1;
+      } else {
+        metadata[key] = "";
+      }
     }
   }
   return metadata;
@@ -198,13 +226,15 @@ export function walkMarkdown(directory) {
 export function resolveTaskFile(vaultRoot, projectId, taskInput) {
   const tasksDirectory = path.join(vaultRoot, "02-Projects", projectId, "tasks");
   if (!exists(tasksDirectory)) fail("Direktori task project tidak ditemukan", { tasksDirectory });
+  const canonicalTasksDirectory = fs.realpathSync(tasksDirectory);
 
   const normalizedInput = taskInput.trim();
   const inputCandidates = [normalizedInput, normalizedInput.endsWith(".md") ? normalizedInput : `${normalizedInput}.md`];
   for (const inputCandidate of inputCandidates) {
     let relativeCandidate = inputCandidate;
     if (path.isAbsolute(inputCandidate)) {
-      relativeCandidate = path.relative(tasksDirectory, inputCandidate).split(path.sep).join("/");
+      const canonicalInput = exists(inputCandidate) ? fs.realpathSync(inputCandidate) : path.resolve(inputCandidate);
+      relativeCandidate = path.relative(canonicalTasksDirectory, canonicalInput).split(path.sep).join("/");
     } else {
       const vaultRelativePrefix = path.relative(vaultRoot, tasksDirectory).split(path.sep).join("/");
       if (inputCandidate.replaceAll("\\", "/").startsWith(`${vaultRelativePrefix}/`)) {

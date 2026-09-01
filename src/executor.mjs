@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import {
@@ -56,6 +57,29 @@ const PACKAGE_MANAGER_PATHS = Object.freeze([
 ]);
 
 const DEFAULT_AUTOMATIC_RECOVERY_ATTEMPTS = 2;
+
+function stableFingerprint(value) {
+  return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+export function verificationEnvironmentIdentity(repository, { script, command, invocation, adapter, policy } = {}) {
+  const dependencyFiles = ["package.json", ...PACKAGE_MANAGER_PATHS]
+    .filter((name) => fs.existsSync(path.join(repository, name)))
+    .map((name) => ({ name, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(repository, name))).digest("hex") }));
+  const toolchain = { node: process.version, platform: process.platform, arch: process.arch };
+  return {
+    script,
+    command,
+    invocation,
+    adapter,
+    adapterVersion: 1,
+    dependencyFingerprint: stableFingerprint(dependencyFiles),
+    dependencyFiles,
+    toolchain,
+    toolchainFingerprint: stableFingerprint(toolchain),
+    policyFingerprint: stableFingerprint(policy ?? {}),
+  };
+}
 
 export function configuredAutomaticRecoveryAttempts(env = process.env) {
   const raw = env.ORCHESTRATOR_AUTO_RECOVERY_ATTEMPTS;
@@ -625,6 +649,28 @@ async function verifyAndRefresh({
     const { scriptName, ...invocation } = parsed;
     const policy = policies[scriptName] || { mode: "STRICT" };
 
+    if (policy.mode === "NO_NEW_FINDINGS") {
+      const baselineIdentity = current.execution?.baselineVerification?.[scriptName]?.environmentIdentity;
+      if (!baselineIdentity) {
+        throw new Error(`Baseline identity tidak tersedia untuk ${scriptName}.`);
+      }
+      const candidateIdentity = verificationEnvironmentIdentity(repository, {
+        script: scriptName,
+        command: verificationCommand,
+        invocation,
+        adapter: policy.adapter || "eslint",
+        policy,
+      });
+      for (const field of ["dependencyFingerprint", "toolchainFingerprint", "policyFingerprint"]) {
+        if (candidateIdentity[field] !== baselineIdentity[field]) {
+          throw new Error(`Baseline identity drift untuk ${scriptName}: ${field}. Re-planning diperlukan.`);
+        }
+      }
+      if (JSON.stringify(candidateIdentity.invocation) !== JSON.stringify(baselineIdentity.invocation)) {
+        throw new Error(`Baseline command drift untuk ${scriptName}. Re-planning diperlukan.`);
+      }
+    }
+
     const result = await processRunner({
       ...invocation,
       cwd: repository,
@@ -633,7 +679,7 @@ async function verifyAndRefresh({
       allowLoopback: verificationRequiresLoopback(scriptName, current.execution?.frozenVerificationScripts?.[scriptName]),
     });
     const diagnostic = diagnosticTail(result);
-    const output = (result.stdoutTail || "") + (result.stderrTail || "");
+    const output = result.stdoutTail || "";
 
     if (policy.mode === "NO_NEW_FINDINGS") {
       const adapter = policy.adapter || "eslint";
@@ -643,6 +689,7 @@ async function verifyAndRefresh({
         output,
         repositoryRoot: repository,
         exitCode: result.exitCode,
+        expectedFormat: policy.format || "ESLINT_JSON",
       });
       
       const comparison = compareVerificationFindings({
@@ -1254,31 +1301,44 @@ export async function executeRun({
           const baselineCommand = (typeof rawCommand === "string" && rawCommand.startsWith("npm"))
             ? rawCommand
             : `npm run ${scriptName}`;
+          const { scriptName: parsedScriptName, ...baselineInvocation } = parseVerificationCommand(baselineCommand);
+          if (parsedScriptName !== scriptName) {
+            throw new Error(`Baseline script identity mismatch: ${scriptName} != ${parsedScriptName}`);
+          }
           
           const result = await processRunner({
-            command: baselineCommand,
+            ...baselineInvocation,
             cwd: repository,
             stage: `baseline-verification:${scriptName}`,
             eventLogPath,
           });
 
-          const output = (result.stdoutTail || "") + (result.stderrTail || "");
+          const output = result.stdoutTail || "";
           const parseResult = parseFindingsForAdapter({
             adapter,
             output,
             repositoryRoot: repository,
             exitCode: result.exitCode,
+            expectedFormat: policy.format || "ESLINT_JSON",
           });
 
           baselineVerification[scriptName] = {
             commit: workspace.baseCommit,
             script: scriptName,
             command: baselineCommand,
+            invocation: baselineInvocation,
             adapter,
             exitCode: result.exitCode,
             findings: parseResult.findings,
             parseResult,
             findingsFingerprint: computeFindingsFingerprint(parseResult.findings),
+            environmentIdentity: verificationEnvironmentIdentity(repository, {
+              script: scriptName,
+              command: baselineCommand,
+              invocation: baselineInvocation,
+              adapter,
+              policy,
+            }),
             capturedAt: new Date().toISOString(),
           };
         }

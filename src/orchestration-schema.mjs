@@ -16,7 +16,7 @@ const COMPLEXITIES = new Set(["LOW", "MEDIUM", "HIGH"]);
 const DECISION_TYPES = new Set([
   "FRESH_PROJECT_CREATION", "PLAN_APPROVAL", "PLAN_CLARIFICATION", "NODE_RETRY",
   "SCOPE_EXPANSION", "INTEGRATION_CONFLICT", "HIGH_RISK_CHANGE", "OBJECTIVE_ACCEPTANCE",
-  "BUDGET_EXCEEDED", "SKILL_ASSIGNMENT",
+  "BUDGET_EXCEEDED", "SKILL_ASSIGNMENT", "VERIFICATION_DECISION",
 ]);
 const DECISION_STATES = new Set(["OPEN", "RESOLVED", "CANCELLED"]);
 const RISK_ORDER = new Map([["LOW", 1], ["MEDIUM", 2], ["HIGH", 3]]);
@@ -236,8 +236,10 @@ function validateNode(node, index, plan, options, errors) {
 
 export function validatePlanRecord(plan, options = {}) {
   const errors = [];
-  validateVersion(plan, "plan", errors);
+  add(errors, isRecord(plan), "plan must be a non-null object");
   if (!isRecord(plan)) return result(errors);
+  add(errors, [1, 2].includes(plan.schemaVersion), "plan.schemaVersion must be a supported version (1 or 2)");
+  add(errors, nonNegativeInteger(plan.revision), "plan.revision must be a non-negative integer");
 
   add(errors, identifier(plan.planId), "plan.planId must be a stable identifier");
   add(errors, identifier(plan.objectiveId), "plan.objectiveId must be a stable identifier");
@@ -263,6 +265,19 @@ export function validatePlanRecord(plan, options = {}) {
   add(errors, plan.approvedBy === null || nonEmptyString(plan.approvedBy), "plan.approvedBy must be null or non-empty");
   add(errors, plan.approvedAt === null || isoDate(plan.approvedAt), "plan.approvedAt must be null or an ISO timestamp");
   add(errors, isoDate(plan.createdAt), "plan.createdAt must be an ISO timestamp");
+
+  if (plan.schemaVersion === 2 && options.requireGovernance !== false) {
+    add(errors, isRecord(plan.verificationIntent), "plan.verificationIntent is required for schemaVersion 2");
+    if (isRecord(plan.verificationIntent)) {
+      const intent = plan.verificationIntent;
+      add(errors, intent.contractVersion === 2, "plan.verificationIntent.contractVersion must be 2");
+      add(errors, Array.isArray(intent.required), "plan.verificationIntent.required must be an array");
+      add(errors, Array.isArray(intent.resolved), "plan.verificationIntent.resolved must be an array");
+      add(errors, Array.isArray(intent.waived), "plan.verificationIntent.waived must be an array");
+      add(errors, Array.isArray(intent.missing), "plan.verificationIntent.missing must be an array");
+      add(errors, ["RESOLVED", "RESOLVED_WITH_WAIVERS", "NEEDS_CLARIFICATION", "CANCELLED"].includes(intent.status), "plan.verificationIntent.status is unsupported");
+    }
+  }
 
   const knownProjects = knownProjectsFor(options);
   if (knownProjects) for (const projectId of plan.projects ?? []) {

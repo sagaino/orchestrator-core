@@ -30,7 +30,7 @@ function budget(maxRetriesPerNode = 2) {
 
 function planFor(objectiveId, planId) {
   const plan = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 1,
     planId,
     objectiveId,
@@ -88,6 +88,14 @@ function planFor(objectiveId, planId) {
     approvedAt: timestamp,
     createdAt: timestamp,
     updatedAt: timestamp,
+    verificationIntent: {
+      contractVersion: 2,
+      required: [{ projectId: "scheduler-project", capability: "UNIT", requestedAs: "test", source: "PLAN" }],
+      resolved: [{ projectId: "scheduler-project", capability: "UNIT", requestedAs: "test", source: "PLAN", script: "test" }],
+      waived: [],
+      missing: [],
+      status: "RESOLVED",
+    },
   };
   return { ...plan, planFingerprint: planFingerprint(plan) };
 }

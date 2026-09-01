@@ -6,7 +6,7 @@ import { createPlanRevision } from "./plan-lifecycle.mjs";
 import { getPlan } from "./plan-store.mjs";
 import { decomposeProject } from "./project-decomposer.mjs";
 import { resolveProjectBlueprint } from "./project-blueprint.mjs";
-import { extractVerificationIntent } from "./verification-intent.mjs";
+import { extractVerificationIntent, resolveVerificationIntent } from "./verification-intent.mjs";
 
 export class ObjectivePlanningError extends Error {
   constructor(message, { statusCode = 400, code = "OBJECTIVE_PLANNING_INVALID", details = null } = {}) {
@@ -178,11 +178,14 @@ export async function planObjective({
     const contexts = buildProjectContexts(vaultRoot, objective);
     const knowledge = buildObjectiveKnowledge(vaultRoot, objective);
     const effectiveObj = effectiveObjective(objective, clarification);
-    const verificationIntent = extractVerificationIntent({
-      request: effectiveObj.request,
-      structuredIntent: objective.structuredVerificationIntent || null,
-      projectContexts: contexts,
-    });
+    const verificationIntent = objective.verificationIntent?.contractVersion === 2
+      && ["RESOLVED", "RESOLVED_WITH_WAIVERS"].includes(objective.verificationIntent.status)
+      ? resolveVerificationIntent({ intent: objective.verificationIntent, projectContexts: contexts })
+      : extractVerificationIntent({
+          request: effectiveObj.request,
+          structuredIntent: objective.structuredVerificationIntent || null,
+          projectContexts: contexts,
+        });
 
     if (verificationIntent.status === "NEEDS_CLARIFICATION") {
       const missingList = verificationIntent.missing.map((m) => `${m.capability} (${m.reason})`).join(", ");

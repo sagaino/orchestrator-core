@@ -17,9 +17,10 @@ export function parseFindingsForAdapter({
   output = "",
   repositoryRoot = "",
   exitCode = 0,
+  expectedFormat = "ESLINT_JSON",
 } = {}) {
   if (adapter === "eslint") {
-    return parseEslintOutput({ output, repositoryRoot, exitCode });
+    return parseEslintOutput({ output, repositoryRoot, exitCode, expectedFormat });
   }
   return {
     adapter,
@@ -75,7 +76,7 @@ export function compareVerificationFindings({
   }
 
   // Check baseline parse validity
-  if (baseline.parseResult?.status === "UNPARSEABLE" || baseline.status === "UNPARSEABLE") {
+  if ((baseline.parseResult && baseline.parseResult.status !== "PARSED") || baseline.status === "UNPARSEABLE") {
     return {
       script,
       mode: "NO_NEW_FINDINGS",
@@ -87,7 +88,7 @@ export function compareVerificationFindings({
   }
 
   // Check candidate parse validity
-  if (candidate?.parseResult?.status === "UNPARSEABLE" || candidate?.status === "UNPARSEABLE") {
+  if ((candidate?.parseResult && candidate.parseResult.status !== "PARSED") || candidate?.status === "UNPARSEABLE") {
     return {
       script,
       mode: "NO_NEW_FINDINGS",

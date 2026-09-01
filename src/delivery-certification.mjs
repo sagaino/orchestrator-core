@@ -64,6 +64,19 @@ function latestPreview(previews) {
   return [...previews].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] ?? null;
 }
 
+function verificationTarget(check) {
+  const explicit = String(check?.script ?? check?.runner ?? "").trim();
+  if (explicit) return explicit;
+  const command = String(check?.command ?? "").trim();
+  const npm = command.match(/^npm\s+(?:run\s+)?([^\s]+)/);
+  return npm ? npm[1] : command;
+}
+
+function verificationPassed(check) {
+  if (["FAIL_REGRESSION", "BASELINE_UNAVAILABLE", "UNCOMPARABLE", "ADAPTER_UNAVAILABLE", "TOOLCHAIN_DRIFT", "FAIL"].includes(check?.status)) return false;
+  return check?.passed !== false && (check?.exitCode === 0 || ["PASS_NO_REGRESSION", "PASS_IMPROVED", "PASS"].includes(check?.status));
+}
+
 export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now = new Date(), automatic = false } = {}) {
   if (!runsRoot || !SAFE_ID.test(String(objectiveId ?? ""))) throw new Error("runsRoot dan objectiveId valid wajib diisi.");
   const objectiveEvidence = buildObjectiveEvidence({ runsRoot, objectiveId });
@@ -91,9 +104,43 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
   const previewComplete = !previewRequired || Boolean(preview && preview.status === "READY");
   const cleanupComplete = (!previewRequired || preview?.cleanup?.status === "CLEANED") && runCleanups.every((item) => item.cleaned);
   const hasIntent = Boolean(objectiveEvidence.plan?.verificationIntent);
+  const governedIntent = objectiveEvidence.plan?.schemaVersion === 2 && objectiveEvidence.plan?.verificationIntent?.contractVersion === 2;
   const intentMissing = hasIntent ? (objectiveEvidence.plan.verificationIntent.missing ?? []) : [];
   const intentResolved = hasIntent ? (objectiveEvidence.plan.verificationIntent.resolved ?? []) : [];
-  const verificationIntentPassing = hasIntent && intentMissing.length === 0;
+  const intentWaived = hasIntent ? (objectiveEvidence.plan.verificationIntent.waived ?? []) : [];
+  const intentRequired = hasIntent ? (objectiveEvidence.plan.verificationIntent.required ?? []) : [];
+  const exactIntentAccounting = intentRequired.every((required) => {
+    const matches = (item) => item.projectId === required.projectId && item.capability === required.capability;
+    return intentResolved.filter(matches).length + intentWaived.filter(matches).length === 1;
+  });
+  const isRequired = (item) => intentRequired.some((required) => required.projectId === item.projectId && required.capability === item.capability);
+  const onlyRequiredResolutions = [...intentResolved, ...intentWaived].every(isRequired);
+  const validWaivers = intentWaived.every((item) => String(item.reason ?? "").trim() && String(item.waivedBy ?? "").trim() && Number.isFinite(Date.parse(item.waivedAt)));
+  const passingTargets = new Map();
+  const addPassingTarget = (projectId, check) => {
+    const target = verificationTarget(check);
+    if (!projectId || !target || !verificationPassed(check)) return;
+    if (!passingTargets.has(projectId)) passingTargets.set(projectId, new Set());
+    passingTargets.get(projectId).add(target);
+  };
+  for (const run of runs) {
+    const checks = Array.isArray(run?.execution?.verification)
+      ? run.execution.verification
+      : Array.isArray(run?.execution?.verification?.results) ? run.execution.verification.results : [];
+    for (const check of checks) addPassingTarget(run?.project?.id, check);
+  }
+  for (const check of objectiveEvidence.verification.results ?? []) addPassingTarget(check.projectId, check);
+  const intentExecutionEvidence = intentResolved.map((resolution) => {
+    const target = resolution.script ?? resolution.runner ?? null;
+    return { ...resolution, target, passed: Boolean(target && passingTargets.get(resolution.projectId)?.has(target)) };
+  });
+  const verificationIntentPassing = governedIntent
+    && ["RESOLVED", "RESOLVED_WITH_WAIVERS"].includes(objectiveEvidence.plan.verificationIntent.status)
+    && intentMissing.length === 0
+    && exactIntentAccounting
+    && onlyRequiredResolutions
+    && validWaivers
+    && intentExecutionEvidence.every((item) => item.passed);
   const baselineChecksPassing = runs.every((run) => {
     const rawVerification = run?.execution?.verification;
     const runVerification = Array.isArray(rawVerification)
@@ -102,10 +149,7 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
       ? rawVerification.results
       : [];
     return runVerification.every((v) => {
-      if (v.status && ["FAIL_REGRESSION", "BASELINE_UNAVAILABLE", "UNCOMPARABLE", "ADAPTER_UNAVAILABLE", "TOOLCHAIN_DRIFT", "FAIL"].includes(v.status)) {
-        return false;
-      }
-      return v.passed !== false && (v.exitCode === 0 || ["PASS_NO_REGRESSION", "PASS_IMPROVED", "PASS"].includes(v.status));
+      return verificationPassed(v);
     });
   });
 
@@ -121,8 +165,8 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
     result(
       "VERIFICATION_INTENT_COMPLETE",
       hasIntent ? (verificationIntentPassing && baselineChecksPassing) : false,
-      !hasIntent
-        ? "Verification intent is missing from approved plan."
+      !governedIntent
+        ? "Governed verification intent v2 is missing from approved plan."
         : !verificationIntentPassing
         ? `Verification intent contains unresolved checks: ${intentMissing.map((m) => m.capability).join(", ")}`
         : !baselineChecksPassing
@@ -133,6 +177,11 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
         missing: intentMissing,
         resolved: intentResolved,
         intent: objectiveEvidence.plan?.verificationIntent ?? null,
+        governedIntent,
+        exactIntentAccounting,
+        onlyRequiredResolutions,
+        validWaivers,
+        executionEvidence: intentExecutionEvidence,
         baselineChecksPassing,
       }
     ),

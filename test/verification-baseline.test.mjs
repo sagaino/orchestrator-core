@@ -163,10 +163,31 @@ const compEmptyNonZero = compareVerificationFindings({
 });
 assert.equal(compEmptyNonZero.status, "UNCOMPARABLE");
 
+// Empty output with exit zero is still not machine-readable evidence.
+const emptyZero = parseFindingsForAdapter({ adapter: "eslint", output: "", exitCode: 0 });
+assert.equal(emptyZero.status, "UNPARSEABLE");
+const compEmptyZero = compareVerificationFindings({
+  script: "lint",
+  mode: "NO_NEW_FINDINGS",
+  baseline: { commit: "base-1", exitCode: 1, findings: base35 },
+  candidate: { exitCode: 0, findings: emptyZero.findings, parseResult: emptyZero },
+});
+assert.equal(compEmptyZero.status, "UNCOMPARABLE");
+
 // Valid [] with approved formatter -> PARSED with zero findings
 const validEmpty = parseFindingsForAdapter({ adapter: "eslint", output: "[]", exitCode: 0 });
 assert.equal(validEmpty.status, "PARSED");
 assert.equal(validEmpty.findings.length, 0);
+
+const unexpectedSuccess = parseFindingsForAdapter({ adapter: "eslint", output: "Everything looks wonderful today", exitCode: 0 });
+assert.equal(unexpectedSuccess.status, "UNPARSEABLE");
+const compUnexpectedSuccess = compareVerificationFindings({
+  script: "lint",
+  mode: "NO_NEW_FINDINGS",
+  baseline: { commit: "base-1", exitCode: 1, findings: base35 },
+  candidate: { exitCode: 0, findings: unexpectedSuccess.findings, parseResult: unexpectedSuccess },
+});
+assert.equal(compUnexpectedSuccess.status, "UNCOMPARABLE");
 
 // Baseline parse failure -> BASELINE_UNAVAILABLE
 const compBaselineParseFail = compareVerificationFindings({
@@ -178,4 +199,3 @@ const compBaselineParseFail = compareVerificationFindings({
 assert.equal(compBaselineParseFail.status, "BASELINE_UNAVAILABLE");
 
 console.log("verification-baseline.test.mjs: All verification baseline tests passed!");
-

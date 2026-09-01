@@ -99,9 +99,20 @@ function assertModelCandidate({ objective, candidate, revision, now }) {
   }
 
   const expectedPlanId = `plan-${objective.objectiveId}-r${revision}`;
+  const verificationIntent = isObject(candidate.verificationIntent)
+    ? {
+        ...structuredClone(candidate.verificationIntent),
+        contractVersion: 2,
+        waived: Array.isArray(candidate.verificationIntent.waived) ? structuredClone(candidate.verificationIntent.waived) : [],
+        required: Array.isArray(candidate.verificationIntent.required) ? structuredClone(candidate.verificationIntent.required) : [],
+        resolved: Array.isArray(candidate.verificationIntent.resolved) ? structuredClone(candidate.verificationIntent.resolved) : [],
+        missing: Array.isArray(candidate.verificationIntent.missing) ? structuredClone(candidate.verificationIntent.missing) : [],
+      }
+    : null;
   const record = {
     ...structuredClone(candidate),
-    schemaVersion: 1,
+    schemaVersion: 2,
+    verificationIntent,
     revision,
     planId: expectedPlanId,
     objectiveId: objective.objectiveId,
