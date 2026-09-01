@@ -9,6 +9,7 @@ import { runProcess } from "./executor.mjs";
 import { diagnoseCrossProject, validateCrossProjectPlan } from "./cross-project-diagnostics.mjs";
 import { projectSignalsForProjects } from "./skill-assignment.mjs";
 import { routePlanSkills, routingEvidence } from "./skill-router.mjs";
+import { validateVerificationCoverage } from "./verification-intent.mjs";
 
 export const PROJECT_DECOMPOSITION_STAGE = "project-decomposition";
 export const PROJECT_DECOMPOSITION_REVISION = 1;
@@ -268,8 +269,8 @@ export function normalizePlanAllowedPaths(plan, projectContexts = [], vaultRoot 
       if (!isRecord(node)) return node;
       const project = projectMap.get(String(node.projectId ?? ""));
       const repository = project?.repository;
-      const blueprint = project?.blueprint || "backend-golang";
-      const policy = loadRulePolicy(vaultRoot, blueprint);
+      const blueprint = project?.blueprint?.id || project?.blueprint || null;
+      const policy = blueprint ? loadRulePolicy(vaultRoot, blueprint) : null;
       const availableScripts = (project?.verificationScripts ?? project?.verification ?? []).map(String);
 
       const allowedPaths = Array.isArray(node.allowedPaths)
@@ -283,7 +284,7 @@ export function normalizePlanAllowedPaths(plan, projectContexts = [], vaultRoot 
       return {
         ...node,
         allowedPaths,
-        verification: verification && verification.length > 0 ? verification : (availableScripts.length > 0 ? availableScripts : ["go test ./..."]),
+        verification: verification && verification.length > 0 ? verification : (availableScripts.length > 0 ? availableScripts : []),
       };
     }),
   };
@@ -401,6 +402,7 @@ export async function decomposeProject({
   projectContexts = [],
   knowledge = [],
   graphifyContext = "",
+  verificationIntent = null,
   runsRoot = null,
   vaultRoot = null,
   processRunner = runProcess,
@@ -510,6 +512,19 @@ export async function decomposeProject({
   const validation = validateParsedPlan(normalizedPlan, objective, budget, projectContexts);
   if (!validation.errors.length && crossProjectDiagnosis) {
     validation.errors.push(...validateCrossProjectPlan(normalizedPlan, crossProjectDiagnosis, objective));
+  }
+  if (!validation.errors.length && verificationIntent) {
+    const coverage = validateVerificationCoverage({
+      intent: verificationIntent,
+      planNodes: normalizedPlan.nodes,
+      integrationVerification: [
+        ...(Array.isArray(normalizedPlan.integration?.projectVerification) ? normalizedPlan.integration.projectVerification : []),
+        ...(Array.isArray(normalizedPlan.integration?.crossProjectVerification) ? normalizedPlan.integration.crossProjectVerification : []),
+      ],
+    });
+    if (!coverage.valid) {
+      validation.errors.push(coverage.error);
+    }
   }
   if (validation.errors.length) {
     throw errorWithCode(`Decomposition plan invalid: ${validation.errors.join("; ")}`, "INVALID_PLAN", {

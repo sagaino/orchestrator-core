@@ -99,6 +99,7 @@ export function buildDeliveryCertificationEvidence({ runsRoot, objectiveId, now 
     result("HUMAN_ACCEPTANCE_COMPLETE", automatic || objectiveEvidence.finalAcceptance.state === "ACCEPTED", automatic ? "Final acceptance is handled by the single final user gate." : "Objective final acceptance is recorded by a human gate.", { required: !automatic, state: objectiveEvidence.finalAcceptance.state, acceptedBy: objectiveEvidence.finalAcceptance.acceptedBy ?? null, acceptedAt: objectiveEvidence.finalAcceptance.acceptedAt ?? null }),
     result("CLEANUP_COMPLETE", cleanupComplete, previewRequired ? "Aggregate preview and isolated run workspaces are cleaned." : "Isolated run workspaces are cleaned; aggregate preview was not required.", { previewRequired, previewCleanup: previewRequired ? (preview?.cleanup?.status ?? "MISSING") : "NOT_REQUIRED", runCleanups }),
     result("KNOWLEDGE_CAPTURE_COMPLETE", knowledge.length > 0 && knowledge.every((item) => item.approved && item.synced), "Knowledge approval/capture is present for every source run.", { knowledge }),
+    result("VERIFICATION_INTENT_COMPLETE", (objectiveEvidence.plan?.verificationIntent?.missing?.length ?? 0) === 0, (objectiveEvidence.plan?.verificationIntent?.missing?.length ?? 0) === 0 ? "Verification intent is satisfied." : "Verification intent contains unresolved checks.", { intent: objectiveEvidence.plan?.verificationIntent ?? null }),
   ];
   const blockers = checks.filter((check) => check.status !== "PASS").map((check) => check.id);
   const machineReady = blockers.length === 0;
