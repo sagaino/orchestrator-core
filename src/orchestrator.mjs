@@ -500,6 +500,31 @@ export async function main(argv = process.argv.slice(2)) {
       const { buildReleaseArtifact } = await import("./release-artifact.mjs");
       const dashboardRoot = options.dashboardRoot ?? process.env.ORCHESTRATOR_DASHBOARD_PATH ?? path.resolve(process.cwd(), "../../ciniru/orchestrator-dashboard");
       result = buildReleaseArtifact({ repoRoot: process.cwd(), dashboardRoot, outputRoot: path.join(options.runs, "runtime", "release-artifacts"), releaseVersion });
+    } else if (command === "project-blueprint-audit") {
+      const { listProjects, readMarkdown, projectPagePath } = await import("./core.mjs");
+      const { resolveProjectBlueprint } = await import("./project-blueprint.mjs");
+      const registry = listProjects(options.vault);
+      const audits = registry.projects.map((project) => {
+        const doc = readMarkdown(projectPagePath(options.vault, project.projectPage), options.vault);
+        const resolution = resolveProjectBlueprint({
+          projectMetadata: doc?.metadata || {},
+          registryMetadata: project,
+          repositoryPath: project.repository,
+        });
+        return {
+          projectId: project.id,
+          repository: project.repository,
+          blueprint: resolution,
+          verificationDefaults: project.verificationDefaults || [],
+          verificationPolicies: doc?.metadata?.verification_policies || {},
+        };
+      });
+      result = {
+        totalProjects: audits.length,
+        verifiedCount: audits.filter((a) => a.blueprint.valid).length,
+        unresolvedCount: audits.filter((a) => !a.blueprint.valid).length,
+        projects: audits,
+      };
     } else if (command === "migration-matrix") {
       const { runMigrationMatrixCertification } = await import("./migration-upgrade.mjs");
       result = runMigrationMatrixCertification({ reportRoot: options.runs });
