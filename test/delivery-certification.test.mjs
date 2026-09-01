@@ -47,6 +47,12 @@ try {
   createObjective({ runsRoot, record: { schemaVersion: 1, revision: 0, objectiveId, mode: "EXISTING_PROJECT", state: "DONE", request: "Certify delivery fixture.", requestedBy: "delivery-reviewer", projectIds: ["delivery-project"], freshProject: null, activePlanId: planId, activeOrchestrationId: orchestrationId, budget, createdAt: timestamp, updatedAt: timestamp } });
   createPlan({ runsRoot, record: {
     schemaVersion: 1, revision: 1, planId, objectiveId, state: "APPROVED", summary: "Delivery certification fixture.", architectureDecisions: [], assumptions: [], clarificationNeeded: false, clarificationQuestion: null, projects: ["delivery-project"],
+    verificationIntent: {
+      status: "RESOLVED",
+      requested: [{ capability: "UNIT", script: "npm test", source: "PROJECT_DEFAULT" }],
+      resolved: [{ capability: "UNIT", script: "npm test", source: "PROJECT_DEFAULT" }],
+      missing: [],
+    },
     nodes: [{ nodeId: "N01", title: "Deliver fixture", purpose: "Complete delivery fixture.", projectId: "delivery-project", role: "BACKEND", type: "IMPLEMENTATION", dependsOn: [], acceptanceCriteria: ["Delivery is complete."], allowedPaths: ["src/App.tsx"], verification: ["npm test"], risk: "LOW", complexity: "LOW", requiresChanges: true, canRunInParallel: false, writeConflictGroup: null, contextFrom: [], skills: [] }],
     integration: { required: false, projectVerification: [], crossProjectVerification: [], previewRequired: true }, risk: "LOW", complexity: "LOW", approvedBy: "delivery-reviewer", approvedAt: timestamp, createdAt: timestamp, updatedAt: timestamp, planFingerprint,
   }, validationOptions: { knownProjectIds: ["delivery-project"], budget } });

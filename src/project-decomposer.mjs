@@ -195,6 +195,13 @@ function boundedProjectContexts(projectContexts = []) {
   return (Array.isArray(projectContexts) ? projectContexts : []).slice(0, 8).map((project) => ({
     projectId: boundedText(project?.projectId ?? project?.id, 160),
     summary: boundedText(project?.summary ?? project?.context ?? project?.architecture, 1800),
+    blueprint: project?.blueprint ? {
+      id: boundedText(project.blueprint.id, 80),
+      source: boundedText(project.blueprint.source, 40),
+      confidence: boundedText(project.blueprint.confidence, 20),
+      policyVersion: Number(project.blueprint.policyVersion) || 1,
+      policyFingerprint: boundedText(project.blueprint.policyFingerprint, 64) || null,
+    } : null,
     verification: (Array.isArray(project?.verification) ? project.verification : Array.isArray(project?.verificationScripts) ? project.verificationScripts : [])
       .map((item) => boundedText(item, 120)).filter(Boolean).slice(0, 16),
     activeTasks: (Array.isArray(project?.activeTasks) ? project.activeTasks : []).slice(0, 8).map((task) => ({
@@ -462,7 +469,15 @@ export async function decomposeProject({
     `The only allowed project IDs are: ${JSON.stringify(sortedProjectIds(objective.projectIds))}.`,
     `Budget ceilings: ${JSON.stringify(budget)}. Never exceed them silently.`,
     "Every node.allowedPaths entry must be a repository-relative POSIX path such as src/components/Button.tsx or src/features/**. Never emit an absolute path, repository root path, drive-letter path, backslash path, or . / .. traversal segment. Never copy the repository path from context into allowedPaths. DIAGNOSTIC and VERIFICATION nodes must use allowedPaths=[] and requiresChanges=false.",
-    ...projectContexts.map((project) => formatRulePromptConstraint(loadRulePolicy(vaultRoot, project?.blueprint || "backend-golang"))).filter(Boolean),
+    ...projectContexts.map((project) => {
+      const blueprintId = project?.blueprint?.id || (typeof project?.blueprint === "string" ? project.blueprint : null);
+      if (!blueprintId) return "";
+      const policy = loadRulePolicy(vaultRoot, blueprintId);
+      if (!policy) {
+        throw errorWithCode(`Rule policy tidak ditemukan untuk blueprint: ${blueprintId}`, "PROJECT_POLICY_NOT_FOUND");
+      }
+      return formatRulePromptConstraint(policy);
+    }).filter(Boolean),
     "Every node.verification MUST contain ONLY exact script names from the project verification list (e.g. \"go test ./...\", \"go vet ./...\"). Never invent package-specific or sub-path script names (such as \"go test ./internal/...\").",
     "If a safe decomposition is impossible without a human answer, return only the clarification JSON shape with clarificationNeeded=true and a precise clarificationQuestion.",
     "integration.projectVerification and integration.crossProjectVerification may contain only approved scoped strings in the exact form projectId:script; never use objects, prose, acceptance criteria, or shell commands. For multi-project integration include at least one projectVerification entry per project and at least one crossProjectVerification entry.",

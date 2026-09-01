@@ -2178,7 +2178,9 @@ try {
   }), /Verification gagal/);
   const failedVerification = listRuns(runsRoot).find((run) => run.runId === recoveryPrepared.runId);
   assert.equal(failedVerification.state, RUN_STATES.FAILED);
-  assert.deepEqual(failedVerification.execution.verification, [{ command: "npm run test", exitCode: 2 }]);
+  assert.equal(failedVerification.execution.verification[0].command, "npm run test");
+  assert.equal(failedVerification.execution.verification[0].exitCode, 2);
+  assert.equal(failedVerification.execution.verification[0].status, "FAIL");
   assert.equal(failedVerification.execution.automaticRecovery.status, "EXHAUSTED");
   assert.equal(failedVerification.execution.automaticRecovery.deterministicRetry.outcome, "FAILED");
   assert.equal(failedVerification.execution.automaticRecovery.attempts.length, 1);
@@ -2195,7 +2197,9 @@ try {
   });
   assert.equal(recovered.state, RUN_STATES.REVIEW);
   assert.equal(recovered.execution.recovery.status, "SUCCESS");
-  assert.deepEqual(recovered.execution.verification, [{ command: "npm run test", exitCode: 0 }]);
+  assert.equal(recovered.execution.verification[0].command, "npm run test");
+  assert.equal(recovered.execution.verification[0].exitCode, 0);
+  assert.equal(recovered.execution.verification[0].status, "PASS");
   assert.equal(readMarkdown(recoveryTaskPath, vault).metadata.status, "REVIEW");
 
   const failingTaskPath = path.join(taskDirectory, "task-003.md");

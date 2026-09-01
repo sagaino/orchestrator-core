@@ -13,7 +13,11 @@ const runsRoot = path.join(root, "runs");
 const repository = path.join(root, "repository");
 fs.mkdirSync(path.join(vaultRoot, "02-Projects", "autopilot-app"), { recursive: true });
 fs.mkdirSync(repository, { recursive: true });
-fs.writeFileSync(path.join(repository, "package.json"), JSON.stringify({ scripts: { test: "node --version" } }));
+fs.writeFileSync(path.join(repository, "package.json"), JSON.stringify({
+  dependencies: { react: "^18.3.1" },
+  devDependencies: { vite: "^5.4.2", typescript: "^5.5.4" },
+  scripts: { test: "node --version" },
+}));
 fs.writeFileSync(path.join(vaultRoot, "project-registry.md"), [
   "# Project Registry",
   "| project_id | project_page | repository | agent | graphify | graphify_output |",
