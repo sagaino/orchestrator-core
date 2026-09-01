@@ -5,6 +5,8 @@ import { getObjective, updateObjective } from "./objective-store.mjs";
 import { createPlanRevision } from "./plan-lifecycle.mjs";
 import { getPlan } from "./plan-store.mjs";
 import { decomposeProject } from "./project-decomposer.mjs";
+import { resolveProjectBlueprint } from "./project-blueprint.mjs";
+import { extractVerificationIntent } from "./verification-intent.mjs";
 
 export class ObjectivePlanningError extends Error {
   constructor(message, { statusCode = 400, code = "OBJECTIVE_PLANNING_INVALID", details = null } = {}) {
@@ -94,10 +96,23 @@ function buildProjectContexts(vaultRoot, objective) {
       });
     }
     const document = readMarkdown(projectPagePath(vaultRoot, project.projectPage), vaultRoot);
+    const blueprint = resolveProjectBlueprint({
+      projectMetadata: document?.metadata || {},
+      registryMetadata: project,
+      repositoryPath: project.repository,
+    });
+    if (!blueprint.valid) {
+      fail(`Project blueprint gagal ditentukan untuk project ${projectId}: ${blueprint.error}`, {
+        statusCode: 422,
+        code: "PROJECT_BLUEPRINT_UNRESOLVED",
+        details: { code: "PROJECT_BLUEPRINT_UNRESOLVED", projectId, error: blueprint.error },
+      });
+    }
     return {
       projectId,
       repository: project.repository,
       summary: bounded(document?.body, 4_000),
+      blueprint,
       verification,
       verificationScripts: availableScripts.length > 0 ? availableScripts : verification,
       activeTasks: [],
@@ -161,12 +176,52 @@ export async function planObjective({
 
     const contexts = buildProjectContexts(vaultRoot, objective);
     const knowledge = buildObjectiveKnowledge(vaultRoot, objective);
+    const effectiveObj = effectiveObjective(objective, clarification);
+    const verificationIntent = extractVerificationIntent({
+      request: effectiveObj.request,
+      structuredIntent: objective.structuredVerificationIntent || null,
+      projectContexts: contexts,
+    });
+
+    if (verificationIntent.status === "NEEDS_CLARIFICATION") {
+      const missingList = verificationIntent.missing.map((m) => `${m.capability} (${m.reason})`).join(", ");
+      const question = `Verifikasi berikut diminta oleh user/policy tetapi tidak tersedia script yang disetujui di project: ${missingList}. Apakah Anda ingin melanjutkan tanpa verifikasi ini atau menentukan script lain?`;
+      const updated = updateObjective({
+        runsRoot,
+        objectiveId,
+        expectedRevision: objective.revision,
+        now,
+        update: (record) => ({
+          ...record,
+          state: "NEEDS_CLARIFICATION",
+          verificationIntent,
+          planning: {
+            status: "NEEDS_CLARIFICATION",
+            clarificationQuestion: question,
+            requestedAt: now.toISOString(),
+            requestedBy: String(requestedBy || "user"),
+          },
+        }),
+      });
+      return {
+        status: "NEEDS_CLARIFICATION",
+        clarificationNeeded: true,
+        clarificationQuestion: question,
+        verificationIntent,
+        objective: updated,
+        plan: null,
+        alreadyPlanned: false,
+      };
+    }
+
     const result = await decomposer({
-      objective: effectiveObjective(objective, clarification),
+      objective: effectiveObj,
       projectContexts: contexts,
       knowledge,
       graphifyContext: bounded(JSON.stringify(contexts.map((project) => ({ projectId: project.projectId, graph: project.graph }))), 3_000),
+      verificationIntent,
       runsRoot,
+      vaultRoot,
       now,
       env,
     });
@@ -180,6 +235,7 @@ export async function planObjective({
         update: (record) => ({
           ...record,
           state: "NEEDS_CLARIFICATION",
+          verificationIntent,
           planning: {
             status: "NEEDS_CLARIFICATION",
             clarificationQuestion: bounded(result.clarificationQuestion, 2_000),
@@ -188,11 +244,17 @@ export async function planObjective({
           },
         }),
       });
-      return { ...result, objective: updated, plan: null, alreadyPlanned: false };
+      return { ...result, verificationIntent, objective: updated, plan: null, alreadyPlanned: false };
     }
     if (!result.plan) fail("Planner tidak menghasilkan plan atau clarification.", { statusCode: 502, code: "PLANNER_EMPTY_RESULT", details: { code: "PLANNER_EMPTY_RESULT" } });
 
-    const revision = createPlanRevision({ runsRoot, objectiveId, candidate: result.plan, now });
+    const candidatePlanWithIntent = {
+      ...result.plan,
+      verificationIntent,
+      blueprints: Object.fromEntries(contexts.map((ctx) => [ctx.projectId, ctx.blueprint])),
+    };
+
+    const revision = createPlanRevision({ runsRoot, objectiveId, candidate: candidatePlanWithIntent, now });
     const plannedObjective = revision.objective.planning
       ? updateObjective({
         runsRoot,
@@ -205,6 +267,6 @@ export async function planObjective({
         },
       })
       : revision.objective;
-    return { ...result, objective: plannedObjective, plan: revision.plan, previousPlan: revision.previousPlan, revision: revision.revision, alreadyPlanned: false };
+    return { ...result, verificationIntent, objective: plannedObjective, plan: revision.plan, previousPlan: revision.previousPlan, revision: revision.revision, alreadyPlanned: false };
   });
 }
