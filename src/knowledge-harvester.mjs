@@ -947,3 +947,212 @@ export function listHarvestRuns({ vaultRoot }) {
   runs.sort((a, b) => new Date(b.capturedAt || 0).getTime() - new Date(a.capturedAt || 0).getTime());
   return runs;
 }
+
+export function formatDebuggingMarkdown({
+  debugging,
+  destination = "WIKI",
+  sourcePath = null,
+  harvestId = null,
+  vaultRoot = null,
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const docType = destination === "CANDIDATE" ? "candidate" : "debugging";
+  const tags = `[${(debugging.tags || ["debugging", "self-learning"]).join(", ")}]`;
+  const confidence = Number(debugging.confidence) >= 0 && Number(debugging.confidence) <= 1
+    ? Number(debugging.confidence)
+    : (destination === "CANDIDATE" ? 0.8 : 0.95);
+  const reviewBy = reviewDateFrom({ now: new Date() });
+
+  const frontmatter = [
+    "---",
+    `title: ${JSON.stringify(debugging.title)}`,
+    `type: ${docType}`,
+    `tags: ${tags}`,
+    `created: ${today}`,
+    `updated: ${today}`,
+    `provenance_schema: ${KNOWLEDGE_PROVENANCE_SCHEMA_VERSION}`,
+    `confidence: ${confidence}`,
+    `owner: ${JSON.stringify(KNOWLEDGE_PROVENANCE_OWNER)}`,
+    `review_by: ${reviewBy}`,
+    `supersession: "ACTIVE"`,
+    ...(harvestId ? [`orchestrator_run: ${harvestId}`] : []),
+    ...(sourcePath ? [`sources: ["[[${sourcePath}]]"]`] : []),
+    "---",
+  ].join("\n");
+
+  const filesList = Array.isArray(debugging.targetedFiles) && debugging.targetedFiles.length > 0
+    ? debugging.targetedFiles.map((f) => `- \`${f}\``).join("\n")
+    : "- (General repository context)";
+
+  const diffSection = debugging.diffSnippet
+    ? `\n## Verified Diff / Patch Snippet\n\`\`\`diff\n${debugging.diffSnippet}\n\`\`\`\n`
+    : "";
+
+  const body = [
+    `# ${debugging.title}`,
+    "",
+    "## 1. Gejala Error (Symptom)",
+    "",
+    `\`\`\`text\n${debugging.symptom || "Verification failure observed."}\n\`\`\``,
+    "",
+    "## 2. Akar Masalah (Root Cause)",
+    "",
+    debugging.rootCause || "Masalah kompatibilitas atau implementasi kode.",
+    "",
+    "## 3. File yang Diperbaiki (Targeted Files)",
+    "",
+    filesList,
+    "",
+    "## 4. Solusi Terverifikasi (Verified Fix)",
+    "",
+    debugging.verifiedFix || "Terapkan perubahan yang lolos pengujian.",
+    diffSection,
+    "## 5. Pertimbangan & Pencegahan di Masa Depan",
+    "",
+    debugging.prevention || "Suntikkan catatan ini ke pre-flight context saat task serupa dijalankan.",
+  ].join("\n");
+
+  return `${frontmatter}\n\n${body}\n`;
+}
+
+export function harvestRecoveryDebuggingKnowledge({
+  manifest,
+  vaultRoot,
+  runsRoot = null,
+}) {
+  if (!manifest || !vaultRoot) return null;
+  const autoRecovery = manifest.execution?.automaticRecovery || manifest.execution?.recovery;
+  const isRecovered = autoRecovery && (
+    autoRecovery.status === "SUCCESS" ||
+    autoRecovery.strategy === "AI_REPAIR" ||
+    autoRecovery.strategy === "DETERMINISTIC_RETRY" ||
+    (Array.isArray(autoRecovery.attempts) && autoRecovery.attempts.length > 0)
+  );
+
+  if (!isRecovered) return null;
+
+  const trigger = autoRecovery.trigger || autoRecovery.finalError || "Verification failure";
+  const strategy = autoRecovery.strategy || "AI_REPAIR";
+  const taskId = manifest.task?.id || "TASK";
+  const taskTitle = manifest.task?.title || "Task Execution";
+  const changedPaths = manifest.execution?.scopeAudit?.changedPaths || manifest.task?.allowedPaths || [];
+  const latestDiff = (manifest.execution?.latestDiff || "").slice(0, 3000);
+  const toolchain = manifest.project?.toolchain || manifest.project?.blueprint || "general";
+  const domain = toolchain === "go" || toolchain === "backend-golang" ? "backend" : "frontend";
+
+  const cleanTriggerSummary = trigger.split("\n")[0].slice(0, 80).replace(/[^a-zA-Z0-9 _-]/g, "");
+  const title = `Fix ${cleanTriggerSummary || taskTitle}`;
+  const slug = slugify(title);
+
+  const confidence = strategy === "DETERMINISTIC_RETRY" ? 0.95 : 0.92;
+  const destination = confidence >= 0.9 ? "WIKI" : "CANDIDATE";
+
+  const relativePath = destination === "WIKI"
+    ? path.join("01-Knowledge", "debugging", `${slug}.md`).split(path.sep).join("/")
+    : path.join("05-Knowledge-Candidates", `${slug}.md`).split(path.sep).join("/");
+
+  const harvestId = manifest.runId || `recovery-${Date.now()}`;
+  const sourceRelativePath = path.join("03-Sources", "other", "orchestrator-runs", `${manifest.runId || harvestId}.json`).split(path.sep).join("/");
+
+  const debuggingData = {
+    title,
+    symptom: trigger,
+    rootCause: `Kegagalan verifikasi terdeteksi saat menjalankan task ${taskId} (${taskTitle}). Diperbaiki melalui ${strategy}.`,
+    targetedFiles: changedPaths,
+    verifiedFix: `Perubahan berhasil diverifikasi dan lulus seluruh quality gate pada file: ${changedPaths.join(", ") || "repository"}.`,
+    diffSnippet: latestDiff,
+    tags: ["debugging", "self-learning", domain, slugify(toolchain)],
+    confidence,
+    prevention: `Gunakan pola yang terbukti lolos verifikasi ini saat mengerjakan task dengan ${changedPaths.join(", ") || "komponen terkait"}.`,
+  };
+
+  const markdownContent = formatDebuggingMarkdown({
+    debugging: debuggingData,
+    destination,
+    sourcePath: sourceRelativePath,
+    harvestId,
+    vaultRoot,
+  });
+
+  const absoluteTarget = path.join(vaultRoot, relativePath);
+  writeAtomic(absoluteTarget, markdownContent);
+  updateIndexForHarvest(vaultRoot, relativePath, title, debuggingData.rootCause);
+  appendWikiLogForHarvest(vaultRoot, {
+    title,
+    relativeTarget: relativePath,
+    sourcePath: sourceRelativePath,
+    destination,
+    domain,
+    confidence,
+    repositoryPath: manifest.project?.repository || "",
+  });
+
+  return {
+    harvestId,
+    title,
+    relativePath,
+    destination,
+    confidence,
+    debuggingData,
+  };
+}
+
+export function harvestFeedbackConstraints({
+  feedback,
+  task = {},
+  project = {},
+  vaultRoot,
+  requestedBy = "operator",
+}) {
+  if (!feedback || typeof feedback !== "string" || !feedback.trim() || !vaultRoot) return null;
+  const cleanFeedback = feedback.trim();
+  const today = new Date().toISOString().slice(0, 10);
+  const projectId = project.id || task.project || "general-project";
+  const taskId = task.id || "TASK";
+  const slug = slugify(`decision-feedback-${projectId}-${taskId.toLowerCase()}-${Date.now().toString(36)}`);
+  const relativePath = path.join("01-Knowledge", "decisions", `${slug}.md`).split(path.sep).join("/");
+  const title = `Operator Constraint for ${projectId} (${taskId})`;
+  const sourceRef = task.path ? task.path : `02-Projects/${projectId}/project.md`;
+
+  const frontmatter = [
+    "---",
+    `title: ${JSON.stringify(title)}`,
+    `type: decision`,
+    `tags: [decision, operator-constraint, ${slugify(projectId)}]`,
+    `created: ${today}`,
+    `updated: ${today}`,
+    `sources: [${JSON.stringify(sourceRef)}]`,
+    `provenance_schema: ${KNOWLEDGE_PROVENANCE_SCHEMA_VERSION}`,
+    `confidence: 1.0`,
+    `owner: ${JSON.stringify(requestedBy)}`,
+    `orchestrator_run: ${JSON.stringify(taskId)}`,
+    `review_by: ${reviewDateFrom({ now: new Date() })}`,
+    `supersession: "ACTIVE"`,
+    "---",
+  ].join("\n");
+
+  const body = [
+    `# ${title}`,
+    "",
+    "## 1. Konteks Koreksi (Review Feedback)",
+    "",
+    `Diberikan oleh operator pada task \`${task.id || "TASK"}\` (${task.title || "Task Review"}):`,
+    `> ${cleanFeedback}`,
+    "",
+    "## 2. Aturan & Batasan Wajib (Mandatory Constraint)",
+    "",
+    `- Seluruh task berikutnya pada project \`${projectId}\` wajib mematuhi instruksi di atas.`,
+    "- Hindari pola atau arsitektur yang telah ditolak oleh operator.",
+  ].join("\n");
+
+  const markdownContent = `${frontmatter}\n\n${body}\n`;
+  const absoluteTarget = path.join(vaultRoot, relativePath);
+  writeAtomic(absoluteTarget, markdownContent);
+  updateIndexForHarvest(vaultRoot, relativePath, title, cleanFeedback.slice(0, 100));
+
+  return {
+    relativePath,
+    title,
+    feedback: cleanFeedback,
+  };
+}

@@ -11,6 +11,7 @@ import { appendRunTelemetry, createAgentTelemetryRecord } from "./telemetry.mjs"
 import { findSimilarKnowledge } from "./knowledge-quality.mjs";
 import { redactText } from "./redaction.mjs";
 import { buildKnowledgeProvenance, KNOWLEDGE_PROVENANCE_OWNER } from "./knowledge-provenance.mjs";
+import { harvestRecoveryDebuggingKnowledge } from "./knowledge-harvester.mjs";
 
 const CLASSIFICATIONS = new Set(["NEW", "UPDATE", "PROJECT_ONLY", "IGNORE"]);
 const DESTINATIONS = new Set(["WIKI", "CANDIDATE", "PROJECT", "NONE"]);
@@ -1139,6 +1140,9 @@ export function syncWikiRun({ vaultRoot, runsRoot, runId }) {
   }
 
   appendWikiLog(vaultRoot, manifest, detail);
+  try {
+    harvestRecoveryDebuggingKnowledge({ manifest, vaultRoot, runsRoot });
+  } catch {}
   return transitionRun({
     vaultRoot,
     runsRoot,

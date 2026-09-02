@@ -48,6 +48,15 @@ function verificationStatus(results) {
   return "UNKNOWN";
 }
 
+function resolveLiveNodeState(run, job, runtimeState) {
+  if (run?.state === "DONE" || job?.state === "DONE") return "DONE";
+  if (run?.state === "FAILED" || job?.state === "FAILED") return "FAILED";
+  if (["REVIEW", "RETROSPECTIVE", "KNOWLEDGE_APPROVAL", "WIKI_SYNCED"].includes(run?.state) || job?.state === "REVIEW") return "REVIEW";
+  if (["RUNNING", "CLAIMED", "APPROVED", "VERIFYING", "IN_PROGRESS"].includes(run?.state) || job?.state === "RUNNING") return "RUNNING";
+  if (job?.state === "QUEUED") return "QUEUED";
+  return runtimeState ?? "READY";
+}
+
 function nodeEvidence({ planNode, runtime, jobs, runs, runsRoot }) {
   const job = jobs
     .filter((item) => item.orchestrationId === runtime?.orchestrationId && item.nodeId === planNode.nodeId)
@@ -66,7 +75,7 @@ function nodeEvidence({ planNode, runtime, jobs, runs, runsRoot }) {
   }
   const changedPaths = evidence?.scope?.changedPaths ?? run?.execution?.scopeAudit?.modifiedFiles ?? [];
   const verification = evidence?.verification?.results ?? run?.execution?.verification?.results ?? [];
-  const nodeState = runtime?.state ?? "READY";
+  const nodeState = resolveLiveNodeState(run, job, runtime?.state);
   return {
     nodeId: planNode.nodeId,
     title: planNode.title,
@@ -88,7 +97,7 @@ function nodeEvidence({ planNode, runtime, jobs, runs, runsRoot }) {
       diff: `/api/runs/${encodeURIComponent(runId)}/diff`,
       preview: `/api/runs/${encodeURIComponent(runId)}/preview`,
     } : { evidence: null, diff: null, preview: null },
-    error: runtime?.lastError ?? null,
+    error: runtime?.lastError ?? (run?.execution?.result?.error ? { message: run.execution.result.error } : null),
   };
 }
 
