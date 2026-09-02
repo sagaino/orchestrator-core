@@ -393,6 +393,7 @@ export async function main(argv = process.argv.slice(2)) {
         vaultRoot: options.vault,
         runsRoot: options.runs,
         backupRoot,
+        allowDaemonIdle: Boolean(options.allowIdle ?? options.allowDaemonIdle ?? true),
       });
     } else if (command === "dr-verify") {
       const [backupPath] = options.positional;

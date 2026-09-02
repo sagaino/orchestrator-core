@@ -129,7 +129,7 @@ function copyDataset({ dataset, sourceRoot, dataRoot, excludeTopLevel }) {
   };
 }
 
-export function assessDisasterRecoveryReadiness({ runsRoot, runtime = null } = {}) {
+export function assessDisasterRecoveryReadiness({ runsRoot, runtime = null, allowDaemonIdle = false } = {}) {
   const status = runtime ?? daemonStatus({ runsRoot });
   const activeJobs = listJobs(runsRoot)
     .filter((job) => job.state === JOB_STATES.RUNNING)
@@ -137,8 +137,15 @@ export function assessDisasterRecoveryReadiness({ runsRoot, runtime = null } = {
   const activeRuns = listRuns(runsRoot)
     .filter((run) => ACTIVE_RUN_STATES.has(run.state))
     .map((run) => ({ runId: run.runId, state: run.state, projectId: run.project?.id ?? null }));
+  const daemonBlocker = status.running
+    ? (allowDaemonIdle
+        ? (activeJobs.length > 0 || activeRuns.length > 0
+            ? [{ code: "DAEMON_BUSY", message: "Daemon sedang memproses job aktif; tunggu hingga idle." }]
+            : [])
+        : [{ code: "DAEMON_RUNNING", message: "Daemon harus dihentikan sebelum consistent backup." }])
+    : [];
   const blockers = [
-    ...(status.running ? [{ code: "DAEMON_RUNNING", message: "Daemon harus dihentikan sebelum consistent backup." }] : []),
+    ...daemonBlocker,
     ...activeJobs.map((job) => ({ code: "ACTIVE_JOB", message: `${job.jobId} masih ${job.state}.`, ...job })),
     ...activeRuns.map((run) => ({ code: "ACTIVE_RUN", message: `${run.runId} masih ${run.state}.`, ...run })),
   ];
@@ -146,6 +153,7 @@ export function assessDisasterRecoveryReadiness({ runsRoot, runtime = null } = {
     ready: blockers.length === 0,
     checkedAt: new Date().toISOString(),
     daemonRunning: Boolean(status.running),
+    daemonIdle: Boolean(status.running && activeJobs.length === 0 && activeRuns.length === 0),
     activeJobs,
     activeRuns,
     blockers,
@@ -167,6 +175,7 @@ export function createDisasterRecoveryBackup({
   runsRoot,
   backupRoot,
   runtime = null,
+  allowDaemonIdle = false,
   now = new Date(),
 } = {}) {
   for (const [label, root] of Object.entries({ vaultRoot, runsRoot })) {
@@ -179,7 +188,7 @@ export function createDisasterRecoveryBackup({
   assertDisjoint(vaultRoot, resolvedBackupRoot, "Backup root");
   assertDisjoint(runsRoot, resolvedBackupRoot, "Backup root");
 
-  const readiness = assessDisasterRecoveryReadiness({ runsRoot, runtime });
+  const readiness = assessDisasterRecoveryReadiness({ runsRoot, runtime, allowDaemonIdle });
   if (!readiness.ready) {
     const error = new Error("Consistent backup ditolak karena runtime belum quiescent.");
     error.code = "DR_NOT_QUIESCENT";
@@ -204,7 +213,7 @@ export function createDisasterRecoveryBackup({
         dataset: "runs",
         sourceRoot: runsRoot,
         dataRoot: path.join(partialPath, "data"),
-        excludeTopLevel: new Set(["disaster-recovery"]),
+        excludeTopLevel: new Set(["disaster-recovery", "daemon", ".orchestrator.pids"]),
       }),
     ];
     const artifactCoverage = summarizeOperationsArtifacts({ runsRoot });
@@ -219,8 +228,10 @@ export function createDisasterRecoveryBackup({
       durationMs: Date.now() - startedAtMs,
       checksumAlgorithm: "sha256",
       consistency: {
-        mode: "QUIESCENT_SNAPSHOT",
-        daemonStopped: true,
+        mode: readiness.daemonRunning ? "IDLE_DAEMON_SNAPSHOT" : "QUIESCENT_SNAPSHOT",
+        daemonStopped: !readiness.daemonRunning,
+        daemonRunning: readiness.daemonRunning,
+        daemonIdleAllowed: Boolean(allowDaemonIdle),
         activeJobCount: 0,
         activeRunCount: 0,
       },
@@ -265,7 +276,7 @@ export function createDisasterRecoveryBackup({
       backupPath,
       manifestPath: path.join(backupPath, "manifest.json"),
     };
-    const verification = verifyDisasterRecoveryBackup({ backupPath });
+    const verification = verifyDisasterRecoveryBackup({ backupPath, now });
     recordVerifiedBackup({ runsRoot, backupPath, verification, manifest, sourceRoots: [vaultRoot, runsRoot] });
     return result;
   } catch (error) {
@@ -300,7 +311,7 @@ function readAndValidateManifest(backupPath) {
   return manifest;
 }
 
-export function verifyDisasterRecoveryBackup({ backupPath } = {}) {
+export function verifyDisasterRecoveryBackup({ backupPath, now = new Date() } = {}) {
   if (!backupPath || !fs.existsSync(backupPath) || !fs.statSync(backupPath).isDirectory()) {
     throw new Error(`Backup path tidak ditemukan: ${backupPath}`);
   }
@@ -339,7 +350,7 @@ export function verifyDisasterRecoveryBackup({ backupPath } = {}) {
     schemaVersion: DR_SCHEMA_VERSION,
     backupId: manifest.backupId,
     status: "VERIFIED",
-    verifiedAt: new Date().toISOString(),
+    verifiedAt: now.toISOString(),
     durationMs: Date.now() - startedAtMs,
     fileCount,
     totalBytes,
@@ -349,8 +360,8 @@ export function verifyDisasterRecoveryBackup({ backupPath } = {}) {
   return result;
 }
 
-export function registerVerifiedDisasterRecoveryBackup({ runsRoot, backupPath, vaultRoot = null } = {}) {
-  const verification = verifyDisasterRecoveryBackup({ backupPath });
+export function registerVerifiedDisasterRecoveryBackup({ runsRoot, backupPath, vaultRoot = null, now = new Date() } = {}) {
+  const verification = verifyDisasterRecoveryBackup({ backupPath, now });
   const previous = readBackupStatus(runsRoot);
   return recordVerifiedBackup({
     runsRoot,

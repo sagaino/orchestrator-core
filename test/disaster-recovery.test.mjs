@@ -39,7 +39,21 @@ try {
     runsRoot,
     backupRoot,
     runtime: { running: true },
+    allowDaemonIdle: false,
   }), /runtime belum quiescent/);
+
+  const idleBackup = createDisasterRecoveryBackup({
+    vaultRoot,
+    runsRoot,
+    backupRoot,
+    runtime: { running: true },
+    allowDaemonIdle: true,
+    now: new Date("2026-08-21T00:00:00.000Z"),
+  });
+  assert.equal(idleBackup.status, "READY");
+  assert.equal(idleBackup.consistency.daemonStopped, false);
+  assert.equal(idleBackup.consistency.daemonRunning, true);
+  assert.equal(idleBackup.consistency.daemonIdleAllowed, true);
 
   fs.mkdirSync(backupRoot, { recursive: true });
   const lockPath = path.join(backupRoot, ".backup.lock");
@@ -66,7 +80,7 @@ try {
 
   const verified = verifyDisasterRecoveryBackup({ backupPath: created.backupPath });
   assert.equal(verified.status, "VERIFIED");
-  assert.equal(verified.fileCount, 5);
+  assert.equal(verified.fileCount, 6);
 
   const restoreRoot = path.join(root, "quarantine-restore");
   const restored = restoreDisasterRecoveryBackup({ backupPath: created.backupPath, targetRoot: restoreRoot });
