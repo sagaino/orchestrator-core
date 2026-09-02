@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createDisasterRecoveryBackup } from "../src/disaster-recovery.mjs";
 import {
+  automaticBackupTick,
   backupRecoveryStatus,
   installBackupSchedule,
   previewBackupRotation,
@@ -73,7 +74,7 @@ try {
   assert.equal(rotation.guardrail.includes("Preview-only"), true);
   assert.equal(fs.existsSync(path.join(backupRoot, "old-a")), true);
 
-  const verified = verifyRegisteredBackup({ runsRoot });
+  const verified = verifyRegisteredBackup({ runsRoot, now });
   assert.equal(verified.action, "REGISTERED_BACKUP_VERIFIED");
   assert.equal(verified.status.independentTarget, true);
 
@@ -99,6 +100,22 @@ try {
   fs.writeFileSync(schedulePath, JSON.stringify({ ...schedule, launchctlActivated: true }));
   const activeScheduleReadiness = operationsReadiness({ runsRoot, now, config: { ...operationsConfig(), recoveryDrillIntervalDays: 30 }, daemon: { running: false, heartbeatAt: null } });
   assert.equal(activeScheduleReadiness.checks.find((item) => item.id === "backup-schedule").status, "PASS");
+
+  // Test automaticBackupTick: fresh backup should be skipped
+  const freshTick = automaticBackupTick({ vaultRoot, runsRoot, now });
+  assert.equal(freshTick.enabled, true);
+  assert.equal(freshTick.ran, false);
+  assert.equal(freshTick.reason, "BACKUP_STILL_FRESH");
+
+  // Test automaticBackupTick: backup older than 18 hours (e.g. 20 hours later) should trigger backup automatically
+  const later = new Date(now.getTime() + 20 * 60 * 60 * 1000);
+  const triggerTick = automaticBackupTick({ vaultRoot, runsRoot, now: later });
+  assert.equal(triggerTick.enabled, true);
+  assert.equal(triggerTick.ran, true);
+  assert.equal(Boolean(triggerTick.backupId), true);
+  assert.equal(fs.existsSync(triggerTick.backupPath), true);
+  const updatedStatus = readBackupStatus(runsRoot);
+  assert.equal(updatedStatus.backupId, triggerTick.backupId);
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }

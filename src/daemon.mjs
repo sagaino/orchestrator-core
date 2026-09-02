@@ -19,6 +19,7 @@ import { automaticNodeRecoveryTick, orchestrationSchedulerEnabled, orchestration
 import { autopilotAfterPlanApprovalEnabled, automaticReviewFinalizationEnabled } from "./approval-policy.mjs";
 import { automaticPostRunTick } from "./objective-post-run.mjs";
 import { runtimeProfileAdmission } from "./runtime-config.mjs";
+import { automaticBackupTick } from "./backup-operations.mjs";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEALTH_STALE_AFTER_MS = 45_000;
@@ -1081,6 +1082,7 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
   let jobPollerTimeout;
   let reviewFinalizationInFlight = null;
   let postRunAutomationInFlight = null;
+  let backupAutomationInFlight = null;
   let isRunning = true;
   try {
     const pollTick = () => {
@@ -1172,6 +1174,28 @@ export async function runDaemonWorker({ vaultRoot, runsRoot, services }) {
       }
       fillWorkerPool();
       const snapshot = workerPool.snapshot();
+      if (!backupAutomationInFlight && snapshot.activeWorkers === 0 && (!services || services.automaticBackupTick !== false)) {
+        const backupTicker = services?.automaticBackupTick ?? automaticBackupTick;
+        backupAutomationInFlight = Promise.resolve(backupTicker({ vaultRoot, runsRoot, env: process.env }))
+          .then((result) => {
+            if (result.ran) {
+              appendLog(paths.log, {
+                event: "AUTOMATIC_BACKUP_COMPLETED",
+                backupId: result.backupId,
+                backupPath: result.backupPath,
+                verifiedAt: result.verifiedAt,
+              });
+            }
+            return result;
+          })
+          .catch((error) => {
+            appendLog(paths.log, { event: "AUTOMATIC_BACKUP_ERROR", error: error.message });
+            return { enabled: true, ran: false, error: error.message };
+          })
+          .finally(() => {
+            backupAutomationInFlight = null;
+          });
+      }
       const jobs = listJobs(runsRoot);
       const runs = listRuns(runsRoot);
       const queueStatus = parallelQueueStatus(jobs, maxWorkers, runs);

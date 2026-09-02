@@ -11,7 +11,11 @@ import {
   recordRecoveryDrill,
   recordVerifiedBackup,
 } from "./operations-governance.mjs";
-import { verifyDisasterRecoveryBackup } from "./disaster-recovery.mjs";
+import {
+  createDisasterRecoveryBackup,
+  verifyDisasterRecoveryBackup,
+  assessDisasterRecoveryReadiness,
+} from "./disaster-recovery.mjs";
 
 const SCHEDULE_SCHEMA_VERSION = 1;
 const MODULE_ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -64,7 +68,7 @@ export function previewBackupSchedule({ runsRoot, vaultRoot, backupRoot, interva
   validateBackupRoot(backupRoot, [vaultRoot, runsRoot]);
   const label = "com.personal-ai-orchestrator.backup";
   const logRoot = runtimePath(runsRoot, "backup-scheduler");
-  const argumentsList = [commandPath, path.join(MODULE_ROOT, "orchestrator.mjs"), "dr-backup", path.resolve(backupRoot), "--vault", path.resolve(vaultRoot), "--runs", path.resolve(runsRoot)];
+  const argumentsList = [commandPath, path.join(MODULE_ROOT, "orchestrator.mjs"), "dr-backup", path.resolve(backupRoot), "--vault", path.resolve(vaultRoot), "--runs", path.resolve(runsRoot), "--allow-idle"];
   const plist = [
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
     "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
@@ -138,12 +142,59 @@ export function previewBackupRotation({ backupRoot, sourceRoots = [], olderThanD
   };
 }
 
-export function verifyRegisteredBackup({ runsRoot } = {}) {
+export function verifyRegisteredBackup({ runsRoot, now = new Date() } = {}) {
   const status = readBackupStatus(runsRoot);
   if (!status?.backupPath) throw new Error("Belum ada backup terverifikasi yang terdaftar.");
-  const verification = verifyDisasterRecoveryBackup({ backupPath: status.backupPath });
+  const verification = verifyDisasterRecoveryBackup({ backupPath: status.backupPath, now });
   const updated = recordVerifiedBackup({ runsRoot, backupPath: status.backupPath, verification, manifest: verification.manifest, independentTarget: status.independentTarget });
   return { schemaVersion: 1, action: "REGISTERED_BACKUP_VERIFIED", verification, status: updated };
+}
+
+export function performVerifiedBackup({ vaultRoot, runsRoot, backupRoot, allowDaemonIdle = true, now = new Date() } = {}) {
+  return createDisasterRecoveryBackup({
+    vaultRoot,
+    runsRoot,
+    backupRoot,
+    allowDaemonIdle,
+    now,
+  });
+}
+
+export function automaticBackupTick({ vaultRoot, runsRoot, env = process.env, now = new Date() } = {}) {
+  const schedule = readBackupSchedule({ runsRoot });
+  const status = readBackupStatus(runsRoot);
+  const backupRoot = schedule?.backupRoot ?? (status?.backupPath ? path.dirname(status.backupPath) : null);
+  if (!backupRoot || !fs.existsSync(backupRoot)) {
+    return { enabled: false, ran: false, reason: "NO_BACKUP_ROOT_CONFIGURED" };
+  }
+  const intervalHours = schedule?.intervalHours ?? 24;
+  const maxAgeMs = intervalHours * 60 * 60 * 1000;
+  const backupAgeMs = status?.verifiedAt ? Math.max(0, now.getTime() - Date.parse(status.verifiedAt)) : Number.POSITIVE_INFINITY;
+  if (backupAgeMs < maxAgeMs * 0.75) {
+    return { enabled: true, ran: false, reason: "BACKUP_STILL_FRESH", ageMs: backupAgeMs, maxAgeMs };
+  }
+  const readiness = assessDisasterRecoveryReadiness({ runsRoot, allowDaemonIdle: true });
+  if (!readiness.ready) {
+    return { enabled: true, ran: false, reason: "RUNTIME_BUSY", blockers: readiness.blockers };
+  }
+  try {
+    const backup = createDisasterRecoveryBackup({
+      vaultRoot,
+      runsRoot,
+      backupRoot,
+      allowDaemonIdle: true,
+      now,
+    });
+    return {
+      enabled: true,
+      ran: true,
+      backupId: backup.backupId,
+      backupPath: backup.backupPath,
+      verifiedAt: backup.completedAt,
+    };
+  } catch (error) {
+    return { enabled: true, ran: false, error: error.message };
+  }
 }
 
 export function backupRecoveryStatus({ runsRoot, vaultRoot, now = new Date(), config = operationsConfig() } = {}) {
