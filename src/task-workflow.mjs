@@ -20,6 +20,7 @@ import { appendRunTelemetry } from "./telemetry.mjs";
 import { acquireDurableLease, releaseDurableLease } from "./durable-runtime.mjs";
 import { createVisualRevisionRecord, normalizeVisualFeedback } from "./visual-revision.mjs";
 import { pathMatchesAllowed } from "./security.mjs";
+import { harvestFeedbackConstraints } from "./knowledge-harvester.mjs";
 
 export function cleanTerminalOutput(rawOutput) {
   if (!rawOutput || typeof rawOutput !== "string") return "";
@@ -282,6 +283,15 @@ async function requestChangesTaskRunInternal({
     reason: cleanedReason || reason,
     visualFeedback,
   });
+  try {
+    harvestFeedbackConstraints({
+      feedback: cleanedReason || reason,
+      task: manifest.task,
+      project: manifest.project,
+      vaultRoot,
+      requestedBy,
+    });
+  } catch {}
   if (visualFeedback) {
     const normalizedVisualFeedback = normalizeVisualFeedback(visualFeedback);
     createVisualRevisionRecord({

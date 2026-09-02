@@ -307,10 +307,12 @@ function buildExecutionContext(manifest, stage, {
   latestDiff = "",
   latestFeedback = "",
   revisionState = {},
+  vaultRoot = null,
 } = {}) {
   return buildStageContext({
     stage,
     task: manifest.task,
+    project: manifest.project,
     acceptanceCriteria: taskAcceptanceCriteria(manifest.task),
     latestFeedback,
     latestDiff,
@@ -319,6 +321,7 @@ function buildExecutionContext(manifest, stage, {
     graphifyContext,
     knowledge: manifest.retrieval?.knowledge ?? [],
     role: roleAssignmentForTask(manifest.task).role,
+    vaultRoot,
   });
 }
 
@@ -343,6 +346,7 @@ export function buildAgyInvocation(
     graphifyContext,
     latestDiff: latestDiff || manifest.execution?.latestDiff || "",
     revisionState: manifest.execution?.revisionState ?? {},
+    vaultRoot,
   });
   const roleAssignment = roleAssignmentForTask(manifest.task);
   const assignedSkills = Array.isArray(manifest.task?.skills) ? manifest.task.skills : [];
@@ -432,6 +436,7 @@ export function buildAgyRecoveryInvocation(
     latestDiff: latestDiff || (manifest.execution?.latestDiff ?? ""),
     latestFeedback: failureDetail,
     revisionState: { stage: failure?.stage ?? "verification", attempt: attempt ?? 1 },
+    vaultRoot,
   });
   const roleAssignment = roleAssignmentForTask(manifest.task);
   const prompt = [
@@ -533,6 +538,7 @@ export function buildAgyRevisionInvocation(
       changedPaths: (manifest.execution?.scopeAudit?.changedPaths ?? []).join(", "),
       previousFeedback: previousRevisions.at(-1)?.feedback ?? "",
     },
+    vaultRoot,
   });
   const roleAssignment = roleAssignmentForTask(manifest.task);
 

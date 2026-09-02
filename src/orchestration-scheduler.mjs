@@ -238,6 +238,10 @@ function reconcileRuntimeNodes({ plan, orchestration, jobs }) {
     if (!current) fail(`Runtime orchestration kehilangan node ${nodeId}.`, { code: "ORCHESTRATION_NODE_MISSING", details: { code: "ORCHESTRATION_NODE_MISSING", nodeId } });
     const currentAttempt = Number(current.attempt ?? 1);
     const job = (jobsForNode.get(nodeId) ?? []).find((candidate) => Number(candidate.attempt ?? 1) === currentAttempt) ?? null;
+    if (job?.runId && current.runId !== job.runId) {
+      current.runId = job.runId;
+      changed = true;
+    }
     const jobState = jobToNodeState(job);
     if (jobState && current.state !== jobState) {
       current.state = jobState;

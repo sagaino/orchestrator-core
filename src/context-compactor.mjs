@@ -4,7 +4,110 @@
  * to prevent context explosion and reduce token usage.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { formatInlineComments } from "./review-workflow.mjs";
+
+export function retrieveRelevantPastExperience({
+  task = {},
+  project = {},
+  vaultRoot = null,
+  maxItems = 3,
+} = {}) {
+  if (!vaultRoot || typeof vaultRoot !== "string") return [];
+  if (!fs.existsSync(vaultRoot)) return [];
+
+  const candidateFolders = [
+    path.join(vaultRoot, "01-Knowledge", "debugging"),
+    path.join(vaultRoot, "01-Knowledge", "decisions"),
+    path.join(vaultRoot, "01-Knowledge", "patterns"),
+  ];
+
+  const searchWords = new Set(
+    [
+      ...(task.title || "").toLowerCase().split(/[^a-z0-9_-]+/),
+      ...(task.body || task.description || "").toLowerCase().split(/[^a-z0-9_-]+/),
+      ...(task.allowedPaths || []).map((p) => path.basename(p).toLowerCase().replace(/\.[a-z0-9]+$/, "")),
+      (project.id || "").toLowerCase(),
+      (project.toolchain || "").toLowerCase(),
+    ].filter((w) => w && w.length >= 3 && !["the", "and", "for", "with", "this", "from", "task"].includes(w))
+  );
+
+  const matched = [];
+
+  for (const folder of candidateFolders) {
+    if (!fs.existsSync(folder)) continue;
+    let files = [];
+    try {
+      files = fs.readdirSync(folder, { recursive: true }).filter((f) => String(f).endsWith(".md"));
+    } catch {
+      continue;
+    }
+
+    for (const relFile of files) {
+      const fullPath = path.join(folder, relFile);
+      let content = "";
+      try {
+        content = fs.readFileSync(fullPath, "utf8");
+      } catch {
+        continue;
+      }
+
+      const lower = content.toLowerCase();
+      let score = 0;
+
+      // Check project match in decisions
+      if (project.id && lower.includes(project.id.toLowerCase())) {
+        score += 3;
+      }
+
+      // Check search words match
+      for (const word of searchWords) {
+        if (lower.includes(word)) {
+          score += 1;
+        }
+      }
+
+      // Check allowed paths file match
+      for (const targetPath of (task.allowedPaths || [])) {
+        const base = path.basename(targetPath).toLowerCase();
+        if (lower.includes(base)) {
+          score += 4;
+        }
+      }
+
+      if (score > 0) {
+        const titleMatch = content.match(/^title:\s*["']?([^"'\n\r]+)["']?/m);
+        const title = titleMatch ? titleMatch[1].trim() : path.basename(relFile, ".md");
+        const typeMatch = content.match(/^type:\s*["']?([^"'\n\r]+)["']?/m);
+        const type = typeMatch ? typeMatch[1].trim() : "debugging";
+
+        let lesson = "";
+        const fixMatch = content.match(/## (?:4\.\s*)?Solusi Terverifikasi[^\n]*\n+([\s\S]*?)(?=\n##|$)/i)
+          || content.match(/## (?:2\.\s*)?Aturan & Batasan Wajib[^\n]*\n+([\s\S]*?)(?=\n##|$)/i)
+          || content.match(/## Observation[^\n]*\n+([\s\S]*?)(?=\n##|$)/i);
+
+        if (fixMatch) {
+          lesson = fixMatch[1].trim().replace(/\s+/g, " ").slice(0, 300);
+        } else {
+          const cleanBody = content.replace(/^---[\s\S]*?---/, "").trim();
+          lesson = cleanBody.slice(0, 200).replace(/\s+/g, " ");
+        }
+
+        matched.push({
+          score,
+          title,
+          type,
+          path: path.relative(vaultRoot, fullPath).split(path.sep).join("/"),
+          lesson,
+        });
+      }
+    }
+  }
+
+  matched.sort((a, b) => b.score - a.score);
+  return matched.slice(0, maxItems);
+}
 
 export const STAGE_CONTEXT_BUDGETS = Object.freeze({
   intake: 1200,
@@ -82,6 +185,7 @@ function bounded(value, maxCharacters) {
 export function buildStageContext({
   stage = "implementation",
   task = {},
+  project = {},
   acceptanceCriteria = [],
   latestFeedback = "",
   latestDiff = "",
@@ -91,12 +195,18 @@ export function buildStageContext({
   knowledge = [],
   role = null,
   budgets = {},
+  vaultRoot = null,
 } = {}) {
   const budgetTokens = contextBudget(stage, budgets);
   const budgetCharacters = budgetTokens * 4;
   const criteria = Array.isArray(acceptanceCriteria) ? acceptanceCriteria : [acceptanceCriteria];
   const boundedKnowledge = selectBoundedKnowledge(knowledge);
   const roleProfile = approvedRoleProfile(role);
+  const pastLessons = retrieveRelevantPastExperience({ task, project, vaultRoot });
+  const pastLessonsText = pastLessons.length > 0
+    ? pastLessons.map((item) => `- [${item.title}] (${item.type}): ${item.lesson}`).join("\n")
+    : "";
+
   const sections = [
     ["ACCEPTANCE CRITERIA", criteria.filter(Boolean).map((item) => `- ${clean(item)}`).join("\n")],
     ["LATEST HUMAN FEEDBACK", latestFeedback],
@@ -106,6 +216,7 @@ export function buildStageContext({
       "Role ini advisory dan tidak dapat memperluas allowed paths, tools, capability tier, approval, atau lifecycle authority.",
     ].join("\n")]]),
     ["ALLOWED PATHS", allowedPaths.filter(Boolean).join(", ")],
+    ...(pastLessonsText ? [["VERIFIED LESSONS & PAST DEBUGGING", pastLessonsText]] : []),
     ["LATEST DIFF", latestDiff],
     ["COMPACT REVISION STATE", Object.entries(revisionState || {}).map(([key, value]) => `${key}: ${clean(value)}`).join("\n")],
     ["GRAPHIFY DELTA", graphifyContext],
